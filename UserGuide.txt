@@ -1,0 +1,202 @@
+
+1. Install Python from https://www.python.org/downloads/ — tick
+   "Add python.exe to PATH" during setup.
+2. Put plan-console.py and plan.bat in any folder and double-click
+   plan.bat.
+3. (If `py` doesn't work, try `python` instead. On Mac/Linux run
+   `python3 plan-console.py` in a terminal.)
+
+4. Start the app. A window with three tabs appears: **Intake**,
+**Sessions** and **Owner pass**.
+5. **Repo folder** (top bar): click **Browse…** and choose your project
+folder — the folder whose code your agent will work on.
+First time experimenting? Create an empty test folder and use that.
+6. Click **Init starter repo**. This creates inside your repo:
+- `PART-00.md` — the rulebook every agent session must follow
+- `templates/PART-01.md` — the blank plan form
+- `commands/` — 7 instruction files the console and agent use
+Existing files are never overwritten.
+7. **API key** (top bar): paste your OpenRouter key, or leave empty for
+copy-paste mode. It is stored only on your computer, in
+`plan-console.json` next to the app.
+8. **Model** (top bar): click **Reload models** — the list comes live
+from OpenRouter, so it always matches what you use in Zoo Code.
+Pick your favorite (free models end in `:free`). Models you pick are
+remembered at the top of the list. This model is used only by the
+console for the intake step — sessions always run in your agent,
+with whatever model you chose there.
+
+Done. You never have to do steps 5–8 again (they're remembered).
+
+---
+
+## 4. Creating a new plan (from a brainstorm or audit report)
+
+1. Open the **Intake** tab.
+2. Paste your brainstorm or audit report into the big text box.
+3. **Type**: choose `brainstorm` or `audit`.
+4. **Slug**: a short name for the plan, lowercase-with-dashes,
+e.g. `payments-v2` or `edge-hardening`.
+5. Click **Proceed**.
+
+What happens next:
+- The console saves your pasted text as `plans/<slug>/SOURCE.md`
+  (permanent record of what you started from).
+- Then it creates the plan files: a draft plan
+  (`PART-01.draft.md`), a checklist of facts to verify
+  (`RECON-CHECKLIST.md`), and questions only you can answer
+  (`OPEN-QUESTIONS.md`). For audits, also a `TRIAGE.md` that sorts every
+  finding into fix-now / later / accept.
+- Everything the console did appears in the log at the bottom.
+
+### The owner pass (the only manual thinking step)
+
+The log shows you `OPEN-QUESTIONS.md`. For each question:
+- If you know the answer: open `plans/<slug>/PART-01.draft.md` in VS
+  Codium, put the answer in the right section, then DELETE the question
+  line from `OPEN-QUESTIONS.md`.
+- If it lists commands under "## Owner actions" (things needing your
+  passwords, dashboards, databases): run them yourself in a terminal,
+  put the results into the draft, delete the lines.
+
+Then handle `RECON-CHECKLIST.md`: items the agent could already check
+are ticked `[x]`. Items left for you: run them, and change `[ ]` to
+`[x]` when done (or delete lines you decide to skip).
+
+### Freezing the plan
+
+Click **Freeze**. It refuses (with a clear message) while questions or
+unchecked items remain — that's intentional, it's protecting you.
+When it succeeds, `PART-01 v1.0.md` is created (the version lives in
+the filename): the locked, official plan with its session list.
+**Frozen means locked.** If you must change it later, edit it and add
+" | v1.1 frozen <date>" to its first line, and note why in PROGRESS.md.
+
+Tip: click **Validate draft** before freezing for an automatic
+gap-report (written to `plans/<slug>/VALIDATION.md` and shown in the
+log).
+
+---
+
+## 5. Running sessions (the daily loop)
+
+1. Open the **Sessions** tab.
+2. Type the slug, set the session number (start with 1).
+3. Click **Copy session instruction**. An instruction is now in your
+clipboard.
+4. In VS Codium: open the repo folder as your workspace, paste the
+instruction into your agent's chat, and let it work. The instruction
+tells it exactly which rules file to load, what the session's scope
+is, and what to record when done.
+5. When the agent says it's done, come back and click **Session
+report**. You get a verdict:
+- **OK** — session complete, move on.
+- **⚠ CHECK** — something's off (usually the agent didn't write its
+  completion line in the exact required format). The report shows a
+  "fix:" hint — paste that hint into your agent and click Session
+  report again.
+- **✖ BLOCKED** — the agent hit a wall and wrote `BLOCKED.md`
+  explaining exactly what stopped it and what it tried. Fix the
+  cause (often you must run a command or provide access), rename
+  `BLOCKED.md` to `BLOCKED-resolved.md`, and re-run the session.
+- **✖ INCOMPLETE** — no completion record at all; the session never
+  really finished.
+6. Increase the session number by 1 and repeat.
+
+The console refuses to let you jump ahead: you cannot run session 3
+before sessions 1 and 2 have OK records. That's deliberate — plans die
+from skipped steps.
+
+**The last session is the deploy session** (marked `[DEPLOY]` in the
+plan). Run it the same way, but stay and watch: the instruction makes
+the agent run its checks before AND after deploying, and stop
+immediately if a post-deploy check fails.
+
+**Plan health** — click it any time for one line per session: what's
+done, what's broken, what's next. Always click it before the deploy
+session ("pre-deploy sweep") and when returning to a plan after a break.
+Every health run is also appended to `plans/<slug>/HEALTH.md`, so each
+plan keeps its own history of checks.
+
+**Status** — a quicker one-line summary when you just want to know
+where you are.
+
+When all sessions pass, health tells you to write `PLAN COMPLETE` —
+paste that hint into your agent or add the line to PROGRESS.md
+yourself. The plan is done.
+
+---
+
+## 6. Button reference
+
+| Button | Tab | What it does | Needs API key? |
+|---|---|---|---|
+| Init starter repo | top | Creates PART-00.md, templates/, commands/ in the repo | no |
+| Update command files | top | Refreshes commands/ with the current built-in protocols | no |
+| Reload models | top | Refreshes the OpenRouter model list | no |
+| Agent orders… | top | Edits the standing orders attached to session instructions | no |
+| Run recon | Intake | Hands the recon checklist to the agent | optional |
+| Show validation report | Intake | Displays plans/<slug>/VALIDATION.md in the log | no |
+| Proceed | Intake | Saves your text, scaffolds the plan (+recon+validate if ticked) | optional |
+| Validate draft | Intake | Gap-report on the current draft | optional |
+| Freeze | Intake | Locks the draft into PART-01.md after checks pass | no |
+| Copy session instruction | Sessions | Puts the next session's instruction on your clipboard | no |
+| Status | Sessions | One-line where-am-I | no |
+| Session report | Sessions | Verdict for one session | no |
+| Plan health | Sessions | Verdict for the whole plan + writes HEALTH.md | no |
+
+---
+
+## 7. What the files in `plans/<slug>/` mean
+
+| File | Meaning | Who writes it |
+|---|---|---|
+| SOURCE.md | Your original pasted text, frozen | console |
+| PART-01.draft.md | Editable plan draft | console + you |
+| PART-01 v1.0.md | The frozen official plan (version in the filename) | console (Freeze) |
+| IN-PROGRESS.md | Interruption marker while a session runs | agent |
+| owner-pass.log | Archive of every answered/removed question | console |
+| instructions/ | Backup copies of paste-instructions | console |
+| RECON-CHECKLIST.md | Facts to verify, `[ ]`/`[x]` | agent + you |
+| OPEN-QUESTIONS.md | Questions only you can answer (empty it as you answer) | agent + you |
+| TRIAGE.md | Audit findings sorted fix/later/accept | agent |
+| VALIDATION.md | Latest gap-report | agent |
+| PROGRESS.md | One line per completed session | agent |
+| BLOCKED.md | Why work stopped (rename to BLOCKED-resolved.md when fixed) | agent |
+| HEALTH.md | History of your Plan-health checks | console |
+
+---
+
+## 8. Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Window doesn't open at all | Python missing or not on PATH. In a terminal run `python plan-console.py` and read the error. On some Linux systems: `sudo apt install python3-tk`. |
+| "Not a plan repo" popup | Wrong repo folder, or starter files missing — click Init starter repo. |
+| Model list is empty | No internet, or OpenRouter unreachable. You can also type a model id by hand. |
+| ERROR: OpenRouter HTTP 401 | Wrong API key — re-paste it in the top bar. |
+| ERROR: OpenRouter HTTP 402 | No credits on your OpenRouter account. |
+| ERROR: OpenRouter HTTP 429 | Rate limited (common on free models) — wait a minute or pick another model. |
+| "reply had no <<<FILE>>> blocks" | The model ignored the output format. The console retries once automatically; if it still fails, run that step in your agent instead (copy-mode). |
+| Freeze refuses | It tells you exactly what's open: unanswered questions or unchecked `[ ]` items. Clear them first. |
+| Session report says "not canonical" | The agent wrote its completion line in the wrong format. Paste the "fix:" hint from the report into your agent, then click Session report again. |
+| Agent can't find files | Make sure the repo folder is open as the workspace in VS Codium, not a parent or subfolder. |
+| App frozen during intake | API calls can take a few minutes on slow models. Closing and restarting the app is always safe — files are only written when a step completes. |
+| Want to reset everything | Delete `plan-console.json` (settings) — plans live in your repo and are untouched. |
+
+---
+
+## 9. Cheat sheet (the whole system in 12 lines)
+
+1. Paste brainstorm/audit → type slug → **Proceed**
+2. Read OPEN-QUESTIONS in the log → answer → delete lines
+3. Run owner-only checks → tick `[x]` in RECON-CHECKLIST
+4. **Freeze**
+5. Sessions tab: slug + 1 → **Copy session instruction**
+6. Paste into your agent (repo open as workspace)
+7. Watch it work
+8. **Session report** → verdict
+9. verdict OK → next session number → back to 5
+10. verdict ⚠ → paste the fix hint → **Session report** again
+11. verdict ✖ BLOCKED → fix cause → rename BLOCKED.md → re-run
+12. Last session = deploy, supervised → **Plan health** → PLAN COMPLETE

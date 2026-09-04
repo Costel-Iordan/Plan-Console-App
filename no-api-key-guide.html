@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Use Plan Console Without an API Key</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --border: #334155;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --accent-bg: rgba(56, 189, 248, 0.1);
+            --success: #34d399;
+            --radius: 8px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 2.5rem;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            margin-bottom: 0.5rem;
+            color: #fff;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        .badge {
+            display: inline-block;
+            background: var(--accent-bg);
+            color: var(--accent);
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            border: 1px solid rgba(56, 189, 248, 0.2);
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #fff;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        p {
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+
+        p strong {
+            color: var(--text);
+        }
+
+        .flow {
+            font-family: monospace;
+            background: #0b0f19;
+            padding: 1rem;
+            border-radius: var(--radius);
+            font-size: 0.9rem;
+            overflow-x: auto;
+            border: 1px solid rgba(255,255,255,0.05);
+            color: var(--accent);
+        }
+
+        .flow-line {
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+
+        .steps {
+            list-style: none;
+        }
+
+        .step-item {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .step-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .step-number {
+            flex-shrink: 0;
+            width: 2rem;
+            height: 2rem;
+            background: var(--border);
+            color: var(--text);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        .step-content {
+            flex-grow: 1;
+        }
+
+        .step-title {
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 0.25rem;
+            font-size: 1rem;
+        }
+
+        .step-title .optional {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-left: 0.5rem;
+        }
+
+        .step-desc {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .highlight {
+            color: var(--accent);
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <span class="badge">No-API Workflow</span>
+        <h1>How to Use Plan Console Without an API Key</h1>
+        <p class="subtitle">The API key is optional. Plan Console works seamlessly with your AI coding agent via copy-paste—completely free, with zero model queues.</p>
+    </header>
+
+    <div class="card">
+        <h2>How It Works</h2>
+        <p>The console and your agent never talk to each other directly. Instead, communication happens securely through clipboard actions and repository files:</p>
+        
+        <div class="flow">
+            <span class="flow-line"><strong>Console → Agent</strong> : ready-made instructions (copied to clipboard, popup, or saved in <span class="highlight">plans/&lt;slug&gt;/instructions/</span>)</span>
+            <span class="flow-line"><strong>Agent → Console</strong> : files generated in your repo (<span class="highlight">plans/&lt;slug&gt;/...</span>)</span>
+        </div>
+        <p style="margin-top: 1rem; margin-bottom: 0; font-size: 0.9rem;"><em>The console always checks the files afterward, ensuring half-finished or lazy agent work still gets caught.</em></p>
+    </div>
+
+    <div class="card">
+        <h2>Step by Step</h2>
+        <ul class="steps">
+            <li class="step-item">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <div class="step-title">Intake</div>
+                    <div class="step-desc">Paste your brainstorm or audit report into the <strong>Intake tab</strong>. Pick the type, type a slug, and click <strong>Proceed</strong>. Copy the instruction from the popup and paste it into your agent with the repo open as the workspace folder. The agent will create the draft plan, open questions, and the recon checklist.</div>
+                </div>
+            </li>
+            <li class="step-item">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <div class="step-title">Owner Pass</div>
+                    <div class="step-desc">Answer the questions in <span class="highlight">OPEN-QUESTIONS.md</span> (delete each answered line), run any owner-only commands yourself, and tick <span class="highlight">[x]</span> the finished items in <span class="highlight">RECON-CHECKLIST.md</span>.</div>
+                </div>
+            </li>
+            <li class="step-item">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <div class="step-title">Recon <span class="optional">(Optional)</span></div>
+                    <div class="step-desc">Click <strong>"Run recon"</strong> and paste the popup instruction into your agent. It checks your repo locally—instant and free.</div>
+                </div>
+            </li>
+            <li class="step-item">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <div class="step-title">Validate</div>
+                    <div class="step-desc">Click <strong>"Validate draft"</strong> and paste the instruction. The agent writes the report to <span class="highlight">plans/&lt;slug&gt;/VALIDATION.md</span>. Click <strong>"Show validation report"</strong> in the console to read it with a verdict.</div>
+                </div>
+            </li>
+            <li class="step-item">
+                <div class="step-number">5</div>
+                <div class="step-content">
+                    <div class="step-title">Freeze</div>
+                    <div class="step-desc">Click <strong>Freeze</strong>. This step is instant and involves no agent. By design, the console will refuse to freeze while questions or checklist items remain unresolved.</div>
+                </div>
+            </li>
+            <li class="step-item">
+                <div class="step-number">6</div>
+                <div class="step-content">
+                    <div class="step-title">Sessions</div>
+                    <div class="step-desc">Go to the <strong>Sessions tab</strong>. Enter your slug + session number, click <strong>"Copy session instruction"</strong>, and paste it into your agent to watch it work. Click <strong>"Session report"</strong> for the verdict before moving to the next session. The console blocks skipping ahead (e.g., session 3 cannot run before 1 and 2 are complete).</div>
+                </div>
+            </li>
+            <li class="step-item">
+                <div class="step-number">7</div>
+                <div class="step-content">
+                    <div class="step-title">Deploy</div>
+                    <div class="step-desc">The final session is owner-supervised. Click <strong>"Plan health"</strong> first for the pre-deploy check.</div>
+                </div>
+            </li>
+        </ul>
+    </div>
+</div>
+
+</body>
+</html>

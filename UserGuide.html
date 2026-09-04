@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Console Setup & Plan Management Guide</title>
+    <style>
+        :root {
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --bg-accent: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-cyan: #38bdf8;
+            --accent-green: #4ade80;
+            --accent-orange: #fb923c;
+            --accent-red: #f87171;
+            --border-color: #475569;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 3rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1.5rem;
+        }
+
+        h1 {
+            font-size: 2.25rem;
+            color: var(--accent-cyan);
+            margin-bottom: 0.5rem;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            color: var(--accent-cyan);
+            margin-top: 2.5rem;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid var(--bg-accent);
+            padding-bottom: 0.5rem;
+        }
+
+        h3 {
+            font-size: 1.15rem;
+            color: var(--text-main);
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-main);
+        }
+
+        .note-box {
+            background-color: var(--bg-card);
+            border-left: 4px solid var(--accent-orange);
+            padding: 1rem;
+            border-radius: 0 8px 8px 0;
+            margin-bottom: 1.5rem;
+        }
+
+        code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: var(--accent-cyan);
+        }
+
+        .terminal-code {
+            display: block;
+            background-color: #020617;
+            padding: 1rem;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            color: var(--accent-green);
+            margin-top: 0.5rem;
+            overflow-x: auto;
+        }
+
+        ol, ul {
+            margin-bottom: 1.5rem;
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.75rem;
+        }
+
+        li::marker {
+            color: var(--accent-cyan);
+            font-weight: bold;
+        }
+
+        ul li::marker {
+            content: "• ";
+            color: var(--accent-cyan);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .badge-ok { background-color: rgba(74, 222, 128, 0.2); color: var(--accent-green); }
+        .badge-check { background-color: rgba(251, 146, 60, 0.2); color: var(--accent-orange); }
+        .badge-fail { background-color: rgba(248, 113, 113, 0.2); color: var(--accent-red); }
+
+        /* Tables Matrix Styling */
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+            margin: 2rem 0;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            background-color: var(--bg-card);
+            min-width: 600px;
+        }
+
+        th {
+            background-color: #111827;
+            color: var(--accent-cyan);
+            font-weight: 600;
+            padding: 1rem;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top;
+            color: var(--text-main);
+        }
+
+        tr:hover td {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        hr {
+            border: 0;
+            height: 1px;
+            background: var(--border-color);
+            margin: 3rem 0;
+        }
+
+        strong {
+            color: #fff;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-main);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-accent);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-color);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <header>
+        <h1>Agentic Workspace Console Guide</h1>
+        <p style="color: var(--text-muted)">Standard Operating Procedures & Interface Documentation</p>
+    </header>
+
+    <div class="note-box">
+        <p>If <code>py</code> doesn't work, try <code>python</code> instead. On Mac/Linux run the initialization script directly in your terminal:</p>
+        <code class="terminal-code">python3 plan-console.py</code>
+    </div>
+
+    <ol start="4">
+        <li><strong>Start the app.</strong> A window with two tabs appears: <strong>Intake</strong> and <strong>Sessions</strong>.</li>
+        <li><strong>Repo folder</strong> (top bar): click <strong>Browse…</strong> and choose your project folder — the folder whose code your agent will work on.<br>
+        <span style="color: var(--text-muted)">First time experimenting? Create an empty test folder and use that.</span></li>
+        <li>Click <strong>Init starter repo</strong>. This creates inside your repo:
+            <ul style="margin-top: 0.5rem;">
+                <li><code>PART-00.md</code> — the rulebook every agent session must follow</li>
+                <li><code>templates/PART-01.md</code> — the blank plan form</li>
+                <li><code>commands/</code> — 7 instruction files the console and agent use</li>
+            </ul>
+            <span style="color: var(--text-muted)">Existing files are never overwritten.</span>
+        </li>
+        <li><strong>API key</strong> (top bar): paste your OpenRouter key, or leave empty for copy-paste mode. It is stored only on your computer, in <code>plan-console.json</code> next to the app.</li>
+        <li><strong>Model</strong> (top bar): click <strong>Reload models</strong> — the list comes live from OpenRouter, so it always matches what you use in Zoo Code.<br><br>
+        Pick your favorite (free models end in <code>:free</code>). Models you pick are remembered at the top of the list. This model is used only by the console for the intake step — sessions always run in your agent, with whatever model you chose there.</li>
+    </ol>
+
+    <p style="background: rgba(74, 222, 128, 0.1); padding: 0.75rem; border-radius: 6px; border: 1px solid rgba(74, 222, 128, 0.2);">
+        🎉 <strong>Done.</strong> You never have to do steps 5–8 again (they're remembered automatically).
+    </p>
+
+    <hr>
+
+    <h2>4. Creating a new plan (from a brainstorm or audit report)</h2>
+
+    <ol>
+        <li>Open the <strong>Intake</strong> tab.</li>
+        <li>Paste your brainstorm or audit report into the big text box.</li>
+        <li><strong>Type</strong>: choose <code>brainstorm</code> or <code>audit</code>.</li>
+        <li><strong>Slug</strong>: a short name for the plan, lowercase-with-dashes, e.g. <code>payments-v2</code> or <code>edge-hardening</code>.</li>
+        <li>Click <strong>Proceed</strong>.</li>
+    </ol>
+
+    <h3>What happens next</h3>
+    <ul>
+        <li>The console saves your pasted text as <code>plans/&lt;slug&gt;/SOURCE.md</code> (permanent record of what you started from).</li>
+        <li>Then it creates the plan files: a draft plan (<code>PART-01.draft.md</code>), a checklist of facts to verify (<code>RECON-CHECKLIST.md</code>), and questions only you can answer (<code>OPEN-QUESTIONS.md</code>). For audits, also a <code>TRIAGE.md</code> that sorts every finding into fix-now / later / accept.</li>
+        <li>Everything the console did appears in the log at the bottom.</li>
+    </ul>
+
+    <h3>The owner pass (the only manual thinking step)</h3>
+    <p>The log shows you <code>OPEN-QUESTIONS.md</code>. For each question:</p>
+    <ul>
+        <li>If you know the answer: open <code>plans/&lt;slug&gt;/PART-01.draft.md</code> in VS Codium, put the answer in the right section, then <strong>DELETE</strong> the question line from <code>OPEN-QUESTIONS.md</code>.</li>
+        <li>If it lists commands under "## Owner actions" (things needing your passwords, dashboards, databases): run them yourself in a terminal, put the results into the draft, and delete those lines.</li>
+    </ul>
+
+    <p>Then handle <code>RECON-CHECKLIST.md</code>: items the agent could already check are ticked <code>[x]</code>. Items left for you: run them, and change <code>[ ]</code> to <code>[x]</code> when done (or delete lines you decide to skip).</p>
+
+    <h3>Freezing the plan</h3>
+    <p>Click <strong>Freeze</strong>. It refuses (with a clear message) while questions or unchecked items remain — that's intentional, it's protecting your production cycle.</p>

@@ -1,0 +1,13 @@
+# secrets / local settings — never commit
+plan-console.json
+OpenRouterAPIKey.txt
+
+# python
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+
+# plans live inside the target repo, not here
+plans/
