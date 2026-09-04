@@ -226,3 +226,19 @@ yourself. The plan is done.
 10. verdict ⚠ → fix hint is on your clipboard → paste → **Session report** again
 11. verdict ✖ BLOCKED → fix cause → rename BLOCKED.md → re-run
 12. Last session = deploy, supervised → **Plan health** → PLAN COMPLETE
+
+---
+
+## 10. Appearance: themes and window size
+
+1. **Theme** (top bar, next to Cancel API call): pick **Light**,
+   **Dark**, or **Follow OS**. *Follow OS* matches your Windows
+   personalization and switches automatically. Your choice is saved in
+   `plan-console.json`.
+2. **Window size**: the window is freely resizable — drag or maximize
+   it (smallest 820 × 600). The size you close it with is remembered
+   for the next start.
+3. **Offline guides**: `UserGuide.html` and `no-api-key-guide.html`
+   live in the app folder and open straight from there (file://). Each
+   guide has its own light/dark toggle and works fully offline —
+   nothing is fetched from the network.

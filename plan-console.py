@@ -268,6 +268,9 @@ def apply_theme(root, style, name):
     style.configure("TScrollbar", background=t["bg-card"],
                     troughcolor=t["bg-main"],
                     bordercolor=t["border-color"])
+    # v3.1 — status pills (tab status lines, owner-pass status line)
+    style.configure("Pill.TLabel", background=t["bg-accent"],
+                    foreground=t["text-main"], padding=(10, 3))
     root.configure(bg=t["bg-main"])
     _walk_classic_widgets(root, t)
     return True
@@ -1352,7 +1355,16 @@ class App:
                         else THEMES[self._theme_effective])
         self.style = ttk.Style(root)
         root.title("Plan Console")
-        root.geometry("1020x800")
+        # v3.1 — resizable window, size remembered in cfg, minsize 820x600
+        # (below that the three-tab layout clips — PART-01 §C)
+        try:
+            geo = "%dx%d" % (int(self.cfg.get("win_w", 1020)),
+                             int(self.cfg.get("win_h", 800)))
+        except (TypeError, ValueError):
+            geo = "1020x800"
+        root.geometry(geo)
+        root.minsize(820, 600)
+        root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._topbar()
         self._tabs()
         self._apply_theme_setting()
@@ -1377,9 +1389,17 @@ class App:
                 pass
             return {}
 
+    def on_close(self):
+        """v3.1 — WM_DELETE_WINDOW handler: remember the window size in
+        cfg (PART-01 §C), then close."""
+        self.cfg["win_w"] = max(820, self.root.winfo_width())
+        self.cfg["win_h"] = max(600, self.root.winfo_height())
+        self._save_cfg()
+        self.root.destroy()
+
     # ------------------------------------------------------------------ UI
     def _topbar(self):
-        top = ttk.Frame(self.root); top.pack(fill="x", padx=10, pady=(8, 0))
+        top = ttk.Frame(self.root); top.pack(fill="x", padx=10, pady=(6, 0))
         top.columnconfigure(1, weight=1)
         # Row 0: repo folder
         ttk.Label(top, text="Repo folder").grid(row=0, column=0, sticky="w")
@@ -1395,37 +1415,38 @@ class App:
                                                          padx=(4, 0))
         # Row 1: model picker + its own reload button
         ttk.Label(top, text="OpenRouter model").grid(row=1, column=0, sticky="w",
-                                                     pady=(8, 0))
+                                                     pady=(6, 0))
         self.model_cb = ttk.Combobox(top, width=36, state="normal")
         self._all_models = list(self.cfg.get("favorites", []))
         self.model_cb["values"] = self._all_models
         if self.cfg.get("model"):
             self.model_cb.set(self.cfg["model"])
-        self.model_cb.grid(row=1, column=1, sticky="w", padx=4, pady=(8, 0))
+        self.model_cb.grid(row=1, column=1, sticky="w", padx=4, pady=(6, 0))
         self.model_cb.bind("<KeyRelease>", self._filter_models)
         self.model_cb.bind("<<ComboboxSelected>>", self._on_model_picked)
         self.model_cb.bind("<Return>", self._on_model_picked)
         self.model_cb.bind("<FocusOut>", self._on_model_picked)
         ttk.Button(top, text="Reload models",
                    command=self._fetch_models)\
-            .grid(row=1, column=2, padx=(16, 0), pady=(8, 0))
+            .grid(row=1, column=2, padx=(16, 0), pady=(6, 0))
         # v2.3 — edit the standing orders attached to session instructions
         ttk.Button(top, text="Agent orders…",
                    command=self.on_edit_agent_orders)\
-            .grid(row=1, column=3, padx=(8, 0), pady=(8, 0))
+            .grid(row=1, column=3, padx=(8, 0), pady=(6, 0))
         # Row 2: API key + use-key checkbox
         ttk.Label(top, text="API key (optional)").grid(row=2, column=0, sticky="w",
-                                                       pady=(8, 0))
+                                                       pady=(6, 0))
         self.key = ttk.Entry(top, show="*", width=34)
         # security: the key is never restored from plan-console.json —
         # session-only field, or the OPENROUTER_API_KEY env variable
         self.key.insert(0, os.environ.get("OPENROUTER_API_KEY", ""))
-        self.key.grid(row=2, column=1, sticky="w", padx=4, pady=(8, 0))
+        self.key.grid(row=2, column=1, sticky="w", padx=4, pady=(6, 0))
         self.use_key = tk.BooleanVar(value=self.cfg.get("use_key", False))
         # Row 3: hint under the key field + PDF link (visible when unchecked)
         self._key_hint = ttk.Label(
             top, text="Works faster WITHOUT a key — the console hands "
-                      "ready-made instructions to your agent instead.")
+                      "ready-made instructions to your agent instead.",
+            wraplength=680, justify="left")
         self._key_hint.grid(row=3, column=1, sticky="w", padx=4)
         self._pdf_link = ttk.Label(
             top, text="How to use without a key (PDF guide) »",
@@ -1446,23 +1467,23 @@ class App:
         ttk.Checkbutton(top, text="Use API key",
                         variable=self.use_key,
                         command=_toggle_key)\
-            .grid(row=2, column=2, sticky="w", padx=(16, 0), pady=(8, 0))
+            .grid(row=2, column=2, sticky="w", padx=(16, 0), pady=(6, 0))
         _toggle_key()      # apply saved state right now (startup)
         # Row 4: live progress + cancel
         self.prog = ttk.Label(top, text="")
-        self.prog.grid(row=4, column=1, sticky="w", padx=4, pady=(8, 0))
+        self.prog.grid(row=4, column=1, sticky="w", padx=4, pady=(6, 0))
         ttk.Button(top, text="Cancel API call",
                    command=self.on_cancel_api)\
-            .grid(row=4, column=2, padx=(16, 0), pady=(8, 0))
+            .grid(row=4, column=2, padx=(16, 0), pady=(6, 0))
         # v3.0 — theme selector (Light / Dark / Follow OS), persisted §E
         ttk.Label(top, text="Theme").grid(row=4, column=3, sticky="e",
-                                          padx=(16, 4), pady=(8, 0))
+                                          padx=(16, 4), pady=(6, 0))
         self.theme_var = tk.StringVar(value=THEME_LABELS[self.theme_setting])
         self.theme_cb = ttk.Combobox(top, textvariable=self.theme_var,
                                      values=tuple(THEME_LABELS[s] for s
                                                   in THEME_SETTINGS),
                                      state="readonly", width=10)
-        self.theme_cb.grid(row=4, column=4, sticky="w", pady=(8, 0))
+        self.theme_cb.grid(row=4, column=4, sticky="w", pady=(6, 0))
         self.theme_cb.bind("<<ComboboxSelected>>", self.on_theme_change)
 
     # ---------------------------------------------------------- v3.0 theme
@@ -1580,20 +1601,22 @@ class App:
                  "next session instruction you copy." % (f, which))
 
     def _tabs(self):
-        nb = ttk.Notebook(self.root); nb.pack(fill="both", expand=True, pady=6)
+        nb = ttk.Notebook(self.root); nb.pack(fill="both", expand=True,
+                                              pady=(2, 6))
         f1, f2, f3 = ttk.Frame(nb), ttk.Frame(nb), ttk.Frame(nb)
         self._intake_tab(f1); self._session_tab(f2); self._owner_tab(f3)
         nb.add(f1, text="Intake"); nb.add(f2, text="Sessions")
         nb.add(f3, text="Owner pass")
 
     def _mklog(self, parent, name, height):
-        st = ttk.Label(parent, text="idle"); st.pack(anchor="w", padx=10)
+        st = ttk.Label(parent, text="idle", style="Pill.TLabel")
+        st.pack(anchor="w", padx=10, pady=(4, 0))
         t = self._tokens
         log_kw = ({"bg": t["bg-card"], "fg": t["text-main"],
                    "insertbackground": t["text-main"]} if t else {})
         log = scrolledtext.ScrolledText(parent, height=height, wrap="word",
                                         state="disabled", **log_kw)
-        log.pack(fill="both", expand=True, padx=10, pady=(4, 10))
+        log.pack(fill="both", expand=True, padx=10, pady=(4, 8))
         self.logs[name], self.status[name] = log, st
 
     def _intake_tab(self, f):
@@ -1656,7 +1679,8 @@ class App:
         # v2.6 — P1: read-only dry-run of the Freeze gates, on this tab
         ttk.Button(top, text="What's blocking Freeze?",
                    command=self.on_freeze_dry_run).grid(row=0, column=3, padx=4)
-        self.owner_status = ttk.Label(top, text="enter slug and click Refresh")
+        self.owner_status = ttk.Label(top, text="enter slug and click Refresh",
+                                      style="Pill.TLabel")
         self.owner_status.grid(row=0, column=4, padx=10)
         # v2.0 — flow hint so the next step is always visible
         self._flow_hint = ttk.Label(
@@ -1665,7 +1689,7 @@ class App:
                     "owner pass' → paste to agent → Refresh → tick recon → "
                     "Validate → Freeze. Nothing you answer or remove is "
                     "ever lost (owner-pass.log + .bak).",
-            wraplength=900, justify="left")
+            wraplength=780, justify="left")
         self._flow_hint.pack(anchor="w", padx=10, pady=(2, 0))
         body = ttk.Frame(f); body.pack(fill="both", expand=True, padx=10, pady=6)
         # left: open questions
@@ -1675,7 +1699,7 @@ class App:
         self.oq_list.pack(fill="both", expand=True, padx=6, pady=6)
         # v2.0 — full question text above the answer box (no 120-char guesswork)
         self.q_full = ttk.Label(lq, text="(select a question to read it in full)",
-                                wraplength=520, justify="left")
+                                wraplength=380, justify="left")
         self.q_full.pack(fill="x", padx=6, pady=(4, 0))
         self.oq_list.bind("<<ListboxSelect>>", self._show_full_question)
         self.answer = scrolledtext.ScrolledText(lq, height=3, wrap="word")
@@ -1708,7 +1732,7 @@ class App:
                        "the rest to your agent: it integrates your "
                        "answers, ticks what it can verify locally, and "
                        "rewrites unclear questions instead of guessing.",
-            wraplength=900, justify="left")
+            wraplength=680, justify="left")
         self._agent_hint.pack(side="left", padx=8)
         self._oq_items, self._rc_items = [], []
         self._oq_file = self._rc_file = None
