@@ -369,6 +369,67 @@ def test_count_owner_answers_stops_at_next_heading():
     assert pc.count_owner_answers(text) == 1
 
 
+# ------------------------------- v2.8 parse_validation_findings
+def test_validation_ready_report():
+    f = pc.parse_validation_findings("PART-01 READY\n")
+    assert f["ready"] and f["n"] == 0
+
+
+def test_validation_ready_with_banner():
+    f = pc.parse_validation_findings(
+        "===== VALIDATION =====\nPART-01 READY\n")
+    assert f["ready"] and f["n"] == 0
+
+
+def test_validation_owner_resolve_classification():
+    text = ("1. §G:130 multi-deploy deviation → run owner-resolve "
+            "new-mistral\n"
+            "2. §OWNER ANSWERS — 7 pairs → run owner-resolve new-mistral\n")
+    f = pc.parse_validation_findings(text)
+    assert f["n"] == 2
+    assert f["owner_resolve"] == ["new-mistral"]
+    assert f["fix_draft"] == [] and f["other"] == []
+
+
+def test_validation_fix_draft_classification():
+    text = ("1. §B:57-59 — three lines marked UNVERIFIED → fix in the "
+            "draft, then re-validate\n"
+            "2. §E Streaming omits ping cadence → fix in the draft, then "
+            "re-validate\n")
+    f = pc.parse_validation_findings(text)
+    assert f["n"] == 2
+    assert len(f["fix_draft"]) == 2
+    assert f["owner_resolve"] == [] and f["other"] == []
+
+
+def test_validation_mixed_and_summary_line_ignored():
+    text = ("# VALIDATION — new-mistral (validate-plan run 2026-09-04)\n"
+            "1. §B:57 placeholder model-IDs → fix in the draft, then "
+            "re-validate\n"
+            "2. OQ 1 answered but not integrated → run owner-resolve "
+            "new-mistral\n"
+            "3. §A session map gap → fix in the draft, then re-validate\n"
+            "→ findings listed above — resolve them in the draft, then "
+            "Validate again before Freezing.\n")
+    f = pc.parse_validation_findings(text)
+    assert f["n"] == 3
+    assert len(f["fix_draft"]) == 2
+    assert f["owner_resolve"] == ["new-mistral"]
+    assert f["other"] == []
+
+
+def test_validation_unrecognized_suffix_lands_in_other():
+    text = "1. mystery finding → consult the oracle\n"
+    f = pc.parse_validation_findings(text)
+    assert f["n"] == 1 and len(f["other"]) == 1
+    assert f["owner_resolve"] == [] and f["fix_draft"] == []
+
+
+def test_validation_unnumbered_prose_counts_nothing():
+    f = pc.parse_validation_findings("go fix the draft\n")
+    assert f["n"] == 0 and not f["ready"]
+
+
 def main():
     fns = [(k, v) for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

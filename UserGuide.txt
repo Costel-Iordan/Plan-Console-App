@@ -160,6 +160,7 @@ yourself. The plan is done.
 | Show validation report | Intake | Displays plans/<slug>/VALIDATION.md in the log | no |
 | Proceed | Intake | Saves your text, scaffolds the plan (+recon+validate if ticked) | optional |
 | Validate draft | Intake | Gap-report on the current draft | optional |
+| Auto-resolve findings | Intake | Parses VALIDATION.md and runs the remediation itself: with a key it dispatches owner-resolve (answers + draft fixes) and re-validation back-to-back; without one it copies ONE ready-made instruction doing both. Also chains automatically after Validate draft when "auto-resolve findings" is ticked | optional |
 | Freeze | Intake | Locks the draft into PART-01.md after checks pass | no |
 | Copy session instruction | Sessions | Puts the next session's instruction on your clipboard | no |
 | Status | Sessions | One-line where-am-I | no |

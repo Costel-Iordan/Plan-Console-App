@@ -21,11 +21,13 @@ templates/PART-01.md. Check ONLY:
   NEEDS CLARIFICATION only)
 
 Write the findings to plans/$ARGUMENTS/VALIDATION.md (one line per
-finding, overwrite previous). Each finding line MUST end with the
-remediation as the exact next command to run, e.g. "→ run
-owner-resolve <slug>" or "→ fix in the draft, then re-validate" —
-findings read as instructions, never as puzzles. If none: write
-exactly "PART-01 READY". Findings only — no fixes, no rewrites.
+finding, overwrite previous). Each finding line MUST be a numbered line
+("1. …") ending with the remediation as the exact next command to run,
+e.g. "→ run owner-resolve <slug>" or "→ fix in the draft, then
+re-validate" — findings read as instructions, never as puzzles. The
+Plan Console parses these numbered lines and suffixes to offer the
+automated "Auto-resolve findings" action — keep them exact. If none:
+write exactly "PART-01 READY". Findings only — no fixes, no rewrites.
 
 Next: "PART-01 READY" → commands/freeze-plan.md <slug> (or the
 console Freeze button); otherwise fix the findings and re-run this

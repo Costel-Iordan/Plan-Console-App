@@ -84,6 +84,26 @@ v2.6.4 — the Owner-pass status line now checks the third Freeze gate
   (VALIDATION.md) too: "ready to Freeze" only appears when the report
   exists and reads exactly "PART-01 READY", so a stale validation
   report can no longer make the counter contradict the Freeze button.
+v2.8 — automated finding resolution ("Auto-resolve findings"):
+  * The console parses plans/<slug>/VALIDATION.md (new unit-testable
+    parse_validation_findings) and classifies every numbered finding
+    by its remediation suffix: "→ run owner-resolve <slug>" vs
+    "→ fix in the draft, then re-validate" vs anything else.
+  * New "Auto-resolve findings" button (Intake tab) runs the whole
+    remediation without manual typing: with an API key it dispatches
+    commands/owner-resolve.md (which now also applies the draft fixes)
+    and then commands/validate-plan.md back-to-back; without a key it
+    copies ONE ready-made instruction doing both steps.
+  * commands/owner-resolve.md gains step 0 "RESOLVE VALIDATION
+    FINDINGS": "fix in the draft" findings are applied there (never
+    inventing facts — unconfirmed placeholders stay and are reported).
+    The intake chain and "Validate draft" chain this automatically via
+    the new "auto-resolve findings" checkbox (default on).
+  * commands/validate-plan.md mandates numbered finding lines so the
+    remediation suffixes stay machine-parseable. Existing repos:
+    "Update command files" once (owner-resolve.md + validate-plan.md
+    changed). Legacy frozen PART-01.md support is untouched — the
+    remediation always edits the draft, never a frozen file.
 
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
@@ -750,9 +770,11 @@ RETRY_NOTE = ("\n\nYour previous reply had no valid <<<FILE>>> blocks. "
 # v2.6.3 — the one-line description of the NEWEST command-file change,
 # shown in the auto-update dialog. Bump this together with the command
 # files so the dialog text never goes stale.
-COMMAND_UPDATE_NOTE = ("session.md spells out the canonical PROGRESS.md "
-                       "line with a worked example — gates report "
-                       "cleanly in Plan health")
+COMMAND_UPDATE_NOTE = ("owner-resolve now also applies 'fix in the "
+                       "draft' findings from VALIDATION.md (step 0), "
+                       "and the console's new 'Auto-resolve findings' "
+                       "button chains owner-resolve + re-validate "
+                       "automatically")
 
 
 def parse_files(text, slug):
@@ -779,6 +801,50 @@ def parse_files(text, slug):
         else:
             notes.append(line)
     return files, "\n".join(notes)
+
+
+OWNER_RESOLVE_RE = re.compile(r"run\s+owner-resolve\s+([A-Za-z0-9][\w-]*)")
+
+
+def parse_validation_findings(text):
+    """v2.8 — classify findings in a VALIDATION.md report so the console
+    can automate the remediation. Returns a dict:
+      ready         True if the report reads exactly "PART-01 READY"
+      owner_resolve slugs from "→ run owner-resolve <slug>" findings
+      fix_draft     finding lines ending "→ fix in the draft, then
+                    re-validate"
+      other         findings with an unrecognized remediation suffix
+      n             total numbered findings
+    Module level so it is unit-testable without Tk. Only numbered
+    finding lines count (the format commands/validate-plan.md
+    mandates); banner lines and the trailing "→ findings listed above"
+    summary are ignored. Legacy freeform reports yield n == 0 and the
+    console falls back to manual handling."""
+    out = {"ready": False, "owner_resolve": [], "fix_draft": [],
+           "other": [], "n": 0}
+    if text.strip() == "PART-01 READY":
+        out["ready"] = True
+        return out
+    for raw in text.splitlines():
+        line = raw.strip()
+        if (not line or line.startswith("#") or line.startswith("=====")
+                or "findings listed above" in line):
+            continue
+        if line == "PART-01 READY":
+            out["ready"] = True
+            continue
+        if not re.match(r"\d+\.\s", line):
+            continue
+        out["n"] += 1
+        m = OWNER_RESOLVE_RE.search(line)
+        if m and m.group(1) not in out["owner_resolve"]:
+            out["owner_resolve"].append(m.group(1))
+        if "fix in the draft" in line:
+            if line not in out["fix_draft"]:
+                out["fix_draft"].append(line)
+        elif not m:
+            out["other"].append(line)
+    return out
 
 # ----------------------------------------------------------------------------
 # v2.3 — standing orders for execution agents (attached to session
@@ -1074,8 +1140,9 @@ owner answers OPEN-QUESTIONS.md in the console Owner pass tab.
 """,
 
 "commands/owner-resolve.md": """---
-description: Integrate owner answers, finish agent-runnable recon, sharpen
-             unclear questions (never answer them)
+description: Integrate owner answers, resolve validation findings, finish
+             agent-runnable recon, sharpen unclear questions (never answer
+             them)
 argument-hint: <slug>
 ---
 Arguments: $ARGUMENTS → SLUG
@@ -1090,9 +1157,24 @@ Inputs:
   only, NEVER an owner answer; integrate only the owner's answer.
 - plans/SLUG/OPEN-QUESTIONS.md — questions still awaiting the owner.
 - plans/SLUG/RECON-CHECKLIST.md — `- [ ]` / `- [x]` items.
+- plans/SLUG/VALIDATION.md — the latest validation report, if present:
+  findings ending "fix in the draft, then re-validate" are resolved by
+  step 0 below (no separate fix pass is needed).
 
 Execute in order:
 
+0. RESOLVE VALIDATION FINDINGS. If VALIDATION.md exists and lists
+   findings, apply each "fix in the draft" finding to
+   PART-01.draft.md now:
+   - NEVER invent facts. Add a "verified YYYY-MM-DD" marker or replace
+     a placeholder ONLY when the fact is confirmed by an owner answer,
+     recon evidence, or a local check you just ran; otherwise leave the
+     line as it is and say in your notes why it still needs the owner.
+   - Structural fixes need no new facts and are applied directly:
+     session-map scope rows missing file paths, model/provider tokens
+     appearing outside §D (reference §D instead), missing mandatory §E
+     fields the draft already implies, contradictions between sections.
+   - Do NOT edit VALIDATION.md — re-validation overwrites it.
 1. INTEGRATE OWNER ANSWERS. For each Q/A pair under ## OWNER ANSWERS:
    - Move the answer's content into the correct draft section: scope or
      session-map decisions → §A; checkable facts → §B (mark
@@ -1133,7 +1215,8 @@ Execute in order:
 4. Emit every file you changed (PART-01.draft.md, OPEN-QUESTIONS.md,
    RECON-CHECKLIST.md — full files). End your notes with exactly one
    line: answers integrated X / need clarification Y / questions
-   sharpened Z / checklist ticked W / owner-only V.
+   sharpened Z / checklist ticked W / owner-only V / draft fixes
+   applied F.
 
 Next: commands/validate-plan.md <slug> — validation is the step after
 integration; Freeze only unlocks on "PART-01 READY".
@@ -1195,11 +1278,13 @@ templates/PART-01.md. Check ONLY:
   NEEDS CLARIFICATION only)
 
 Write the findings to plans/$ARGUMENTS/VALIDATION.md (one line per
-finding, overwrite previous). Each finding line MUST end with the
-remediation as the exact next command to run, e.g. "→ run
-owner-resolve <slug>" or "→ fix in the draft, then re-validate" —
-findings read as instructions, never as puzzles. If none: write
-exactly "PART-01 READY". Findings only — no fixes, no rewrites.
+finding, overwrite previous). Each finding line MUST be a numbered line
+("1. …") ending with the remediation as the exact next command to run,
+e.g. "→ run owner-resolve <slug>" or "→ fix in the draft, then
+re-validate" — findings read as instructions, never as puzzles. The
+Plan Console parses these numbered lines and suffixes to offer the
+automated "Auto-resolve findings" action — keep them exact. If none:
+write exactly "PART-01 READY". Findings only — no fixes, no rewrites.
 
 Next: "PART-01 READY" → commands/freeze-plan.md <slug> (or the
 console Freeze button); otherwise fix the findings and re-run this
@@ -1630,21 +1715,27 @@ class App:
         self.slug = ttk.Entry(top, width=20); self.slug.grid(row=0, column=3, padx=4)
         self.auto_recon = tk.BooleanVar(value=False)
         self.auto_validate = tk.BooleanVar(value=False)
+        self.auto_resolve = tk.BooleanVar(value=True)
         ttk.Checkbutton(top, text="auto recon",
                         variable=self.auto_recon).grid(row=0, column=4, padx=4)
         ttk.Checkbutton(top, text="auto validate",
                         variable=self.auto_validate).grid(row=0, column=5, padx=4)
+        ttk.Checkbutton(top, text="auto-resolve findings",
+                        variable=self.auto_resolve).grid(row=0, column=6, padx=4)
         self.btn_proceed = ttk.Button(top, text="Proceed", command=self.on_proceed)
-        self.btn_proceed.grid(row=0, column=6, padx=8)
+        self.btn_proceed.grid(row=0, column=7, padx=8)
         self.btn_freeze = ttk.Button(top, text="Freeze", command=self.on_freeze)
-        self.btn_freeze.grid(row=0, column=7)
+        self.btn_freeze.grid(row=0, column=8)
         rowb = ttk.Frame(f); rowb.pack(anchor="w", padx=10, pady=(6, 0))
         ttk.Button(rowb, text="Run recon",
                    command=self.on_recon).pack(side="left")
         ttk.Button(rowb, text="Validate draft",
                    command=self.on_validate).pack(side="left", padx=6)
+        self.btn_auto = ttk.Button(rowb, text="Auto-resolve findings",
+                                   command=self.on_auto_resolve)
+        self.btn_auto.pack(side="left")
         ttk.Button(rowb, text="Show validation report",
-                   command=self.on_show_validation).pack(side="left")
+                   command=self.on_show_validation).pack(side="left", padx=6)
         ttk.Label(f, text="Paste a plan, brainstorm, or audit report below:")\
             .pack(anchor="w", padx=10, pady=(2, 0))
         self.src = scrolledtext.ScrolledText(f, height=8, wrap="word")
@@ -2156,12 +2247,14 @@ class App:
             self._instruction(repo, "owner-resolve.md", slug),
             pdir / "instructions" / "owner-resolve.txt")
         self.say("intake", "owner pass: instruction copied — paste into your "
-                 "agent (repo open as workspace). It will integrate your "
-                 "%d answer(s) into the draft body (§A–§G) and delete the "
-                 "## OWNER ANSWERS inbox, tick locally-verifiable checklist "
-                 "items, and rewrite unclear questions (NEEDS CLARIFICATION) "
-                 "instead of guessing. When it finishes, click Refresh here, "
-                 "then 'Show validation report' → Freeze." % na)
+                 "agent (repo open as workspace). It will apply the draft "
+                 "fixes VALIDATION.md asks for (never inventing facts), "
+                 "integrate your %d answer(s) into the draft body (§A–§G) "
+                 "and delete the ## OWNER ANSWERS inbox, tick locally-"
+                 "verifiable checklist items, and rewrite unclear questions "
+                 "(NEEDS CLARIFICATION) instead of guessing. When it "
+                 "finishes, click Refresh here, then 'Show validation "
+                 "report' → Freeze." % na)
 
     # ------------------------------------------------------- small helpers
     def _browse_repo(self):
@@ -2282,6 +2375,7 @@ class App:
                 busy_now = self._n_busy > 0
                 for b in (getattr(self, "btn_proceed", None),
                           getattr(self, "btn_freeze", None),
+                          getattr(self, "btn_auto", None),
                           getattr(self, "btn_copy", None)):
                     if b:
                         b.configure(state="disabled" if busy_now else "normal")
@@ -2443,6 +2537,7 @@ class App:
                  % (date.today(), slug, self.kind.get()))
         ui = {"kind": self.kind.get(), "recon": self.auto_recon.get(),
               "validate": self.auto_validate.get(),
+              "auto_fix": self.auto_resolve.get(),
               "model": self.model_cb.get().strip(), "key": self._or_key_value()}
         threading.Thread(target=self._intake_chain, args=(repo, slug, ui),
                          daemon=True).start()
@@ -2520,6 +2615,8 @@ class App:
                         t.join()
                 if ui["validate"]:
                     self._echo_validation(pdir)
+                    if ui["auto_fix"]:
+                        self._chain_auto_resolve(repo, slug, ui)
             self._after_intake(repo, slug)
         except Exception as exc:
             self.say("intake", "ERROR: %s" % exc)
@@ -2628,6 +2725,8 @@ class App:
                 self._run_api(repo, "intake", "validate-plan.md", slug, slug,
                               extra, ui["model"], ui["key"])
                 self._echo_validation(pdir)
+                if self.auto_resolve.get():
+                    self._chain_auto_resolve(repo, slug, ui)
             finally:
                 self._busy(False)
         threading.Thread(target=work, daemon=True).start()
@@ -2657,9 +2756,177 @@ class App:
                  % (slug, mtime, body.strip()))
         if "PART-01 READY" in body:
             self.say("intake", "→ report says READY — you can Freeze.")
+            return
+        f = parse_validation_findings(body)
+        if f["n"]:
+            self.say("intake", "→ %d finding(s) — click 'Auto-resolve "
+                     "findings': the console runs the remediation "
+                     "(owner-resolve + draft fixes + re-validate) without "
+                     "manual typing." % f["n"])
         else:
             self.say("intake", "→ findings listed above — resolve them in the "
                      "draft, then Validate again before Freezing.")
+
+    # ---------------------------------------------------- v2.8 auto-resolve
+    def _chain_auto_resolve(self, repo, slug, ui):
+        """v2.8 — after a validation run produced findings, chain the
+        remediation automatically. Runs on the caller's thread (the
+        caller already holds _busy); silent no-op when the report is
+        READY or has no parseable findings."""
+        val = repo / "plans" / slug / "VALIDATION.md"
+        if not val.is_file():
+            return
+        f = parse_validation_findings(val.read_text(encoding="utf-8"))
+        if f["ready"] or not f["n"]:
+            return
+        self.say("intake", "auto-resolve: %d finding(s) — chaining "
+                 "owner-resolve + re-validate automatically …" % f["n"])
+        self._auto_resolve_chain(repo, slug, ui, f)
+
+    def _auto_resolve_instruction(self, repo, slug, f):
+        """v2.8 — the NO-API-KEY remediation instruction: one paste runs
+        owner-resolve (answers + draft fixes) and re-validation."""
+        lines = ["Working directory: %s" % repo, "",
+                 "plans/%s/VALIDATION.md lists findings. Execute these "
+                 "command files in this repo, in order:" % slug, "",
+                 "1. commands/owner-resolve.md — arguments: %s" % slug,
+                 "   (it applies the draft fixes the findings ask for — "
+                 "NEVER inventing facts: unconfirmed placeholders stay "
+                 "put and are reported — integrates parked owner "
+                 "answers, ticks locally-verifiable recon items)", "",
+                 "2. commands/validate-plan.md — arguments: %s" % slug,
+                 "   (re-writes VALIDATION.md; 'PART-01 READY' unblocks "
+                 "Freeze)", ""]
+        if f["fix_draft"]:
+            lines.append("Draft findings to resolve in step 1:")
+            lines += ["  %s" % l for l in f["fix_draft"]]
+            lines.append("")
+        if f["other"]:
+            lines.append("Findings no command file automates (decide or "
+                         "handle manually):")
+            lines += ["  %s" % l for l in f["other"]]
+            lines.append("")
+        lines += ["Follow PART-00.md economy rules. Write only inside "
+                  "plans/%s/." % slug]
+        return "\n".join(lines)
+
+    def _auto_resolve_chain(self, repo, slug, ui, f):
+        """v2.8 — run the remediation for classified findings: with an
+        API key, owner-resolve.md then validate-plan.md back-to-back
+        (the console executes them itself); without one, emit a single
+        ready-made instruction. Caller manages _busy."""
+        pdir = repo / "plans" / slug
+        if not ui["key"]:
+            self._show_instruction(
+                "Auto-resolve instruction — %s" % slug,
+                self._auto_resolve_instruction(repo, slug, f),
+                pdir / "instructions" / "auto-resolve.txt")
+            self.say("intake", "NO API KEY — auto-resolve instruction "
+                     "copied (popup + backup file in plans/%s/"
+                     "instructions/). One paste into your agent resolves "
+                     "the findings and re-validates — no manual command "
+                     "typing." % slug)
+            return False
+        p00 = (repo / "PART-00.md").read_text(encoding="utf-8")
+        draft = pdir / "PART-01.draft.md"
+        extra = [("PART-00.md", p00),
+                 ("plans/%s/PART-01.draft.md" % slug,
+                  draft.read_text(encoding="utf-8")),
+                 ("plans/%s/VALIDATION.md" % slug,
+                  (pdir / "VALIDATION.md").read_text(encoding="utf-8"))]
+        for aux in ("OPEN-QUESTIONS.md", "RECON-CHECKLIST.md"):
+            fx = pdir / aux
+            if fx.is_file():
+                extra.append(("plans/%s/%s" % (slug, aux),
+                              fx.read_text(encoding="utf-8")))
+        if f["fix_draft"]:
+            extra.append(("REPO CONTEXT — PARTIAL: only some matching "
+                          "files inlined; a fix needing files not shown "
+                          "here stays unfixed and is reported",
+                          self._context_pack(repo,
+                                             "\n".join(f["fix_draft"]))))
+        if not self._run_api(repo, "intake", "owner-resolve.md", slug,
+                             slug, extra, ui["model"], ui["key"]):
+            return False
+        extra = [("PART-00.md", p00),
+                 ("plans/%s/PART-01.draft.md" % slug,
+                  (pdir / "PART-01.draft.md").read_text(encoding="utf-8")),
+                 ("templates/PART-01.md",
+                  (repo / "templates" / "PART-01.md").read_text(
+                      encoding="utf-8"))]
+        for aux in ("OPEN-QUESTIONS.md", "RECON-CHECKLIST.md"):
+            fx = pdir / aux
+            if fx.is_file():
+                extra.append(("plans/%s/%s" % (slug, aux),
+                              fx.read_text(encoding="utf-8")))
+        self._run_api(repo, "intake", "validate-plan.md", slug, slug,
+                      extra, ui["model"], ui["key"])
+        self._echo_validation(pdir)
+        val = pdir / "VALIDATION.md"
+        if val.is_file() and parse_validation_findings(
+                val.read_text(encoding="utf-8"))["ready"]:
+            self.say("intake", "auto-resolve complete — VALIDATION.md now "
+                     "says PART-01 READY; Freeze is unblocked.")
+        else:
+            self.say("intake", "auto-resolve: findings remain — answer "
+                     "anything marked NEEDS CLARIFICATION in the Owner "
+                     "pass tab, then click 'Auto-resolve findings' "
+                     "again.")
+        return True
+
+    def on_auto_resolve(self):
+        """v2.8 — one-click remediation of VALIDATION.md findings: no
+        manual command relay, no retyping instructions."""
+        repo = self._preflight()
+        if repo is None: return
+        slug = self._get_slug("intake")
+        if not SLUG_RE.match(slug):
+            messagebox.showerror("Auto-resolve",
+                                 "Enter the slug first (kebab-case).")
+            return
+        pdir = repo / "plans" / slug
+        if not (pdir / "PART-01.draft.md").is_file():
+            messagebox.showerror("Auto-resolve",
+                "plans/%s/PART-01.draft.md not found — both the owner-"
+                "answer integration and the draft fixes edit the draft; "
+                "run intake first." % slug)
+            return
+        val = pdir / "VALIDATION.md"
+        if not val.is_file():
+            messagebox.showerror("Auto-resolve",
+                "plans/%s/VALIDATION.md not found — click 'Validate "
+                "draft' first." % slug)
+            return
+        body = val.read_text(encoding="utf-8")
+        f = parse_validation_findings(body)
+        if f["ready"]:
+            messagebox.showinfo("Auto-resolve",
+                "VALIDATION.md already says PART-01 READY — nothing to "
+                "resolve; Freeze is unblocked.")
+            return
+        if not f["n"]:
+            messagebox.showwarning("Auto-resolve",
+                "VALIDATION.md has no numbered findings the console can "
+                "parse (legacy freeform report?). Re-run 'Validate "
+                "draft' with the current command files, then try again.")
+            return
+        self.say("intake", "auto-resolve: %d finding(s) — %d owner-"
+                 "resolve, %d draft fix(es), %d other"
+                 % (f["n"], len(f["owner_resolve"]), len(f["fix_draft"]),
+                    len(f["other"])))
+        ui = {"model": self.model_cb.get().strip(),
+              "key": self._or_key_value()}
+        threading.Thread(target=self._auto_resolve_thread,
+                         args=(repo, slug, ui, f), daemon=True).start()
+
+    def _auto_resolve_thread(self, repo, slug, ui, f):
+        self._busy(True, "auto-resolve running …")
+        try:
+            self._auto_resolve_chain(repo, slug, ui, f)
+        except Exception as exc:
+            self.say("intake", "ERROR: %s" % exc)
+        finally:
+            self._busy(False)
 
     def _after_intake(self, repo, slug):
         pdir = repo / "plans" / slug

@@ -1,6 +1,7 @@
 ---
-description: Integrate owner answers, finish agent-runnable recon, sharpen
-             unclear questions (never answer them)
+description: Integrate owner answers, resolve validation findings, finish
+             agent-runnable recon, sharpen unclear questions (never answer
+             them)
 argument-hint: <slug>
 ---
 Arguments: $ARGUMENTS → SLUG
@@ -15,9 +16,24 @@ Inputs:
   only, NEVER an owner answer; integrate only the owner's answer.
 - plans/SLUG/OPEN-QUESTIONS.md — questions still awaiting the owner.
 - plans/SLUG/RECON-CHECKLIST.md — `- [ ]` / `- [x]` items.
+- plans/SLUG/VALIDATION.md — the latest validation report, if present:
+  findings ending "fix in the draft, then re-validate" are resolved by
+  step 0 below (no separate fix pass is needed).
 
 Execute in order:
 
+0. RESOLVE VALIDATION FINDINGS. If VALIDATION.md exists and lists
+   findings, apply each "fix in the draft" finding to
+   PART-01.draft.md now:
+   - NEVER invent facts. Add a "verified YYYY-MM-DD" marker or replace
+     a placeholder ONLY when the fact is confirmed by an owner answer,
+     recon evidence, or a local check you just ran; otherwise leave the
+     line as it is and say in your notes why it still needs the owner.
+   - Structural fixes need no new facts and are applied directly:
+     session-map scope rows missing file paths, model/provider tokens
+     appearing outside §D (reference §D instead), missing mandatory §E
+     fields the draft already implies, contradictions between sections.
+   - Do NOT edit VALIDATION.md — re-validation overwrites it.
 1. INTEGRATE OWNER ANSWERS. For each Q/A pair under ## OWNER ANSWERS:
    - Move the answer's content into the correct draft section: scope or
      session-map decisions → §A; checkable facts → §B (mark
@@ -58,7 +74,8 @@ Execute in order:
 4. Emit every file you changed (PART-01.draft.md, OPEN-QUESTIONS.md,
    RECON-CHECKLIST.md — full files). End your notes with exactly one
    line: answers integrated X / need clarification Y / questions
-   sharpened Z / checklist ticked W / owner-only V.
+   sharpened Z / checklist ticked W / owner-only V / draft fixes
+   applied F.
 
 Next: commands/validate-plan.md <slug> — validation is the step after
 integration; Freeze only unlocks on "PART-01 READY".
