@@ -65,7 +65,7 @@
     <p>The log shows you <code>OPEN-QUESTIONS.md</code>. For each question:</p>
     <ul>
         <li>If you know the answer: open <code>plans/<slug>/PART-01.draft.md</code> in VS Codium, put the answer in the right section, then <strong>DELETE</strong> the question line from <code>OPEN-QUESTIONS.md</code>.</li>
-        <li>If it lists commands under "## Owner actions" (things needing your passwords, dashboards, databases): run them yourself in a terminal, put the results into the draft, and delete those lines.</li>
+        <li><strong>Owner actions</strong> (right-hand panel): commands the agent may never run — needing your passwords, dashboards or owner-only files — are listed from <code>## Owner actions</code> in <code>OPEN-QUESTIONS.md</code>. Read-only commands (Select-String, Test-Path, Get-Content, git status/diff/log) get a <strong>Run (read-only)</strong> button: the console runs the command in your repo, shows the output, and — after you confirm — marks the linked §B line <code>VERIFIED <today></code> and ticks the action done. Anything else: <strong>Copy command</strong>, run it in your own terminal, then <strong>Mark done</strong>. Nothing runs or is written without your confirmation; every event is archived to <code>owner-pass.log</code>.</li>
     </ul>
 
     <p>Then handle <code>RECON-CHECKLIST.md</code>: items the agent could already check are ticked <code>[x]</code>. Items left for you: run them, and change <code>[ ]</code> to <code>[x]</code> when done (or delete lines you decide to skip).</p>

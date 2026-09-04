@@ -104,6 +104,27 @@ v2.8 — automated finding resolution ("Auto-resolve findings"):
     "Update command files" once (owner-resolve.md + validate-plan.md
     changed). Legacy frozen PART-01.md support is untouched — the
     remediation always edits the draft, never a frozen file.
+v3.2 — one slug, remembered:
+  * The three slug fields (Intake / Sessions / Owner pass) now share ONE
+    StringVar — typing in any tab instantly updates the others, and
+    _get_slug() reads that single value.
+  * The slug is persisted in plan-console.json: "last_slug" is restored
+    at startup, and "recent_slugs" keeps the last 10 kebab-case slugs.
+  * The slug fields are comboboxes whose dropdown lists the recent
+    slugs plus every plans/<slug>/ directory found in the configured
+    repo — switching plans is one click, no retyping.
+v3.4 — the slug field looks editable:
+  * New users read the dropdown arrow as "select-only" and never try
+    typing a custom slug. Each slug field now carries a live helper
+    line underneath: "type a new slug or pick one from the list ▾"
+    when empty, turning into instant feedback while typing —
+    kebab-case violations (red), existing plan (green, "will reuse"),
+    new plan (cyan, "will create").
+  * Typing filters the dropdown (autocomplete, same pattern as the
+    model picker); the combobox focus ring is cyan so the text caret
+    and editability are visible; ↑/↓ still open and walk the list.
+  * slug_feedback() is a pure function so the UX copy and states are
+    unit-testable without Tk.
 
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
@@ -135,6 +156,106 @@ CFG = HERE / "plan-console.json"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MODELS_URL = "https://openrouter.ai/api/v1/models"
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+# v3.3.1 — cross-repo slug leakage fix. recent_slugs is a GLOBAL list
+# (plan-console.json is shared by every repo the console is pointed at);
+# merging it unfiltered into the dropdown let a plan from repo A appear
+# in repo B's plan list. The dropdown values must be scoped to the
+# CURRENT repo: a recent slug survives only if it exists in this repo's
+# plans/ directory. Pure functions so the behavior is unit-testable
+# without Tk.
+# v3.3.2 — a plans/<name>/ directory counts as a PLAN only when it
+# carries a plan marker file. A bare kebab-case directory under plans/
+# (misplaced commands/, templates/, archives like plans-old-structure/)
+# passes SLUG_RE but is not a plan and must not appear in the dropdown.
+# Marker set mirrors the console's own lifecycle: intake scaffolds
+# SOURCE.md (a fresh plan may contain ONLY SOURCE.md), the owner pass
+# and gates add OPEN-QUESTIONS/RECON-CHECKLIST/TRIAGE/HEALTH/VALIDATION,
+# and Freeze writes PART-01*.md.
+PLAN_MARKER_FILES = ("SOURCE.md", "OPEN-QUESTIONS.md", "RECON-CHECKLIST.md",
+                     "TRIAGE.md", "HEALTH.md", "VALIDATION.md")
+
+
+def is_plan_dir(path):
+    """True when <path> is a directory holding a recognized plan file.
+    PART-01.draft.md / PART-01 v*.md always qualify; a legacy bare
+    PART-01.md qualifies only with a freeze header ("frozen" in its
+    first 3 lines — the same rule _frozen_file() applies), so the
+    PART-01.md TEMPLATE (no freeze header) is never mistaken for a
+    plan."""
+    try:
+        if not path.is_dir():
+            return False
+        for m in PLAN_MARKER_FILES:
+            if (path / m).is_file():
+                return True
+        if any(path.glob("PART-01 v*.md")):
+            return True
+        if (path / "PART-01.draft.md").is_file():
+            return True
+        legacy = path / "PART-01.md"
+        if legacy.is_file():
+            head = "\n".join(legacy.read_text(encoding="utf-8")
+                             .splitlines()[:3]).lower()
+            if "frozen" in head:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def scan_plan_slugs(repo):
+    """Sorted kebab-case plan directories under <repo>/plans/ — a
+    directory qualifies only when SLUG_RE matches AND it holds a
+    recognized plan marker file (is_plan_dir)."""
+    found = []
+    try:
+        plans = Path(repo) / "plans"
+        if plans.is_dir():
+            for p in sorted(plans.iterdir()):
+                if p.is_dir() and SLUG_RE.match(p.name) and is_plan_dir(p):
+                    found.append(p.name)
+    except Exception:
+        pass
+    return found
+
+
+def merge_slug_values(repo, recent_slugs, limit=10):
+    """Dropdown values for the CURRENT repo: recent slugs that still
+    exist here first (recent order kept), then the repo's remaining
+    plans/<slug>/ directories — deduped, max `limit`. Foreign slugs
+    (plans living in other repos) can never leak in."""
+    disk = scan_plan_slugs(repo)
+    disk_set = set(disk)
+    vals = []
+    for s in (recent_slugs or []):
+        if isinstance(s, str) and SLUG_RE.match(s) and s in disk_set and s not in vals:
+            vals.append(s)
+    for s in disk:
+        if s not in vals:
+            vals.append(s)
+    return vals[:limit]
+
+# v3.4 — the slug combobox must LOOK editable, not select-only. The
+# helper line under each slug field is driven by this pure function so
+# the UX copy and its states (hint / new / exists / invalid) are
+# unit-testable without Tk (PART-01 §B).
+SLUG_HINT_TEXT = "type a new slug or pick one from the list ▾"
+
+
+def slug_feedback(slug, exists):
+    """(text, kind) for the live helper line under a slug field.
+    kind: 'hint' (empty), 'invalid' (not kebab-case), 'exists' (the
+    plan directory is already there), 'new' (Proceed will create it)."""
+    if not slug:
+        return (SLUG_HINT_TEXT, "hint")
+    if not SLUG_RE.match(slug):
+        return ("kebab-case only: a-z, 0-9 and '-' (e.g. payments-v2)",
+                "invalid")
+    if exists:
+        return ("plans/%s exists — Proceed will reuse it" % slug, "exists")
+    return ("new plan — Proceed creates plans/%s" % slug, "new")
 
 # v2.1 — block-aware question parsing (owner pass + freeze + status)
 Q_LINE_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")
@@ -275,12 +396,38 @@ def apply_theme(root, style, name):
     style.map("TEntry", fieldbackground=[("readonly", t["bg-card"])])
     style.configure("TCombobox", fieldbackground=t["bg-card"],
                     foreground=t["text-main"],
-                    bordercolor=t["border-color"])
+                    background=t["bg-card"],
+                    arrowcolor=t["text-main"],
+                    bordercolor=t["border-color"],
+                    lightcolor=t["bg-card"], darkcolor=t["bg-card"])
     style.map("TCombobox", fieldbackground=[("readonly", t["bg-card"])],
-              foreground=[("readonly", t["text-main"])])
+              foreground=[("readonly", t["text-main"])],
+              arrowcolor=[("disabled", t["text-muted"])],
+              background=[("active", t["bg-card"]),
+                          ("pressed", t["bg-card"])],
+              # v3.4 — cyan focus ring: makes the combobox read as an
+              # editable text field the moment it takes focus
+              bordercolor=[("focus", t["accent-cyan"])])
+    # v3.3 — the dropdown popdown is a classic tk Listbox living in its own
+    # Toplevel: ttk.Style cannot reach it, so theme it via the option DB
+    # (clam leaves it white otherwise, PART-01 §G).
+    root.option_add("*TCombobox*Listbox.background", t["bg-card"])
+    root.option_add("*TCombobox*Listbox.foreground", t["text-main"])
+    root.option_add("*TCombobox*Listbox.selectBackground", t["bg-accent"])
+    root.option_add("*TCombobox*Listbox.selectForeground", t["text-main"])
     style.configure("TCheckbutton", background=t["bg-main"],
-                    foreground=t["text-main"])
-    style.map("TCheckbutton", background=[("active", t["bg-main"])])
+                    foreground=t["text-main"],
+                    indicatorbackground=t["bg-card"],
+                    indicatorforeground=t["text-main"],
+                    bordercolor=t["border-color"],
+                    lightcolor=t["bg-card"], darkcolor=t["bg-card"])
+    style.map("TCheckbutton",
+              background=[("active", t["bg-main"])],
+              indicatorbackground=[
+                  ("selected", t["accent-cyan"]),
+                  ("pressed", t["bg-accent"]),
+                  ("active", t["bg-card"])],
+              indicatorforeground=[("selected", "#ffffff")])
     style.configure("TSpinbox", fieldbackground=t["bg-card"],
                     foreground=t["text-main"],
                     insertbackground=t["text-main"],
@@ -291,6 +438,10 @@ def apply_theme(root, style, name):
     # v3.1 — status pills (tab status lines, owner-pass status line)
     style.configure("Pill.TLabel", background=t["bg-accent"],
                     foreground=t["text-main"], padding=(10, 3))
+    # v3.4 — helper line under each slug field (muted by default; the
+    # live feedback recolors it per slug_feedback kind)
+    style.configure("SlugHint.TLabel", background=t["bg-main"],
+                    foreground=t["text-muted"])
     root.configure(bg=t["bg-main"])
     _walk_classic_widgets(root, t)
     return True
@@ -464,6 +615,141 @@ def count_owner_answers(text):
     if in_pair and not flagged:
         leftover += 1
     return leftover
+
+
+# ----------------------------------------------------------------------------
+# v3.5 — Owner actions ("## Owner actions" in OPEN-QUESTIONS.md): commands
+# only the owner may run. The console SURFACES them (Owner pass tab), runs
+# whitelisted read-only commands on one click, and — only after the owner
+# confirms the result — writes the VERIFIED date back into the linked §B
+# line of PART-01.draft.md. Default-deny: anything outside the read-only
+# whitelist is copy-to-clipboard only, never auto-run.
+# ----------------------------------------------------------------------------
+# `→ verifies §B "<exact §B line prefix>"` — links an action to the §B
+# line it confirms (enables the one-click VERIFIED write-back)
+OA_VERIFIES_RE = re.compile(r"→\s*verifies\s*§B\s*[\"“'](.+?)[\"”']", re.I)
+# `(expect: no matches)` / `(expect: matches)` — the passing result
+# (colon optional: legacy bullets write "(expect no matches)")
+OA_EXPECT_RE = re.compile(r"\(expect:?\s*([^)]+)\)", re.I)
+# plain bullet WITHOUT a checkbox — the legacy owner-action form ("- prose");
+# it counts as an unchecked action so existing plans keep working
+OA_PLAIN_BULLET_RE = re.compile(r"^\s*[-*+]\s+(?!\[)")
+OA_CMD_RE = re.compile(r"`([^`\n]+)`")
+# default-deny whitelist: prefixes that only READ state, never mutate.
+# Keep this list SHORT and provably side-effect-free.
+READONLY_PREFIXES = (
+    "select-string", "test-path", "get-content", "get-item", "get-childitem",
+    "git status", "git diff", "git log", "git show",
+)
+
+
+def is_readonly_command(cmd):
+    """True when <cmd> starts with a whitelisted read-only prefix (v3.5).
+    Default-deny: unknown commands are copy-only, never auto-run."""
+    c = cmd.strip().lower()
+    return any(c.startswith(p) for p in READONLY_PREFIXES)
+
+
+def parse_owner_actions(text):
+    """[(lineno, checked, prose, command, verifies, expect)] from the
+    '## Owner actions' section of an OPEN-QUESTIONS.md body (v3.5).
+    A `- [ ]`/`- [x]` bullet — or a legacy plain `- prose` bullet,
+    counted as unchecked — opens one action; the first backticked span
+    in the bullet's block is the command; indented continuation lines
+    join the block (so multi-line bullets parse whole). `verifies` and
+    `expect` are None when the tags are absent. Content before the
+    section, other sections, and code fences never count — mirroring the
+    question counter's fence handling."""
+    actions = []
+    pos = text.find("## Owner actions")
+    if pos == -1:
+        return actions
+    lineno0 = text[:pos].count("\n") + 1
+    cur = None
+    fence = False
+    for off, line in enumerate(text[pos:].splitlines()):
+        if off and line.lstrip().startswith("## "):
+            break                # a later heading ends the section
+        if line.strip().startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        m = RECON_ITEM_RE.match(line)
+        plain = None if m else OA_PLAIN_BULLET_RE.match(line)
+        if m or plain:
+            if cur:
+                actions.append(cur)
+            s = line.strip()
+            cm = OA_CMD_RE.search(s)
+            vm = OA_VERIFIES_RE.search(s)
+            em = OA_EXPECT_RE.search(s)
+            cur = {"lineno": lineno0 + off,
+                   "checked": bool(m) and m.group(1).lower() == "x",
+                   "prose": s[(m or plain).end():].strip(),
+                   "command": cm.group(1).strip() if cm else None,
+                   "verifies": vm.group(1).strip() if vm else None,
+                   "expect": em.group(1).strip() if em else None}
+        elif cur is not None and line.startswith((" ", "\t")):
+            # continuation of the bullet above: harvest a command or tag
+            # the agent wrapped onto the next line
+            s = line.strip()
+            if cur["command"] is None:
+                cm = OA_CMD_RE.search(s)
+                if cm:
+                    cur["command"] = cm.group(1).strip()
+            if cur["verifies"] is None:
+                vm = OA_VERIFIES_RE.search(s)
+                if vm:
+                    cur["verifies"] = vm.group(1).strip()
+            if cur["expect"] is None:
+                em = OA_EXPECT_RE.search(s)
+                if em:
+                    cur["expect"] = em.group(1).strip()
+            cur["prose"] = (cur["prose"] + " " + s).strip()
+        elif cur is not None and line.strip() and not line.startswith(" "):
+            # a flush-left non-bullet line ends the bullet block
+            actions.append(cur)
+            cur = None
+    if cur:
+        actions.append(cur)
+    return actions
+
+
+def count_open_owner_actions(text):
+    """Unchecked `- [ ]` actions under '## Owner actions' (v3.5) — the
+    number the Freeze gate and the Owner-pass tab report, matching the
+    validate-plan check."""
+    return sum(1 for a in parse_owner_actions(text) if not a["checked"])
+
+
+def mark_sb_verified(draft_text, prefix, date, command=""):
+    """(new_text, new_line) — promote the FIRST §B line of a PART-01
+    draft whose text starts with <prefix> from UNVERIFIED to
+    'VERIFIED <date> (owner-run: <command>)' (v3.5). Only lines inside
+    the §B region (between the 'B.' and 'C.' headings) match, and only
+    when they are still UNVERIFIED — an already-verified line is never
+    touched. Returns (None, None) when nothing matches."""
+    lines = draft_text.splitlines()
+    in_b = False
+    for i, line in enumerate(lines):
+        if re.match(r"^B\.\s", line):
+            in_b = True
+            continue
+        if in_b and re.match(r"^C\.\s", line):
+            break
+        if not in_b:
+            continue
+        body = line.strip().lstrip("- ").strip()
+        if not body.startswith(prefix):
+            continue
+        if "UNVERIFIED" not in line:
+            return None, None          # already verified — never rewrite
+        note = "VERIFIED %s (owner-run: %s)" % (date, command or "manual")
+        lines[i] = line.replace("UNVERIFIED", note, 1)
+        return "\n".join(lines) + ("\n" if draft_text.endswith("\n") else ""), \
+            lines[i].strip()
+    return None, None
 
 
 # ----------------------------------------------------------------------------
@@ -1090,6 +1376,17 @@ questions — they live only under a "## Owner actions" heading at the
 end. Prose summaries and resolution notes go under '#' comment lines
 (the console ignores those).
 
+Owner-action format (the console renders these in the Owner pass tab):
+each bullet is `- [ ] <prose>` with the exact command in backticks.
+Optional tags on the same bullet:
+- `→ verifies §B "<exact §B line prefix>"` — links the action to the
+  §B line it confirms (enables one-click VERIFIED write-back).
+- `(expect: no matches)` or `(expect: matches)` — the passing result.
+Read-only commands (Select-String, Test-Path, Get-Content, git
+status/diff/log) get a Run button in the console; anything else is
+copy-only. The console ticks `- [x]` and marks the linked §B line
+VERIFIED only after the owner confirms the result in the dialog.
+
 TYPE=plan (a ready-made, already-structured plan):
 - Normalize the plan into the template §A–G structure: map its own
   sections onto the template sections (mission/scope → §A, stated
@@ -1242,8 +1539,12 @@ tick it `- [x]`. Promote matching PART-01.draft.md §B lines to
 VERIFIED <today> ONLY where the check passed. Failures stay UNVERIFIED
 with a note.
 
-OWNER-ONLY items: append exact commands/SQL to OPEN-QUESTIONS.md under
-"## Owner actions" — do not stall on them.
+OWNER-ONLY items: append exact commands to OPEN-QUESTIONS.md under
+"## Owner actions" — do not stall on them. Use the owner-action format
+from commands/new-plan.md: `- [ ] <prose>` with the backticked command,
+plus `→ verifies §B "<exact §B line prefix>"` and `(expect: …)` tags
+when the command confirms an UNVERIFIED §B line (the console then
+offers one-click Run + VERIFIED write-back).
 
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:
@@ -1272,6 +1573,10 @@ templates/PART-01.md. Check ONLY:
   blocks, counted once per block, or legacy '?'-ending one-liners,
   outside "## Owner actions" and code fences — the Plan Console counts
   the same way)
+- unchecked `- [ ]` actions under "## Owner actions" in
+  OPEN-QUESTIONS.md — the console counts the same way; the remediation
+  for such a finding is the OWNER running or copying the command in the
+  Owner pass tab (or the terminal), never the agent, then re-validate
 - unresolved `- [ ]` items in RECON-CHECKLIST.md (owner-marked DEFERRED
   items count as resolved)
 - leftover Q/A pairs in "## OWNER ANSWERS" (integrated or marked
@@ -1424,6 +1729,10 @@ class App:
         self.root, self.q = root, queue.Queue()
         self.logs, self.status = {}, {}
         self.cfg = self._load_cfg()
+        # v3.2 — one shared slug for all three tabs, restored from cfg
+        self.slug_var = tk.StringVar(value=str(self.cfg.get("last_slug", "")))
+        self._recent_slugs = [s for s in self.cfg.get("recent_slugs", [])
+                              if isinstance(s, str) and SLUG_RE.match(s)][:10]
         self._cancel_events = set()   # live cancel Events, one per API call
         self._cancel_lock = threading.Lock()
         self._n_busy = 0
@@ -1452,6 +1761,11 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._topbar()
         self._tabs()
+        # v3.4 — one shared slug var: typing in any tab refreshes the
+        # helper lines of ALL three slug fields, not just the edited one
+        self.slug_var.trace_add("write", self._on_slug_var_changed)
+        # v3.3 — one consistent dropdown value-list across all three tabs
+        self._refresh_slug_values()
         self._apply_theme_setting()
         self._fetch_models()
         root.after(100, self._drain)
@@ -1488,9 +1802,13 @@ class App:
         top.columnconfigure(1, weight=1)
         # Row 0: repo folder
         ttk.Label(top, text="Repo folder").grid(row=0, column=0, sticky="w")
-        self.repo = ttk.Entry(top)
-        self.repo.insert(0, self.cfg.get("repo", str(Path.cwd())))
+        # v3.3 — the entry is driven by an explicit StringVar so a write
+        # trace can refresh the slug dropdowns on manual edits too
+        self.repo_var = tk.StringVar(value=self.cfg.get("repo", str(Path.cwd())))
+        self.repo = ttk.Entry(top, textvariable=self.repo_var)
         self.repo.grid(row=0, column=1, sticky="we", padx=4)
+        self._repo_trace_job = None
+        self.repo_var.trace_add("write", self._on_repo_changed)
         ttk.Button(top, text="Browse…", command=self._browse_repo)\
             .grid(row=0, column=2, padx=(4, 0))
         ttk.Button(top, text="Init starter repo",
@@ -1596,6 +1914,11 @@ class App:
         """Re-color the token-driven labels (hints, link, full-question
         text) for the current effective theme. No-op when high-contrast
         mode is active — never fight the OS (§G)."""
+        # v3.4 — slug helper lines re-derive their color from the tokens
+        for cb in (getattr(self, "slug", None), getattr(self, "sslug", None),
+                   getattr(self, "oslug", None)):
+            if cb is not None:
+                self._slug_feedback(cb)
         t = self._tokens
         if not t:
             return
@@ -1712,7 +2035,10 @@ class App:
         self.kind.set(self.cfg.get("kind", "plan"))
         self.kind.grid(row=0, column=1, padx=4)
         ttk.Label(top, text="Slug").grid(row=0, column=2)
-        self.slug = ttk.Entry(top, width=20); self.slug.grid(row=0, column=3, padx=4)
+        # v3.2 — all three slug fields share self.slug_var (one slug,
+        # typed once; dropdown offers recent + plans/ slugs)
+        # v3.4 — _slug_field grids the field AND its helper line (row+1)
+        self.slug = self._slug_field(top, 0, 3)
         self.auto_recon = tk.BooleanVar(value=False)
         self.auto_validate = tk.BooleanVar(value=False)
         self.auto_resolve = tk.BooleanVar(value=True)
@@ -1745,7 +2071,7 @@ class App:
     def _session_tab(self, f):
         top = ttk.Frame(f); top.pack(fill="x", padx=10, pady=(6, 0))
         ttk.Label(top, text="Slug").grid(row=0, column=0)
-        self.sslug = ttk.Entry(top, width=20); self.sslug.grid(row=0, column=1, padx=4)
+        self.sslug = self._slug_field(top, 0, 1)
         ttk.Label(top, text="Session #").grid(row=0, column=2)
         self.snum = ttk.Spinbox(top, from_=1, to=99, width=5)
         self.snum.set("1"); self.snum.grid(row=0, column=3, padx=4)
@@ -1763,8 +2089,7 @@ class App:
     def _owner_tab(self, f):
         top = ttk.Frame(f); top.pack(fill="x", padx=10, pady=(6, 0))
         ttk.Label(top, text="Slug").grid(row=0, column=0)
-        self.oslug = ttk.Entry(top, width=20)
-        self.oslug.grid(row=0, column=1, padx=4)
+        self.oslug = self._slug_field(top, 0, 1)
         ttk.Button(top, text="Refresh",
                    command=self.on_owner_refresh).grid(row=0, column=2, padx=4)
         # v2.6 — P1: read-only dry-run of the Freeze gates, on this tab
@@ -1814,6 +2139,20 @@ class App:
                    command=self.on_tick_toggle).pack(side="left")
         ttk.Button(barr, text="Verify EXISTS items",
                    command=self.on_verify_exists).pack(side="left", padx=6)
+        # v3.5 — owner actions: commands only the owner may run, surfaced
+        # here so they can never be silently skipped before Freeze
+        oa = ttk.Labelframe(body, text="Owner actions")
+        oa.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        self.oa_list = tk.Listbox(oa, height=10)
+        self.oa_list.pack(fill="both", expand=True, padx=6, pady=6)
+        baro = ttk.Frame(oa); baro.pack(fill="x", padx=6, pady=6)
+        self.btn_oa_run = ttk.Button(baro, text="Run (read-only)",
+                                     command=self.on_owner_action_run)
+        self.btn_oa_run.pack(side="left")
+        ttk.Button(baro, text="Copy command",
+                   command=self.on_owner_action_copy).pack(side="left", padx=4)
+        ttk.Button(baro, text="Mark done",
+                   command=self.on_owner_action_done).pack(side="left")
         # bottom: hand the rest to the agent
         bar2 = ttk.Frame(f); bar2.pack(fill="x", padx=10, pady=(0, 4))
         ttk.Button(bar2, text="Agent: finish owner pass",
@@ -1826,6 +2165,7 @@ class App:
             wraplength=680, justify="left")
         self._agent_hint.pack(side="left", padx=8)
         self._oq_items, self._rc_items = [], []
+        self._oa_items = []     # v3.5 — parsed owner actions
         self._oq_file = self._rc_file = None
         self._oq_text = ""      # v2.1 — raw text for full-block display
 
@@ -1874,10 +2214,12 @@ class App:
         if got is None: return
         slug, pdir = got
         self._oq_items, self._rc_items = [], []
+        self._oa_items = []     # v3.5 — parsed owner actions
         self._oq_text = ""      # v2.1 — raw text for full-block display
         self._oq_file, self._rc_file = (pdir / "OPEN-QUESTIONS.md",
                                         pdir / "RECON-CHECKLIST.md")
         self.oq_list.delete(0, "end"); self.rc_list.delete(0, "end")
+        self.oa_list.delete(0, "end")
         if hasattr(self, "q_full"):
             self.q_full.configure(text="(select a question to read it in full)")
         if not pdir.is_dir():
@@ -1900,6 +2242,15 @@ class App:
                     mark = "[x]" if state == "done" else "[ ]"
                     self.rc_list.insert("end", "%s %s"
                                         % (mark, line.strip().lstrip("- ").strip()[:108]))
+        # v3.5 — owner actions from the same OPEN-QUESTIONS.md body
+        for a in parse_owner_actions(self._oq_text):
+            self._oa_items.append(a)
+            mark = "[x]" if a["checked"] else "[ ]"
+            ro = " (read-only)" if (a["command"]
+                                    and is_readonly_command(a["command"])) else ""
+            label = a["prose"] or (a["command"] or "(no command)")
+            self.oa_list.insert("end", "%s %s%s"
+                                % (mark, label[:100], ro))
         nq = len(self._oq_items)
         # v2.6.1 — same counting as the Freeze gate: real checkbox lines
         # only, DEFERRED counts as resolved (so "ready to Freeze" is true)
@@ -1913,6 +2264,9 @@ class App:
         draft = pdir / "PART-01.draft.md"
         if draft.is_file():
             na = count_owner_answers(draft.read_text(encoding="utf-8"))
+        # v3.5 — unchecked owner actions block Freeze exactly like open
+        # questions and unchecked recon items
+        noa = sum(1 for a in self._oa_items if not a["checked"])
         # v2.6.4 — third Freeze gate surfaced here too: the status line
         # checks VALIDATION.md (missing or != "PART-01 READY") so it can
         # never say "ready to Freeze" while the Freeze button would fail
@@ -1932,6 +2286,9 @@ class App:
         elif na:
             hint = (" — next: 'Agent: finish owner pass' — integrates %d "
                     "answered question(s) into the draft" % na)
+        elif noa:
+            hint = (" — next: run/copy the owner actions (right-hand panel) "
+                    "or mark them done")
         elif nu:
             hint = " — next: tick recon items"
         elif vnote:
@@ -1940,11 +2297,183 @@ class App:
             hint = " — ready to Freeze"
         self.owner_status.configure(
             text=("%d open question(s), %d answer(s) awaiting integration, "
-                  "%d unchecked item(s)%s" % (nq, na, nu, hint)))
-        if (nq == 0 and na == 0 and nu == 0 and not vnote
+                  "%d owner action(s), %d unchecked item(s)%s"
+                  % (nq, na, noa, nu, hint)))
+        if (nq == 0 and na == 0 and noa == 0 and nu == 0 and not vnote
                 and (self._oq_file.is_file() or self._rc_file.is_file())):
             self.say("intake", "owner pass: everything resolved — Freeze "
                      "is unblocked.")
+
+    # ------------------------------------------------- owner actions (v3.5)
+    def _selected_owner_action(self):
+        sel = self.oa_list.curselection()
+        if not sel or sel[0] >= len(self._oa_items):
+            messagebox.showerror(
+                "Owner actions", "Select an owner action first.")
+            return None
+        return self._oa_items[sel[0]]
+
+    def _tick_owner_action(self, action):
+        """Flip the checkbox of <action> in OPEN-QUESTIONS.md — with the
+        same stale-index guard as on_answer_save/on_question_remove: the
+        line must still match what Refresh read, or nothing is written."""
+        if not self._oq_file or not self._oq_file.is_file():
+            messagebox.showerror("Owner actions", "Click Refresh first.")
+            return False
+        lines = self._oq_file.read_text(encoding="utf-8").splitlines()
+        ln = action["lineno"]
+        if not (0 <= ln < len(lines)):
+            messagebox.showerror(
+                "Owner actions",
+                "OPEN-QUESTIONS.md changed since Refresh — click Refresh.")
+            return False
+        flipped = flip_recon_item(lines[ln])
+        if flipped is None:
+            # legacy plain bullet ("- prose"): upgrade it to checkbox form
+            m = OA_PLAIN_BULLET_RE.match(lines[ln])
+            if not m:
+                messagebox.showerror(
+                    "Owner actions",
+                    "OPEN-QUESTIONS.md changed since Refresh — click "
+                    "Refresh.")
+                return False
+            flipped = (lines[ln][:m.end()] + "[x] "
+                       + lines[ln][m.end():].lstrip())
+        if flipped == lines[ln]:
+            messagebox.showerror(
+                "Owner actions",
+                "OPEN-QUESTIONS.md changed since Refresh — click Refresh.")
+            return False
+        lines[ln] = flipped
+        self._oq_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self._log_owner_action(action, "marked done")
+        return True
+
+    def _log_owner_action(self, action, what, extra=""):
+        """One archive line per owner-action event (owner-pass.log via
+        the owner log) — nothing the owner does here is ever lost."""
+        cmd = action.get("command") or "(no command)"
+        self.say("owner", "owner action: %s — %s%s"
+                 % (what, cmd, (" — " + extra) if extra else ""))
+
+    def on_owner_action_copy(self):
+        a = self._selected_owner_action()
+        if a is None: return
+        if not a["command"]:
+            messagebox.showerror("Owner actions",
+                                 "This action has no backticked command.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(a["command"])
+        self._log_owner_action(a, "command copied to clipboard")
+
+    def on_owner_action_done(self):
+        a = self._selected_owner_action()
+        if a is None: return
+        if a["checked"]:
+            messagebox.showinfo("Owner actions", "Already marked done.")
+            return
+        if self._tick_owner_action(a):
+            self.on_owner_refresh()
+
+    def on_owner_action_run(self):
+        """v3.5 — run a whitelisted read-only command in the repo root,
+        capture its output, and — only after the owner confirms — write
+        the VERIFIED date into the linked §B line. Default-deny: non-
+        whitelisted commands are copy-only."""
+        a = self._selected_owner_action()
+        if a is None: return
+        if not a["command"]:
+            messagebox.showerror("Owner actions",
+                                 "This action has no backticked command.")
+            return
+        if not is_readonly_command(a["command"]):
+            messagebox.showerror(
+                "Owner actions",
+                "Not on the read-only whitelist — use 'Copy command' and "
+                "run it yourself, then 'Mark done'.")
+            return
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", a["command"]],
+                cwd=str(self.repo_path()), capture_output=True, text=True,
+                timeout=60)
+        except Exception as e:
+            messagebox.showerror("Owner actions", "Run failed: %s" % e)
+            return
+        out = (r.stdout or "").strip()
+        err = (r.stderr or "").strip()
+        for ln in (out.splitlines() or ["(no output)"])[:10]:
+            self.say("owner", "  " + ln)
+        if err:
+            self.say("owner", "  stderr: " + err.splitlines()[0])
+        # evaluate the (expect: …) tag when present
+        expect = (a.get("expect") or "").strip().lower()
+        passed = None
+        if expect.startswith("no match"):
+            passed = (r.returncode == 0 and not out)
+        elif expect.startswith("match"):
+            passed = bool(out)
+        if passed is False:
+            self._log_owner_action(a, "result did NOT match expect: "
+                                      + (a.get("expect") or ""))
+            messagebox.showwarning(
+                "Owner actions",
+                "Result does not match the expected outcome — nothing "
+                "was written. Review the output in the log.")
+            return
+        if passed is not True:
+            # no expect tag: let the owner decide from the output
+            if not messagebox.askyesno(
+                    "Owner actions",
+                    "Command finished. Output is in the log.\n\nMark this "
+                    "action done%s?"
+                    % (" and verify the linked §B line"
+                       if a.get("verifies") else "")):
+                return
+        if a.get("verifies"):
+            self._verify_sb_line(a, out)
+        else:
+            if self._tick_owner_action(a):
+                self.say("owner", "owner action: no '→ verifies §B' tag — "
+                          "run 'Agent: finish owner pass' (owner-resolve) "
+                          "to mark the §B line VERIFIED, then re-validate.")
+                self.on_owner_refresh()
+
+    def _verify_sb_line(self, action, output):
+        """Owner-confirmed write-back: mark the §B line named by the
+        action's `→ verifies §B "…"` tag VERIFIED in PART-01.draft.md,
+        then tick the action. Shows the exact before/after line first —
+        the console never edits a §B line the owner hasn't confirmed."""
+        draft = self.repo_path() / "plans" / self._get_slug("owner") \
+            / "PART-01.draft.md"
+        if not draft.is_file():
+            messagebox.showerror("Owner actions",
+                                 "PART-01.draft.md not found.")
+            return
+        import datetime
+        new_text, new_line = mark_sb_verified(
+            draft.read_text(encoding="utf-8"), action["verifies"],
+            datetime.date.today().isoformat(), action["command"] or "")
+        if new_text is None:
+            messagebox.showerror(
+                "Owner actions",
+                "No UNVERIFIED §B line starts with:\n%s\n\nNothing was "
+                "written — check the verifies tag or integrate via "
+                "owner-resolve." % action["verifies"])
+            return
+        if not messagebox.askyesno(
+                "Owner actions",
+                "Write this into PART-01.draft.md §B?\n\n%s" % new_line):
+            return
+        draft.write_text(new_text, encoding="utf-8")
+        self._log_owner_action(action, "§B line marked VERIFIED",
+                               output.splitlines()[0] if output else "")
+        if self._tick_owner_action(action):
+            self.say("owner", "owner action: re-validate to refresh "
+                              "VALIDATION.md, then Freeze.")
+            self.on_owner_refresh()
 
     def on_answer_save(self, tag="ANSWERED"):
         got = self._owner_paths()
@@ -2261,23 +2790,146 @@ class App:
         d = filedialog.askdirectory(title="Choose your repo folder")
         if d:
             self.repo.delete(0, "end"); self.repo.insert(0, d)
+            # v3.3 — refresh the slug dropdowns right away; the write
+            # trace on repo_var would also fire, but do it here so the
+            # values are correct the moment the dialog closes.
+            self._refresh_slug_values(clear_invalid=True)
+
+    def _on_repo_changed(self, *_):
+        """v3.3 — debounced reaction to manual Repo-folder edits: refresh
+        the slug dropdowns once typing pauses (400 ms), never per
+        keystroke (intermediate paths must not clear the slug)."""
+        if self._repo_trace_job is not None:
+            try:
+                self.root.after_cancel(self._repo_trace_job)
+            except Exception:
+                pass
+        self._repo_trace_job = self.root.after(
+            400, lambda: self._refresh_slug_values(clear_invalid=True))
+
+    def _refresh_slug_values(self, clear_invalid=False):
+        """v3.3 — refresh the value-list of ALL three slug comboboxes
+        (Intake / Sessions / Owner pass) from recent_slugs + the plans/
+        scan of the current repo. Fixes the stale-dropdown bug: after
+        Browse… or a manual repo edit the <FocusIn> refresh never fired
+        (focus returns to the Browse button, not the combobox), so the
+        dropdowns kept entries from the previously selected folder.
+        With clear_invalid=True a slug that does not exist in the new
+        repo's plans/ is dropped (nothing to select or run against)."""
+        vals = self._slug_values()
+        for cb in (getattr(self, "slug", None), getattr(self, "sslug", None),
+                   getattr(self, "oslug", None)):
+            if cb is not None:
+                cb.configure(values=vals)
+                self._slug_feedback(cb)   # v3.4 — exists/new copy follows the repo
+        if clear_invalid:
+            slug = self.slug_var.get().strip()
+            if slug:
+                repo = self.repo_path()
+                if repo.is_dir() and not (repo / "plans" / slug).is_dir():
+                    self.slug_var.set("")
 
     def repo_path(self):
         return Path(self.repo.get().strip()).expanduser().resolve()
 
+    def _slug_field(self, parent, row, col):
+        """v3.2 — a slug combobox bound to the shared self.slug_var.
+        v3.4 — make the EDITABLE nature obvious (users read the dropdown
+        arrow as select-only): a live helper line under the field says
+        "type a new slug or pick one from the list ▾" when empty and
+        becomes instant feedback while typing (kebab-case violations,
+        new-vs-existing plan); typing filters the dropdown (autocomplete,
+        same pattern as the model picker); the TCombobox focus map draws
+        a cyan ring so focus + editability are visible. Grids both
+        widgets (field at row/col, helper at row+1) and returns the
+        combobox. Focus refreshes the dropdown from recent_slugs +
+        plans/ scan. Keyboard: ↑/↓ open and walk the list natively,
+        Tab/Return keep their normal behavior."""
+        cb = ttk.Combobox(parent, width=20, textvariable=self.slug_var)
+        cb["values"] = self._slug_values()
+        cb.grid(row=row, column=col, padx=4)
+        hint = ttk.Label(parent, text=SLUG_HINT_TEXT, style="SlugHint.TLabel")
+        hint.grid(row=row + 1, column=col, sticky="w", padx=4)
+        cb._slug_hint = hint
+        cb.bind("<FocusIn>", lambda _e: (cb.configure(
+            values=self._slug_values()), self._slug_feedback(cb)))
+        cb.bind("<FocusOut>", lambda _e: (cb.configure(
+            values=self._slug_values()), self._slug_feedback(cb)))
+        cb.bind("<KeyRelease>", lambda e: self._on_slug_typed(cb, e))
+        cb.bind("<<ComboboxSelected>>", lambda _e: self._slug_feedback(cb))
+        self._slug_feedback(cb)
+        return cb
+
+    def _on_slug_typed(self, cb, event):
+        """v3.4 — type-to-filter for a slug field: the dropdown narrows
+        to matching plans as you type, and the helper line gives live
+        feedback. Navigation keys pass through so ↑/↓ still open and
+        walk the list; Tab/Return keep their normal behavior."""
+        if event.keysym in ("Up", "Down", "Return", "Escape", "Tab",
+                            "Left", "Right", "Home", "End",
+                            "Shift_L", "Shift_R", "Control_L", "Control_R",
+                            "Alt_L", "Alt_R"):
+            return
+        typed = cb.get().strip().lower()
+        vals = self._slug_values()
+        cb["values"] = ([v for v in vals if typed in v.lower()]
+                        if typed else vals)
+        self._slug_feedback(cb)
+
+    def _slug_feedback(self, cb):
+        """v3.4 — update the helper line under one slug field from the
+        pure slug_feedback(): empty → editability hint, invalid chars →
+        kebab-case rule, existing dir → "will reuse", new → "will
+        create". Colored with theme tokens (cyan=new, green=exists,
+        red=invalid); no recolor in high-contrast mode — never fight
+        the OS (§G)."""
+        hint = getattr(cb, "_slug_hint", None)
+        if hint is None:
+            return
+        slug = self.slug_var.get().strip()
+        repo = self.repo_path()
+        exists = bool(slug) and repo.is_dir() \
+            and (repo / "plans" / slug).is_dir()
+        text, kind = slug_feedback(slug, exists)
+        kw = {"text": text}
+        t = self._tokens
+        if t:
+            kw["foreground"] = t.get({"new": "accent-cyan",
+                                      "exists": "accent-green",
+                                      "invalid": "accent-red"}
+                                     .get(kind, "text-muted"))
+        hint.configure(**kw)
+
+    def _on_slug_var_changed(self, *_):
+        """v3.4 — write-trace on the shared slug var: all three helper
+        lines stay in sync no matter which tab the user types in."""
+        for cb in (getattr(self, "slug", None), getattr(self, "sslug", None),
+                   getattr(self, "oslug", None)):
+            if cb is not None:
+                self._slug_feedback(cb)
+
+    def _slug_values(self):
+        """v3.2 — dropdown values: recent slugs first, then every
+        kebab-case directory in <repo>/plans/ (deduped, max 10).
+        v3.3.1 — delegated to merge_slug_values(), which scopes the
+        recent slugs to the CURRENT repo: a slug remembered from
+        another repo (global plan-console.json) no longer leaks into
+        this repo's plan list."""
+        return merge_slug_values(self.repo_path(), self._recent_slugs)
+
+    def _remember_slug(self):
+        """v3.2 — record the current slug as the most recent one (max 10
+        kept). Called from _save_cfg so every action and app-close
+        persists it."""
+        slug = self.slug_var.get().strip()
+        if SLUG_RE.match(slug):
+            rec = [s for s in self._recent_slugs if s != slug]
+            self._recent_slugs = [slug] + rec[:9]
+
     def _get_slug(self, first="intake"):
-        """First non-empty slug across the three slug fields (Intake /
-        Sessions / Owner pass), stripped. `first` selects the priority —
-        the tab the user is working in. Replaces the fallback chain that
-        was copy-pasted into eight handlers."""
-        order = {"intake": (self.slug, self.sslug, self.oslug),
-                 "sessions": (self.sslug, self.slug, self.oslug),
-                 "owner": (self.oslug, self.slug, self.sslug)}
-        for f in order[first]:
-            v = f.get().strip()
-            if v:
-                return v
-        return ""
+        """v3.2 — the single shared slug (all three tabs bind the same
+        StringVar). `first` is kept for call-site compatibility."""
+        return self.slug_var.get().strip()
 
     def _or_key_value(self):
         if not self.use_key.get():
@@ -2288,11 +2940,14 @@ class App:
         # security: the API key is deliberately NOT persisted. It lives
         # in the entry field for this session only, or in the
         # OPENROUTER_API_KEY environment variable.
+        self._remember_slug()
         self.cfg.update(repo=str(self.repo_path()),
                         model=self.model_cb.get().strip(),
                         use_key=self.use_key.get(),
                         kind=self.kind.get(),
-                        theme=self.theme_setting)
+                        theme=self.theme_setting,
+                        last_slug=self.slug_var.get().strip(),
+                        recent_slugs=self._recent_slugs)
         self.cfg.pop("or_key", None)
         CFG.write_text(json.dumps(self.cfg, indent=2), encoding="utf-8")
 
@@ -2512,7 +3167,7 @@ class App:
     def on_proceed(self):
         repo = self._preflight()
         if repo is None: return
-        slug = self.slug.get().strip()
+        slug = self.slug_var.get().strip()
         text = self.src.get("1.0", "end").strip()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Slug", "Slug must be kebab-case, e.g. payments-v2")
@@ -3180,10 +3835,18 @@ class App:
             out.append("already frozen (%s)" % frozen.name)
         oq = pdir / "OPEN-QUESTIONS.md"
         if oq.is_file():
-            qs = parse_questions(oq.read_text(encoding="utf-8"))
+            oq_text = oq.read_text(encoding="utf-8")
+            qs = parse_questions(oq_text)
             if qs:
                 out.append("%d open question(s) in OPEN-QUESTIONS.md — "
                            "answer them in the Owner pass tab" % len(qs))
+            # v3.5 — unchecked owner actions block Freeze: commands only
+            # the owner may run must not be silently skipped
+            noa = count_open_owner_actions(oq_text)
+            if noa:
+                out.append("%d unchecked owner action(s) under '## Owner "
+                           "actions' — run/copy them in the Owner pass "
+                           "tab or mark them done" % noa)
         draft = pdir / "PART-01.draft.md"
         if draft.is_file():
             # v2.7 — owner-resolve gate: answers parked in ## OWNER
@@ -3347,9 +4010,8 @@ class App:
     def _session_guards(self):
         repo = self._preflight()
         if repo is None: return None
-        # v2.0 — slug falls back to Intake/Owner-pass fields too
-        slug = (self.sslug.get().strip() or self.slug.get().strip()
-                or self.oslug.get().strip())
+        # v3.2 — one shared slug across all tabs
+        slug = self.slug_var.get().strip()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Slug", "kebab-case slug required (e.g. payments-v2)")
             return None
@@ -3374,8 +4036,7 @@ class App:
                 if any("draft" in x.lower() for x in names):
                     extra += ("\n→ only a DRAFT exists: finish the owner pass, "
                               "Validate, then Freeze.")
-            elif any(SLUG_RE.match(s) for s in (
-                    self.slug.get().strip(), self.oslug.get().strip())):
+            elif SLUG_RE.match(slug):
                 extra = ("\n→ Slug field takes the PLAN slug (e.g. "
                          "'translation-audit'); the session number goes in the "
                          "'Session #' spinbox.")

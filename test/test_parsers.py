@@ -430,6 +430,318 @@ def test_validation_unnumbered_prose_counts_nothing():
     assert f["n"] == 0 and not f["ready"]
 
 
+# ------------------------------------------------------- merge_slug_values
+# Regression: v3.3.1 cross-repo slug leakage. recent_slugs is global
+# (plan-console.json) — a slug from repo A must never appear in
+# repo B's plan dropdown.
+# v3.3.2: a directory under plans/ counts as a plan only when it holds
+# a plan marker file (is_plan_dir), so misplaced kebab-case dirs
+# (commands/, templates/, archives) never appear in the dropdown.
+
+def _mk_plan(plans, slug, marker="SOURCE.md"):
+    d = plans / slug
+    d.mkdir(parents=True)
+    if marker is not None:
+        (d / marker).write_text("x", encoding="utf-8")
+    return d
+
+
+def test_foreign_recent_slug_never_leaks(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    for s in ("plan-b1", "plan-b2", "plan-b3"):
+        _mk_plan(repo / "plans", s)
+    vals = pc.merge_slug_values(repo, ["plan-from-repo-a"])
+    assert vals == ["plan-b1", "plan-b2", "plan-b3"], (
+        "the foreign plan must NOT appear in repo B's list")
+
+
+def test_recent_slug_kept_when_it_exists_in_repo(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    _mk_plan(repo / "plans", "alpha")
+    _mk_plan(repo / "plans", "beta")
+    vals = pc.merge_slug_values(repo, ["beta"])
+    assert vals == ["beta", "alpha"], "recent order kept, then disk order"
+
+
+def test_recent_slug_invalid_or_malformed_ignored(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    _mk_plan(repo / "plans", "alpha")
+    vals = pc.merge_slug_values(repo, ["Not_Kebab", "", None, 42])
+    assert vals == ["alpha"]
+
+
+def test_repo_without_plans_dir_yields_nothing(tmp_path):
+    vals = pc.merge_slug_values(Path(tmp_path) / "empty", ["x", "y"])
+    assert vals == []
+
+
+def test_limit_caps_the_dropdown(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    for i in range(15):
+        _mk_plan(repo / "plans", "p%d" % i)
+    vals = pc.merge_slug_values(repo, [])
+    assert len(vals) == 10
+
+
+def test_scan_plan_slugs_ignores_files_and_non_slugs(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    plans = repo / "plans"
+    _mk_plan(plans, "good-slug")
+    (plans / "Not_Kebab").mkdir()
+    (plans / "Not_Kebab" / "SOURCE.md").write_text("x", encoding="utf-8")
+    (plans / "loose-file.md").write_text("x", encoding="utf-8")
+    assert pc.scan_plan_slugs(repo) == ["good-slug"]
+
+
+def test_reproduction_real_shape_four_becomes_three(tmp_path):
+    # exact incident shape: repo B with 3 plans, config remembering
+    # repo A's single plan → UI showed 4. Fixed: 3.
+    repoB = Path(tmp_path) / "repoB"
+    for s in ("console-audit-1", "quiet-workbench-theme", "ui-ux-plan"):
+        _mk_plan(repoB / "plans", s)
+    vals = pc.merge_slug_values(repoB, ["new-mistral"])
+    assert vals == ["console-audit-1", "quiet-workbench-theme", "ui-ux-plan"]
+    assert len(vals) == 3
+    assert "new-mistral" not in vals
+
+
+# ------------------------------------------- non-plan dirs under plans/
+# Regression: v3.3.2 — commands/, templates/ and archive copies placed
+# (or cloned) under plans/ passed the bare kebab-case filter and were
+# listed as plans. They carry no plan marker and must be excluded.
+
+def test_command_and_template_dirs_excluded(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    plans = repo / "plans"
+    _mk_plan(plans, "new-mistral")
+    cmd = plans / "commands"
+    cmd.mkdir(parents=True)
+    (cmd / "freeze-plan.md").write_text("x", encoding="utf-8")
+    tpl = plans / "templates"
+    tpl.mkdir()
+    (tpl / "PART-01.md").write_text("x", encoding="utf-8")
+    assert pc.scan_plan_slugs(repo) == ["new-mistral"]
+
+
+def test_archive_dir_without_markers_excluded(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    plans = repo / "plans"
+    _mk_plan(plans, "real-plan")
+    old = plans / "plans-old-structure"
+    old.mkdir(parents=True)
+    (old / "PART-00.md").write_text("x", encoding="utf-8")
+    (old / "plans").mkdir()
+    (old / "commands").mkdir()
+    assert pc.scan_plan_slugs(repo) == ["real-plan"]
+
+
+def test_empty_kebab_dir_not_a_plan(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    (repo / "plans" / "ghost-plan").mkdir(parents=True)
+    assert pc.scan_plan_slugs(repo) == [], (
+        "a plans/ dir without any plan marker is not a plan")
+
+
+def test_every_marker_file_qualifies(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    plans = repo / "plans"
+    for m in pc.PLAN_MARKER_FILES:
+        _mk_plan(plans, "plan-" + m.split(".")[0].lower(), marker=m)
+    _mk_plan(plans, "plan-frozen", marker="PART-01 v1.0.md")
+    _mk_plan(plans, "plan-frozen-legacy", marker="PART-01.draft.md")
+    assert pc.scan_plan_slugs(repo) == sorted(
+        p.name for p in plans.iterdir()), (
+        "every recognized marker (incl. PART-01 v*.md / .draft.md) "
+        "marks a real plan")
+
+
+def test_legacy_frozen_part01_md_is_a_plan(tmp_path):
+    # a legacy frozen PART-01.md (freeze header: "frozen" in the first
+    # 3 lines — same rule _frozen_file() applies) still lists.
+    repo = Path(tmp_path) / "repoB"
+    _mk_plan(repo / "plans", "legacy-plan",
+             marker="PART-01.md")
+    (repo / "plans" / "legacy-plan" / "PART-01.md").write_text(
+        "PART 01 — legacy-plan | v1.0 frozen 2026-08-31\n",
+        encoding="utf-8")
+    assert pc.scan_plan_slugs(repo) == ["legacy-plan"]
+
+
+def test_template_part01_md_without_freeze_header_not_a_plan(tmp_path):
+    # templates/PART-01.md (no freeze header) must NOT qualify — this
+    # is the exact false positive seen in C:\Temp\Resume\resume-app.
+    repo = Path(tmp_path) / "repoB"
+    plans = repo / "plans"
+    _mk_plan(plans, "real-plan")
+    tpl = plans / "templates"
+    tpl.mkdir(parents=True)
+    (tpl / "PART-01.md").write_text(
+        "PART 01 — PROJECT CONTEXT: <plan-slug>\n", encoding="utf-8")
+    assert pc.scan_plan_slugs(repo) == ["real-plan"]
+
+
+def test_source_md_only_is_a_plan_v32_fresh_scaffold(tmp_path):
+    # the console's own contract: a fresh scaffold contains ONLY
+    # SOURCE.md — it must still be listed.
+    repo = Path(tmp_path) / "repoB"
+    _mk_plan(repo / "plans", "fresh-scaffold")
+    assert pc.scan_plan_slugs(repo) == ["fresh-scaffold"]
+
+
+def test_recent_slug_pointing_at_non_plan_dir_dropped(tmp_path):
+    repo = Path(tmp_path) / "repoB"
+    plans = repo / "plans"
+    _mk_plan(plans, "real-plan")
+    (plans / "commands").mkdir()
+    vals = pc.merge_slug_values(repo, ["commands", "real-plan"])
+    assert vals == ["real-plan"], (
+        "a remembered slug whose dir has no plan marker must not resurface")
+
+
+# ------------------------------------------------------- slug_feedback (v3.4)
+def test_slug_feedback_empty_shows_editability_hint():
+    text, kind = pc.slug_feedback("", False)
+    assert kind == "hint"
+    assert "type" in text and "pick" in text, (
+        "the empty state must invite BOTH typing and picking")
+
+
+def test_slug_feedback_invalid_chars_explains_rule():
+    for bad in ("Not_Kebab", "UPPER", "double--dash", "trailing-", "a b"):
+        text, kind = pc.slug_feedback(bad, False)
+        assert kind == "invalid", bad
+        assert "kebab" in text.lower(), bad
+
+
+def test_slug_feedback_new_vs_exists():
+    text_new, kind_new = pc.slug_feedback("fresh-idea", False)
+    text_ex, kind_ex = pc.slug_feedback("fresh-idea", True)
+    assert kind_new == "new" and "creates" in text_new
+    assert kind_ex == "exists" and "reuse" in text_ex
+
+
+def test_slug_feedback_valid_slug_passes_slug_re():
+    _, kind = pc.slug_feedback("payments-v2", False)
+    assert pc.SLUG_RE.match("payments-v2") and kind == "new"
+
+
+# --------------------------------------------------------- owner actions v3.5
+OA_BODY = (
+    "# OPEN-QUESTIONS — demo\n"
+    "\n"
+    "1. PROBLEM: gap\n"
+    "   QUESTION: proceed?\n"
+    "   RECOMMEND: yes\n"
+    "\n"
+    "## Owner actions\n"
+    "- [ ] plan-console.json is owner-only; confirm the API-key half:\n"
+    "  `Select-String -Path plan-console.json -Pattern 'sk-'` "
+    "(expect: no matches)\n"
+    "  → verifies §B \"plan-console.json contains no API key\"\n"
+    "- [x] already handled: `git status` — check tree\n"
+    "- prose only bullet, no command\n"
+    "\n"
+    "## Notes\n"
+    "- [ ] a checkbox OUTSIDE the section never counts\n"
+)
+
+
+def test_parse_owner_actions_finds_section_bullets():
+    acts = pc.parse_owner_actions(OA_BODY)
+    assert len(acts) == 3, "only bullets under '## Owner actions' count"
+    assert acts[0]["checked"] is False
+    assert acts[0]["command"] == \
+        "Select-String -Path plan-console.json -Pattern 'sk-'"
+    assert acts[0]["expect"] == "no matches"
+    assert acts[0]["verifies"] == "plan-console.json contains no API key"
+    # multi-line bullet: continuation lines joined, lineno = bullet line
+    assert acts[0]["lineno"] == 8
+
+
+def test_parse_owner_actions_checked_and_commandless():
+    acts = pc.parse_owner_actions(OA_BODY)
+    assert acts[1]["checked"] is True
+    assert acts[1]["command"] == "git status"
+    assert acts[2]["command"] is None
+    assert acts[2]["verifies"] is None and acts[2]["expect"] is None
+
+
+def test_parse_owner_actions_no_section():
+    assert pc.parse_owner_actions("# nothing here\n- [ ] `git status`\n") == []
+
+
+def test_parse_owner_actions_ignores_code_fences():
+    text = ("## Owner actions\n"
+            "```\n"
+            "- [ ] `git commit` inside a fence never counts\n"
+            "```\n")
+    assert pc.parse_owner_actions(text) == []
+
+
+def test_count_open_owner_actions():
+    assert pc.count_open_owner_actions(OA_BODY) == 2
+    assert pc.count_open_owner_actions("## Owner actions\n(nothing)\n") == 0
+
+
+def test_is_readonly_command_default_deny():
+    for ok in ("Select-String -Path x -Pattern y", "  git status --porcelain",
+               "Test-Path README.md", "Get-Content plan-console.json",
+               "git diff --stat", "git log -1"):
+        assert pc.is_readonly_command(ok), ok
+    for bad in ("git commit -m x", "git add .", "Remove-Item x",
+                "python -m pytest", "del file", "curl http://x"):
+        assert not pc.is_readonly_command(bad), bad
+    assert not pc.is_readonly_command("")
+
+
+def test_mark_sb_verified_promotes_matching_line():
+    draft = ("A. MISSION\n"
+             "B. FACTS\n"
+             "   - plan-console.json contains no API key; session-only "
+             "— UNVERIFIED (owner-only per §F)\n"
+             "   - other fact — VERIFIED 2026-09-05\n"
+             "C. TREE\n")
+    new, line = pc.mark_sb_verified(draft, "plan-console.json contains",
+                                    "2026-09-06", "Select-String …")
+    assert new is not None
+    assert "VERIFIED 2026-09-06 (owner-run: Select-String …)" in new
+    assert "UNVERIFIED" not in new
+    assert line.startswith("- plan-console.json contains")
+
+
+def test_parse_owner_actions_legacy_plain_bullets():
+    # pre-v3.5 plans write plain bullets with no checkbox and no colon
+    # in the expect tag — they must still parse (regression guard)
+    legacy = ("## Owner actions\n"
+              "- plan-console.json is owner-only; confirm the key half:\n"
+              "  `Select-String -Path plan-console.json -Pattern 'sk-'` "
+              "(expect no matches)\n"
+              "- If you prefer to commit personally, run:\n"
+              "  `git add plan-console.py && git commit -m x`\n")
+    acts = pc.parse_owner_actions(legacy)
+    assert len(acts) == 2
+    assert all(not a["checked"] for a in acts), \
+        "legacy plain bullets count as unchecked"
+    assert acts[0]["command"].startswith("Select-String")
+    assert acts[0]["expect"] == "no matches", "colon-less expect parses"
+    assert acts[1]["command"].startswith("git add")
+    assert pc.count_open_owner_actions(legacy) == 2
+
+
+def test_mark_sb_verified_never_touches_verified_or_outside_b():
+    draft = ("A. MISSION\n"
+             "   - plan-console.json claim — UNVERIFIED (outside §B)\n"
+             "B. FACTS\n"
+             "   - already good — VERIFIED 2026-09-05\n"
+             "C. TREE\n")
+    new, line = pc.mark_sb_verified(draft, "already good", "2026-09-06")
+    assert new is None and line is None, \
+        "an already-verified §B line is never rewritten"
+    new2, _ = pc.mark_sb_verified(draft, "plan-console.json claim",
+                                  "2026-09-06")
+    assert new2 is None, "§A lines never match — only the §B region"
+
+
 def main():
     fns = [(k, v) for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

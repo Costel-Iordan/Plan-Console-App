@@ -18,10 +18,13 @@ for ANY coding agent (Zoo Code, Claude Code, Cursor, …).
   `plans/<slug>/SOURCE.md` and either calls the OpenRouter API (if you tick
   *Use API key*) or copies a ready-made instruction for your agent.
 - **Owner pass** — answer open questions (three-line PROBLEM/QUESTION/
-  RECOMMEND blocks), tick recon checklist items; every answer/removal is
-  archived (`owner-pass.log` + `OPEN-QUESTIONS.md.bak` — nothing is lost).
-- **Freeze** — gates on zero open questions, zero unchecked recon items and
-  `VALIDATION.md == "PART-01 READY"`; writes `PART-01 v1.0.md`.
+  RECOMMEND blocks), tick recon checklist items, and run/copy the plan's
+  **Owner actions** (commands only the owner may run, from `## Owner
+  actions` in OPEN-QUESTIONS.md); every answer/removal is archived
+  (`owner-pass.log` + `OPEN-QUESTIONS.md.bak` — nothing is lost).
+- **Freeze** — gates on zero open questions, zero unchecked recon items,
+  zero unchecked owner actions and `VALIDATION.md == "PART-01 READY"`;
+  writes `PART-01 v1.0.md`.
 - **Sessions** — copies a session instruction (with standing orders from
   `AGENT-ORDERS.md`) for your agent; Status / Session report / Plan health
   parse `PROGRESS.md` leniently and flag drift instead of hiding it.

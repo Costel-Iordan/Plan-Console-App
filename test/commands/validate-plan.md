@@ -15,6 +15,10 @@ templates/PART-01.md. Check ONLY:
   blocks, counted once per block, or legacy '?'-ending one-liners,
   outside "## Owner actions" and code fences — the Plan Console counts
   the same way)
+- unchecked `- [ ]` actions under "## Owner actions" in
+  OPEN-QUESTIONS.md — the console counts the same way; the remediation
+  for such a finding is the OWNER running or copying the command in the
+  Owner pass tab (or the terminal), never the agent, then re-validate
 - unresolved `- [ ]` items in RECON-CHECKLIST.md (owner-marked DEFERRED
   items count as resolved)
 - leftover Q/A pairs in "## OWNER ANSWERS" (integrated or marked

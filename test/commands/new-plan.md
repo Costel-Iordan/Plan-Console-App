@@ -35,6 +35,17 @@ questions — they live only under a "## Owner actions" heading at the
 end. Prose summaries and resolution notes go under '#' comment lines
 (the console ignores those).
 
+Owner-action format (the console renders these in the Owner pass tab):
+each bullet is `- [ ] <prose>` with the exact command in backticks.
+Optional tags on the same bullet:
+- `→ verifies §B "<exact §B line prefix>"` — links the action to the
+  §B line it confirms (enables one-click VERIFIED write-back).
+- `(expect: no matches)` or `(expect: matches)` — the passing result.
+Read-only commands (Select-String, Test-Path, Get-Content, git
+status/diff/log) get a Run button in the console; anything else is
+copy-only. The console ticks `- [x]` and marks the linked §B line
+VERIFIED only after the owner confirms the result in the dialog.
+
 TYPE=plan (a ready-made, already-structured plan):
 - Normalize the plan into the template §A–G structure: map its own
   sections onto the template sections (mission/scope → §A, stated
@@ -79,3 +90,6 @@ TYPE=audit also produces:
 
 Never invent facts to fill gaps — gaps stay blank and surface in
 OPEN-QUESTIONS.md. Emit every file you created.
+
+Next: commands/recon.md <slug> — verify the draft's claims; then the
+owner answers OPEN-QUESTIONS.md in the console Owner pass tab.

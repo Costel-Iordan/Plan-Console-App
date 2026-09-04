@@ -68,14 +68,23 @@ For each question:
   `plans/<slug>/PART-01.draft.md ## OWNER ANSWERS` and the question is
   removed from `OPEN-QUESTIONS.md` (a `.bak` snapshot is kept first,
   and the exchange is archived to `owner-pass.log`).
-- If it lists commands under "## Owner actions" (things needing your
-  passwords, dashboards, databases): run them yourself in a terminal,
-  put the results into the draft, delete the lines.
+- **Owner actions** (the right-hand panel): commands the agent may never
+  run — things needing your passwords, dashboards or owner-only files —
+  are listed here from `## Owner actions` in `OPEN-QUESTIONS.md`.
+  - Read-only commands (Select-String, Test-Path, Get-Content, git
+    status/diff/log) get a **Run (read-only)** button: the console runs
+    the command in your repo, shows the output in the log, and — after
+    you confirm — marks the linked §B line `VERIFIED <today>` in the
+    draft and ticks the action done.
+  - Anything else: click **Copy command**, run it in your own terminal,
+    then click **Mark done**.
+  - Nothing runs or is written without your confirmation; every event
+    is archived to `owner-pass.log`.
 
 Not sure why Freeze is refusing? Click **What's blocking Freeze?** for
 a read-only dry-run: it lists exactly what would block Freeze right
-now (open questions, unchecked recon items, missing validation)
-without changing anything.
+now (open questions, unchecked owner actions, unchecked recon items,
+missing validation) without changing anything.
 
 Then handle `RECON-CHECKLIST.md`: items the agent could already check
 are ticked `[x]`. Items left for you: run them, and change `[ ]` to
@@ -166,11 +175,14 @@ yourself. The plan is done.
 | Status | Sessions | One-line where-am-I | no |
 | Session report | Sessions | Verdict for one session; on OK auto-advances the session number, on ⚠ CHECK copies the fix hint to the clipboard | no |
 | Plan health | Sessions | Verdict for the whole plan + writes HEALTH.md | no |
-| Refresh | Owner pass | Loads the plan's open questions into the tab | no |
+| Refresh | Owner pass | Loads the plan's open questions, owner actions and recon checklist into the tab | no |
 | What's blocking Freeze? | Owner pass | Read-only dry-run: lists what would block Freeze right now | no |
 | Accept recommendation | Owner pass | Confirmed one-click accept of the selected question's RECOMMEND line as your answer | no |
 | Save answer → draft + remove | Owner pass | Saves your typed answer to the draft and removes the question | no |
 | Archive question (keep log) | Owner pass | Removes the question without answering; keeps it in owner-pass.log | no |
+| Run (read-only) | Owner pass | Runs a whitelisted read-only owner action in the repo; confirmed results mark the linked §B line VERIFIED | only whitelisted |
+| Copy command | Owner pass | Copies the selected owner action's command to the clipboard | no |
+| Mark done | Owner pass | Ticks the selected owner action done in OPEN-QUESTIONS.md (guarded against stale index) | no |
 
 ---
 
