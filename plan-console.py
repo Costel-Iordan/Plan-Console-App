@@ -180,6 +180,16 @@ def question_block(text, lineno):
     return "\n".join(block)
 
 
+def recommend_line(text, lineno):
+    """The RECOMMEND: line of the question block at `lineno`, stripped of
+    its label, or "" when the block has none (legacy one-liners)."""
+    for ln in question_block(text, lineno).splitlines():
+        m = re.match(r"\s*RECOMMEND\s*:\s*(.*)$", ln, re.I)
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
 # ----------------------------------------------------------------------------
 # v2.5 — lenient PROGRESS.md parsing (Plan health / Session report /
 # Status / session-sequence guard). The canonical record (PART-00
@@ -1274,8 +1284,11 @@ class App:
         self.oslug.grid(row=0, column=1, padx=4)
         ttk.Button(top, text="Refresh",
                    command=self.on_owner_refresh).grid(row=0, column=2, padx=4)
+        # v2.6 — P1: read-only dry-run of the Freeze gates, on this tab
+        ttk.Button(top, text="What's blocking Freeze?",
+                   command=self.on_freeze_dry_run).grid(row=0, column=3, padx=4)
         self.owner_status = ttk.Label(top, text="enter slug and click Refresh")
-        self.owner_status.grid(row=0, column=3, padx=10)
+        self.owner_status.grid(row=0, column=4, padx=10)
         # v2.0 — flow hint so the next step is always visible
         ttk.Label(f, text="Flow: Refresh → answer every question (saved to "
                           "PART-01.draft.md ## OWNER ANSWERS) → 'Agent: finish "
@@ -1300,6 +1313,9 @@ class App:
         barq = ttk.Frame(lq); barq.pack(fill="x", padx=6, pady=6)
         ttk.Button(barq, text="Save answer → draft + remove",
                    command=self.on_answer_save).pack(side="left")
+        # v2.5 — one-click accept of the selected block's RECOMMEND line
+        ttk.Button(barq, text="Accept recommendation",
+                   command=self.on_recommend_accept).pack(side="left", padx=6)
         # v2.1 — archives the WHOLE question block, never just the header
         ttk.Button(barq, text="Archive question (keep log)",
                    command=self.on_question_remove).pack(side="left", padx=6)
@@ -1410,7 +1426,7 @@ class App:
             self.say("intake", "owner pass: everything resolved — Freeze "
                      "is unblocked.")
 
-    def on_answer_save(self):
+    def on_answer_save(self, tag="ANSWERED"):
         got = self._owner_paths()
         if got is None: return
         slug, pdir = got
@@ -1483,7 +1499,7 @@ class App:
         draft.write_text(text, encoding="utf-8")
         # 2) whole question block removed from OPEN-QUESTIONS.md — archived first
         self._oq_backup()
-        self._oq_archive(pdir, "ANSWERED", "\n".join(qlines), ans)
+        self._oq_archive(pdir, tag, "\n".join(qlines), ans)
         end = lineno + len(qlines)
         if end < len(lines) and not lines[end].strip():
             end += 1          # take the block's separator blank line too
@@ -1495,6 +1511,40 @@ class App:
                  "question archived to owner-pass.log; snapshot at "
                  "OPEN-QUESTIONS.md.bak")
         self.on_owner_refresh()
+
+    def on_recommend_accept(self):
+        """v2.5 — one-click accept: prefill the answer box with the
+        block's RECOMMEND line + provenance, then run the normal save
+        path — every on_answer_save guard (stale-index, crash-window
+        duplicate, draft refusal) applies unchanged. RECOMMEND is
+        context only, never an owner answer (PART-01 §G), so this is
+        always an explicit, confirmed owner action."""
+        got = self._owner_paths()
+        if got is None: return
+        if not self._oq_file or not self._oq_file.is_file():
+            messagebox.showerror("Owner pass", "Click Refresh first.")
+            return
+        sel = self.oq_list.curselection()
+        if not sel:
+            messagebox.showerror("Owner pass", "Select a question first.")
+            return
+        lineno, _hdr = self._oq_items[sel[0]]
+        qtext = self._oq_file.read_text(encoding="utf-8")
+        rec = recommend_line(qtext, lineno)
+        if not rec:
+            # legacy one-line questions carry no RECOMMEND → graceful error
+            messagebox.showerror("Owner pass",
+                                 "This question has no RECOMMEND line — "
+                                 "type the answer in the box instead.")
+            return
+        if not messagebox.askyesno("Owner pass",
+                "Accept this recommendation as the answer?\n\n%s"
+                % rec[:400]):
+            return
+        self.answer.delete("1.0", "end")
+        self.answer.insert("1.0", "%s [recommendation accepted %s]"
+                           % (rec, date.today()))
+        self.on_answer_save(tag="ANSWERED (recommendation accepted)")
 
     def on_question_remove(self):
         got = self._owner_paths()
@@ -1545,15 +1595,23 @@ class App:
 
     def _q_label(self, lineno):
         """One-line label for the question list: the QUESTION: line of a
-        v2.1 block when present, else the (legacy) header line itself."""
+        v2.1 block when present, else the (legacy) header line itself.
+        v2.5 — blocks carrying a RECOMMEND line get a ' ·has rec' suffix
+        (nothing else consumes these listbox labels)."""
         blines = question_block(self._oq_text, lineno).splitlines()
         if not blines:
             return "(stale — click Refresh)"
+        label = None
         for ln in blines:
             m = re.match(r"\s*QUESTION\s*:\s*(.*)$", ln, re.I)
             if m:
-                return m.group(1).strip()[:100]
-        return blines[0].strip()[:100]
+                label = m.group(1).strip()[:100]
+                break
+        if label is None:
+            label = blines[0].strip()[:100]
+        if recommend_line(self._oq_text, lineno):
+            label += " ·has rec"
+        return label
 
     def _oq_backup(self):
         """Snapshot OPEN-QUESTIONS.md before any modification."""
@@ -2407,6 +2465,56 @@ class App:
         return "\n\n".join(picked) if picked else "(no matching files found)"
 
     # -------------------------------------------------------------- freeze
+    def _freeze_blockers(self, pdir):
+        """v2.6 — P1: the on_freeze() gate checks, read-only. Returns the
+        list of things that would block Freeze right now (empty = clear).
+        Mutates nothing — the real Freeze keeps its own flow, including
+        the already-frozen self-heal."""
+        out = []
+        if not (pdir / "PART-01.draft.md").is_file():
+            out.append("PART-01.draft.md not found — run intake first")
+        frozen = self._frozen_file(pdir)
+        if frozen:
+            out.append("already frozen (%s)" % frozen.name)
+        oq = pdir / "OPEN-QUESTIONS.md"
+        if oq.is_file():
+            qs = parse_questions(oq.read_text(encoding="utf-8"))
+            if qs:
+                out.append("%d open question(s) in OPEN-QUESTIONS.md — "
+                           "answer them in the Owner pass tab" % len(qs))
+        rc = pdir / "RECON-CHECKLIST.md"
+        if rc.is_file():
+            # v2.0 — owner-marked DEFERRED items no longer block Freeze
+            n = sum(1 for l in rc.read_text(encoding="utf-8").splitlines()
+                    if "[ ]" in l and "DEFERRED" not in l.upper())
+            if n:
+                out.append("%d unchecked item(s) in RECON-CHECKLIST.md — "
+                           "tick them in the Owner pass tab or mark the "
+                           "line DEFERRED" % n)
+        val = pdir / "VALIDATION.md"
+        if not val.is_file():
+            out.append("VALIDATION.md not found — click 'Validate draft' "
+                       "first (paste the copied instruction to your agent)")
+        elif val.read_text(encoding="utf-8").strip() != "PART-01 READY":
+            out.append("VALIDATION.md is not 'PART-01 READY' — resolve the "
+                       "findings, re-validate")
+        return out
+
+    def on_freeze_dry_run(self):
+        """v2.6 — P1: print what would block Freeze right now; owner no
+        longer has to guess or switch tabs."""
+        got = self._owner_paths()
+        if got is None: return
+        _slug, pdir = got
+        blockers = self._freeze_blockers(pdir)
+        if not blockers:
+            self.say("owner", "freeze dry-run: nothing blocking — Freeze "
+                     "is unblocked.")
+            return
+        self.say("owner", "freeze dry-run — %d blocker(s):" % len(blockers))
+        for b in blockers:
+            self.say("owner", "  - " + b)
+
     def _pending_questions(self, f):
         # v2.1 — block-aware parser: one count per question block,
         # prose/SQL never count
@@ -2820,8 +2928,28 @@ class App:
         if n < 1:
             messagebox.showerror("Session", "Session number must be 1 or higher.")
             return
-        for line in self._mkreport(repo, slug, n):
+        lines = self._mkreport(repo, slug, n)
+        for line in lines:
             self.say("sessions", line)
+        verdict = next((l for l in lines if l.startswith("VERDICT")), "")
+        # v2.6 — P1: on an OK verdict, advance the session number so the
+        # daily loop is "click report → click copy → paste" — but only
+        # when the next session exists in the §A map (advancing past the
+        # deploy session would be wrong; owner answer #3).
+        if verdict.startswith("VERDICT: OK"):
+            rows = self._session_map(repo / "plans" / slug)
+            if (n + 1) in rows:
+                self.snum.set(str(n + 1))
+                self.say("sessions", "session # advanced to %d (next "
+                         "session exists in §A)" % (n + 1))
+        # v2.6 — P1: a CHECK verdict's fix hint goes to the clipboard so
+        # the round-trip to the agent is copy-paste, not re-type
+        hint = next((l.split("fix: ", 1)[1] for l in lines
+                     if "fix: " in l), None)
+        if hint:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(hint)
+            self.say("sessions", "fix hint copied to clipboard")
 
     def _mkreport(self, repo, slug, n):
         pdir = repo / "plans" / slug

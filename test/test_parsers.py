@@ -49,6 +49,37 @@ def test_flush_left_prose_after_block_not_absorbed():
     assert len(pc.parse_questions(text)) == 2
 
 
+# ----------------------------------------------------------- recommend_line
+def test_recommend_line_present():
+    text = ("1. PROBLEM: the gap\n"
+            "   QUESTION: do we migrate?\n"
+            "   RECOMMEND: yes, in one pass\n")
+    assert pc.recommend_line(text, 0) == "yes, in one pass"
+
+
+def test_recommend_line_absent():
+    # legacy one-liner: no block, no RECOMMEND
+    assert pc.recommend_line("Should we migrate?\n", 0) == ""
+    # block without a RECOMMEND line
+    text = "1. PROBLEM: the gap\n   QUESTION: do we migrate?\n"
+    assert pc.recommend_line(text, 0) == ""
+
+
+def test_recommend_line_case_insensitive_label():
+    text = ("1. PROBLEM: the gap\n"
+            "   QUESTION: do we migrate?\n"
+            "   recommend: yes, in one pass\n")
+    assert pc.recommend_line(text, 0) == "yes, in one pass"
+
+
+def test_recommend_line_wrapped_continuation():
+    text = ("1. PROBLEM: the gap\n"
+            "   QUESTION: do we migrate?\n"
+            "   RECOMMEND: yes, in one pass\n"
+            "     because the schema is small\n")
+    assert pc.recommend_line(text, 0) == "yes, in one pass"
+
+
 # ------------------------------------------------------- parse_gates_field
 def test_canonical_gate_list():
     ids, all_flag = pc.parse_gates_field("g1, g2")

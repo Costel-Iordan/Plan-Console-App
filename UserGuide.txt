@@ -51,13 +51,31 @@ What happens next:
 
 ### The owner pass (the only manual thinking step)
 
-The log shows you `OPEN-QUESTIONS.md`. For each question:
-- If you know the answer: open `plans/<slug>/PART-01.draft.md` in VS
-  Codium, put the answer in the right section, then DELETE the question
-  line from `OPEN-QUESTIONS.md`.
+Open the **Owner pass** tab, type the slug and click **Refresh**. The
+question list shows every open question; blocks that carry a
+`RECOMMEND:` line are marked with a `·has rec` suffix.
+
+For each question:
+- If the agent left a `RECOMMEND:` line and you agree with it: select
+  the question and click **Accept recommendation**. It shows you the
+  recommendation, asks for confirmation, then saves it as your answer
+  (stamped `[recommendation accepted <date>]`) and removes the question
+  — same guards and logging as a hand-typed answer. Questions without a
+  RECOMMEND line (legacy one-liners) get a clear error; type those in
+  the answer box instead.
+- If you know the answer yourself: type it in the answer box and click
+  **Save answer → draft + remove**. Answers land in
+  `plans/<slug>/PART-01.draft.md ## OWNER ANSWERS` and the question is
+  removed from `OPEN-QUESTIONS.md` (a `.bak` snapshot is kept first,
+  and the exchange is archived to `owner-pass.log`).
 - If it lists commands under "## Owner actions" (things needing your
   passwords, dashboards, databases): run them yourself in a terminal,
   put the results into the draft, delete the lines.
+
+Not sure why Freeze is refusing? Click **What's blocking Freeze?** for
+a read-only dry-run: it lists exactly what would block Freeze right
+now (open questions, unchecked recon items, missing validation)
+without changing anything.
 
 Then handle `RECON-CHECKLIST.md`: items the agent could already check
 are ticked `[x]`. Items left for you: run them, and change `[ ]` to
@@ -90,18 +108,21 @@ tells it exactly which rules file to load, what the session's scope
 is, and what to record when done.
 5. When the agent says it's done, come back and click **Session
 report**. You get a verdict:
-- **OK** — session complete, move on.
+- **OK** — session complete, move on. The session number advances by 1
+  automatically (only when a next session exists in the plan — the
+  deploy session is never auto-advanced past).
 - **⚠ CHECK** — something's off (usually the agent didn't write its
   completion line in the exact required format). The report shows a
-  "fix:" hint — paste that hint into your agent and click Session
-  report again.
+  "fix:" hint and it is copied to your clipboard automatically —
+  paste it into your agent and click Session report again.
 - **✖ BLOCKED** — the agent hit a wall and wrote `BLOCKED.md`
   explaining exactly what stopped it and what it tried. Fix the
   cause (often you must run a command or provide access), rename
   `BLOCKED.md` to `BLOCKED-resolved.md`, and re-run the session.
 - **✖ INCOMPLETE** — no completion record at all; the session never
   really finished.
-6. Increase the session number by 1 and repeat.
+6. On OK the session number is already advanced; otherwise increase it
+by 1 and repeat.
 
 The console refuses to let you jump ahead: you cannot run session 3
 before sessions 1 and 2 have OK records. That's deliberate — plans die
@@ -142,8 +163,13 @@ yourself. The plan is done.
 | Freeze | Intake | Locks the draft into PART-01.md after checks pass | no |
 | Copy session instruction | Sessions | Puts the next session's instruction on your clipboard | no |
 | Status | Sessions | One-line where-am-I | no |
-| Session report | Sessions | Verdict for one session | no |
+| Session report | Sessions | Verdict for one session; on OK auto-advances the session number, on ⚠ CHECK copies the fix hint to the clipboard | no |
 | Plan health | Sessions | Verdict for the whole plan + writes HEALTH.md | no |
+| Refresh | Owner pass | Loads the plan's open questions into the tab | no |
+| What's blocking Freeze? | Owner pass | Read-only dry-run: lists what would block Freeze right now | no |
+| Accept recommendation | Owner pass | Confirmed one-click accept of the selected question's RECOMMEND line as your answer | no |
+| Save answer → draft + remove | Owner pass | Saves your typed answer to the draft and removes the question | no |
+| Archive question (keep log) | Owner pass | Removes the question without answering; keeps it in owner-pass.log | no |
 
 ---
 
@@ -179,7 +205,7 @@ yourself. The plan is done.
 | ERROR: OpenRouter HTTP 429 | Rate limited (common on free models) — wait a minute or pick another model. |
 | "reply had no <<<FILE>>> blocks" | The model ignored the output format. The console retries once automatically; if it still fails, run that step in your agent instead (copy-mode). |
 | Freeze refuses | It tells you exactly what's open: unanswered questions or unchecked `[ ]` items. Clear them first. |
-| Session report says "not canonical" | The agent wrote its completion line in the wrong format. Paste the "fix:" hint from the report into your agent, then click Session report again. |
+| Session report says "not canonical" | The agent wrote its completion line in the wrong format. The "fix:" hint is already on your clipboard — paste it into your agent, then click Session report again. |
 | Agent can't find files | Make sure the repo folder is open as the workspace in VS Codium, not a parent or subfolder. |
 | App frozen during intake | API calls can take a few minutes on slow models. Closing and restarting the app is always safe — files are only written when a step completes. |
 | Want to reset everything | Delete `plan-console.json` (settings) — plans live in your repo and are untouched. |
@@ -197,6 +223,6 @@ yourself. The plan is done.
 7. Watch it work
 8. **Session report** → verdict
 9. verdict OK → next session number → back to 5
-10. verdict ⚠ → paste the fix hint → **Session report** again
+10. verdict ⚠ → fix hint is on your clipboard → paste → **Session report** again
 11. verdict ✖ BLOCKED → fix cause → rename BLOCKED.md → re-run
 12. Last session = deploy, supervised → **Plan health** → PLAN COMPLETE
