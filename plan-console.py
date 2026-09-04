@@ -73,6 +73,13 @@ v2.5 — gates are actually reported in Plan health: PROGRESS.md records
   a worked example — existing repos: "Update command files" once
   (session.md changed; the v2.2 auto-check offers it). No other
   starter files changed.
+v2.6.3 — audit hardening: DEFERRED must be a tag (prose like 'not
+  DEFERRED' no longer resolves a recon item); checkbox toggling flips
+  the anchored bracket only; EXISTS auto-verify is repo-relative only;
+  model favorites accept real model ids only; the <<<FILE>>> path
+  guard is module-level (parse_files) and unit-tested; the auto-update
+  dialog text comes from COMMAND_UPDATE_NOTE; socket timeouts are
+  caught on Python 3.9 too.
 
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
@@ -88,7 +95,7 @@ Existing repo: "Update command files" refreshes commands/ only.
 
 Settings are stored in plan-console.json next to this script.
 """
-import json, os, queue, re, subprocess, threading, time
+import json, os, queue, re, socket, subprocess, threading, time
 import urllib.request, urllib.error
 from datetime import date, datetime
 from pathlib import Path
@@ -103,7 +110,62 @@ CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # v2.1 — block-aware question parsing (owner pass + freeze + status)
 Q_LINE_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")
-OWNER_SECTION_RE = re.compile(r"owner\s+actions|commands?\b|\bsql\b", re.I)
+# v2.6.2 — anchored: a comment line counts as the START of an owner-
+# actions/commands/SQL section only when the section keyword OPENS the
+# comment ("## Owner actions", "# Commands:"). A comment that merely
+# MENTIONS these words (e.g. OPEN-QUESTIONS.md header prose "Commands/
+# SQL/owner actions live only under...") must not poison the rest of
+# the file — the unanchored variant silently hid every question block
+# after it (freeze skipped the questions gate entirely).
+OWNER_SECTION_RE = re.compile(r"^#+\s*(?:owner\s+actions|commands?|sql)\b", re.I)
+# v2.6.1 — recon checkbox lines are recognized only at line start
+# (optional bullet), so prose that merely MENTIONS `- [ ]` (e.g. the
+# RECON-CHECKLIST.md header explaining the format) is never counted.
+RECON_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s*)?\[( |x|X)\]")
+# v2.6.3 — DEFERRED counts as resolved only when it is a TAG: it opens
+# the item text (right after the checkbox) or sits in a bracketed note
+# like '(DEFERRED …)'. Prose that merely MENTIONS the word ('not
+# DEFERRED yet', 'what about DEFERRED?') no longer silently resolves
+# an open item.
+DEFERRED_START_RE = re.compile(r"^DEFERRED\b", re.I)
+DEFERRED_BRACKET_RE = re.compile(r"[\[(]\s*DEFERRED\b", re.I)
+
+
+def recon_item_state(line):
+    """'done', 'open', or None (not a checkbox item line)."""
+    m = RECON_ITEM_RE.match(line)
+    if not m:
+        return None
+    return "done" if m.group(1).lower() == "x" else "open"
+
+
+def is_deferred(line):
+    """True when the owner marked this recon item DEFERRED (v2.0 rule,
+    tightened v2.6.3 — see DEFERRED_START_RE above)."""
+    m = RECON_ITEM_RE.match(line)
+    rest = line[m.end():].strip() if m else line.strip()
+    return bool(DEFERRED_START_RE.match(rest)
+                or DEFERRED_BRACKET_RE.search(rest))
+
+
+def flip_recon_item(line):
+    """Toggle the CHECKBOX of a recon item line (v2.6.3): flips the
+    bracket the anchor matched, never the first '[ ]'/'[x]' occurring
+    anywhere in the prose after it. None when the line is not a
+    checkbox item."""
+    m = RECON_ITEM_RE.match(line)
+    if not m:
+        return None
+    a, b = m.start(1), m.end(1)
+    return line[:a] + ("x" if m.group(1) == " " else " ") + line[b:]
+
+
+def count_open_recon(text):
+    """Unresolved `- [ ]` items in a RECON-CHECKLIST body: real checkbox
+    lines only; owner-marked DEFERRED lines count as resolved (v2.0 rule)."""
+    return sum(1 for l in text.splitlines()
+               if recon_item_state(l) == "open"
+               and not is_deferred(l))
 # continuation lines of a v2.1 question block: indented, or explicitly
 # labelled QUESTION:/RECOMMEND:/RECOMMENDATION:
 Q_CONT_RE = re.compile(r"^\s*(QUESTION|RECOMMEND(?:ATION)?)\s*:", re.I)
@@ -490,6 +552,39 @@ Rules:
 """
 RETRY_NOTE = ("\n\nYour previous reply had no valid <<<FILE>>> blocks. "
               "Re-answer, outputting every file in the mandated format.")
+
+# v2.6.3 — the one-line description of the NEWEST command-file change,
+# shown in the auto-update dialog. Bump this together with the command
+# files so the dialog text never goes stale.
+COMMAND_UPDATE_NOTE = ("session.md spells out the canonical PROGRESS.md "
+                       "line with a worked example — gates report "
+                       "cleanly in Plan health")
+
+
+def parse_files(text, slug):
+    """(files, notes) from an agent reply: every <<<FILE: …>>> block
+    with the path guard applied — only paths INSIDE plans/<slug>/
+    (no '..', no backslashes, no absolute paths) are returned for
+    writing; everything else lands in the notes as ignored. Module
+    level since v2.6.3 so the guard is unit-testable without Tk."""
+    files, notes, cur = [], [], None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("<<<FILE:") and s.endswith(">>>"):
+            cur = (s[len("<<<FILE:"):-3].strip(), [])
+        elif s == "<<<END>>>" and cur:
+            path, body = cur
+            if (path.startswith("plans/%s/" % slug) and ".." not in path
+                    and "\\" not in path and not path.startswith("/")):
+                files.append((path, "\n".join(body).rstrip() + "\n"))
+            else:
+                notes.append("(ignored bad path: %s)" % path)
+            cur = None
+        elif cur is not None:
+            cur[1].append(line)
+        else:
+            notes.append(line)
+    return files, "\n".join(notes)
 
 # ----------------------------------------------------------------------------
 # v2.3 — standing orders for execution agents (attached to session
@@ -1408,13 +1503,18 @@ class App:
         if self._rc_file.is_file():
             for i, line in enumerate(
                     self._rc_file.read_text(encoding="utf-8").splitlines()):
-                if "[ ]" in line or "[x]" in line:
+                state = recon_item_state(line)
+                if state:
                     self._rc_items.append((i, line))
-                    mark = "[x]" if "[x]" in line else "[ ]"
+                    mark = "[x]" if state == "done" else "[ ]"
                     self.rc_list.insert("end", "%s %s"
                                         % (mark, line.strip().lstrip("- ").strip()[:108]))
         nq = len(self._oq_items)
-        nu = sum(1 for _, l in self._rc_items if "[ ]" in l)
+        # v2.6.1 — same counting as the Freeze gate: real checkbox lines
+        # only, DEFERRED counts as resolved (so "ready to Freeze" is true)
+        nu = sum(1 for _, l in self._rc_items
+                 if recon_item_state(l) == "open"
+                 and not is_deferred(l))
         # v2.0 — the status line states the NEXT action
         hint = (" — next: answer questions, then 'Agent: finish owner pass'"
                 if nq else (" — next: tick recon items" if nu
@@ -1652,8 +1752,11 @@ class App:
             messagebox.showerror("Owner pass", "Click Refresh first.")
             return
         lineno, line = self._rc_items[sel[0]]
-        new = (line.replace("[ ]", "[x]", 1) if "[ ]" in line
-               else line.replace("[x]", "[ ]", 1))
+        new = flip_recon_item(line)
+        if new is None:
+            messagebox.showerror("Owner pass",
+                                 "Selected line is not a checkbox item.")
+            return
         lines = self._rc_file.read_text(encoding="utf-8").splitlines()
         lines[lineno] = new
         self._rc_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1677,8 +1780,11 @@ class App:
             if not m:
                 continue
             path = m.group(1).strip()
-            if (repo / path).exists() or Path(path).exists():
-                lines[i] = line.replace("[ ]", "[x]", 1)
+            # v2.6.3 — repo-relative ONLY: the old CWD fallback
+            # (Path(path).exists()) auto-ticked items from files that
+            # merely shared a name outside the repo
+            if (repo / path).exists():
+                lines[i] = flip_recon_item(line)
                 verified += 1
             else:
                 remaining += 1
@@ -1917,12 +2023,10 @@ class App:
         # v2.5 — dialog names the current change (was: v2.4 BLOCKED rename)
         if messagebox.askyesno("Command files out of date",
                 "This repo's command files predate the current console "
-                "version (newest: session.md spells out the canonical "
-                "PROGRESS.md line with a worked example — gates report "
-                "cleanly in Plan health).\n\n"
+                "version (newest: %s).\n\n"
                 "Update %d file(s) now?\n%s\n\n(Not asked again this run; "
                 "PART-00.md, templates/ and plans/ are never touched.)"
-                % (len(stale), "\n".join(stale))):
+                % (COMMAND_UPDATE_NOTE, len(stale), "\n".join(stale))):
             self._apply_command_update(repo, stale)
 
     def on_update_commands(self):
@@ -2271,7 +2375,12 @@ class App:
 
     def _on_model_picked(self, _event):
         picked = self.model_cb.get().strip()
-        if picked:
+        # v2.6.3 — remember only REAL model ids: typed filters ('glm',
+        # 'nvidia') used to be saved as favorites on FocusOut/Return and
+        # polluted the dropdown. A hand-typed vendor/model id (contains
+        # '/') is still allowed — the model list may have failed to
+        # load, and the log invites typing an id by hand.
+        if picked and (picked in self._all_models or "/" in picked):
             self._remember_model(picked)
     def _api_call(self, prompt, model, key, timeout=360):
         """Streaming OpenRouter call: live progress ticker, cancellation,
@@ -2363,7 +2472,10 @@ class App:
                 if now - t0 > timeout:
                     raise RuntimeError("timed out after %ds — try a smaller/"
                                        "faster model" % timeout)
-        except TimeoutError:
+        except (TimeoutError, socket.timeout):
+            # socket.timeout IS TimeoutError on Python 3.10+, but only
+            # an OSError subclass before that — catch both so the
+            # friendly 'connection stalled' message survives on 3.9 too
             raise RuntimeError("connection stalled (no data for 60s) — model "
                                "queue too long; retry or pick another model")
         except _Cancelled:
@@ -2383,25 +2495,6 @@ class App:
                                "do this under load; retry or pick another model")
         return text
 
-    def _parse_files(self, text, slug):
-        files, notes, cur = [], [], None
-        for line in text.splitlines():
-            s = line.strip()
-            if s.startswith("<<<FILE:") and s.endswith(">>>"):
-                cur = (s[len("<<<FILE:"):-3].strip(), [])
-            elif s == "<<<END>>>" and cur:
-                path, body = cur
-                if path.startswith("plans/%s/" % slug) and ".." not in path:
-                    files.append((path, "\n".join(body).rstrip() + "\n"))
-                else:
-                    notes.append("(ignored bad path: %s)" % path)
-                cur = None
-            elif cur is not None:
-                cur[1].append(line)
-            else:
-                notes.append(line)
-        return files, "\n".join(notes)
-
     def _run_api(self, repo, target, cmd_file, args, slug, extra, model, key):
         """Run one command file through the API. Returns True if it ran."""
         cpath = repo / "commands" / cmd_file
@@ -2418,11 +2511,11 @@ class App:
         self.say(target, "----- %s via %s -----" % (cmd_file, model))
         try:
             text = self._api_call(prompt, model, key)
-            files, notes = self._parse_files(text, slug)
+            files, notes = parse_files(text, slug)
             if not files:
                 self.say(target, "reply had no <<<FILE>>> blocks — retrying once …")
                 text = self._api_call(prompt + RETRY_NOTE, model, key)
-                files, notes = self._parse_files(text, slug)
+                files, notes = parse_files(text, slug)
         except Exception as exc:
             self.say(target, "ERROR: %s" % exc)
             self.say(target, "Fix the cause if needed, then retry this step "
@@ -2484,9 +2577,10 @@ class App:
                            "answer them in the Owner pass tab" % len(qs))
         rc = pdir / "RECON-CHECKLIST.md"
         if rc.is_file():
-            # v2.0 — owner-marked DEFERRED items no longer block Freeze
-            n = sum(1 for l in rc.read_text(encoding="utf-8").splitlines()
-                    if "[ ]" in l and "DEFERRED" not in l.upper())
+            # v2.0 — owner-marked DEFERRED items no longer block Freeze;
+            # v2.6.1 — anchored checkbox matching (prose mentioning `- [ ]`
+            # in the header is not an item)
+            n = count_open_recon(rc.read_text(encoding="utf-8"))
             if n:
                 out.append("%d unchecked item(s) in RECON-CHECKLIST.md — "
                            "tick them in the Owner pass tab or mark the "
@@ -2580,9 +2674,10 @@ class App:
                 return
         rc = pdir / "RECON-CHECKLIST.md"
         if rc.is_file():
-            # v2.0 — owner-marked DEFERRED items no longer block Freeze
-            n = sum(1 for l in rc.read_text(encoding="utf-8").splitlines()
-                    if "[ ]" in l and "DEFERRED" not in l.upper())
+            # v2.0 — owner-marked DEFERRED items no longer block Freeze;
+            # v2.6.1 — anchored checkbox matching (prose mentioning `- [ ]`
+            # in the header is not an item)
+            n = count_open_recon(rc.read_text(encoding="utf-8"))
             if n:
                 messagebox.showerror("Freeze", "RECON-CHECKLIST.md has %d unchecked "
                                      "item(s) — tick them in the Owner pass tab "

@@ -1,6 +1,8 @@
 PART 01 — PROJECT CONTEXT: <plan-slug>
-Owner-maintained. Freeze as "PART-01 v1.0" before Session 1; edits require
-a version bump + owner approval. Sections A–F mandatory; G recommended.
+Owner-maintained. Freeze as "PART-01 v1.0" (file "PART-01 v1.0.md",
+written by the Plan Console "Freeze" button) before Session 1; edits
+require a version bump + owner approval. Sections A–F mandatory; G
+recommended.
 
 A. MISSION & SCOPE
    Mission: <one paragraph>
@@ -8,7 +10,7 @@ A. MISSION & SCOPE
    Session map (gates column: use stable ids — "g1: pytest green, g2: parity vs RECON §4"):
      # | one-line scope | gates | deploy?
      1 | ...            | ...   | no
-     ... (last = deploy session, owner-supervised)
+     ... (last = deploy session, owner-supervised unless §G overrides)
    Legacy inventory: <existing assets that stay frozen — paths, URLs, names>
    Out of scope: <explicit non-goals>
 
@@ -41,4 +43,5 @@ F. ARTIFACTS MAP
 G. KNOWN QUIRKS & EXCEPTIONS
    Version-specific provider quirks (e.g. JSON-mode string form),
    response-shape exceptions, verbatim-header rules, anything that
-   contradicts §C/§D expectations.
+   contradicts §C/§D expectations. Deploy-execution overrides
+   (agent-executed deploys instead of owner-supervised) belong here.

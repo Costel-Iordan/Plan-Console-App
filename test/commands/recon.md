@@ -9,6 +9,10 @@ Classify each item:
 - OWNER-ONLY: anything needing credentials, DB, dashboards, SSH, live
   external calls
 
+Pure file/directory existence checks: emit them in the exact form
+`- [ ] EXISTS: <repo-relative path>` — the Plan Console Owner-pass tab
+can auto-verify and tick those in local Python.
+
 Execute every AGENT-RUNNABLE item; record actual output next to it and
 tick it `- [x]`. Promote matching PART-01.draft.md §B lines to
 VERIFIED <today> ONLY where the check passed. Failures stay UNVERIFIED

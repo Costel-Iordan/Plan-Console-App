@@ -1,7 +1,7 @@
 PART 00 — SESSION PROTOCOL (universal; loaded every session)
 Version 1.1 — Owner-only edits, version bump required. PROGRESS.md records
 the version executed. This file contains PROCESS rules only. All project
-facts live in the plan's PART-01.md.
+facts live in the plan's frozen PART-01 file (e.g. "PART-01 v1.0.md").
 
 SESSION MECHANICS
 - One session = one numbered unit of work, executed to completion.
@@ -42,13 +42,14 @@ DEFAULT CONTRACTS (apply unless PART-01 §E overrides)
   limits) come from §G — never assume them.
 
 PART-01 COMPLETENESS (hard gate)
-PART-01.md must define sections A–F (G optional if empty). If a section
-missing, stale-dated, or contradictory affects this session → BLOCKED.md
-citing the section. The agent NEVER invents project facts.
+The frozen PART-01 file ("PART-01 v1.0.md" — or a legacy PART-01.md with
+a freeze header) must define sections A–F (G optional if empty). If a
+section missing, stale-dated, or contradictory affects this session →
+BLOCKED.md citing the section. The agent NEVER invents project facts.
 
 ECONOMY RULES
 - Be terse. Artifacts and verification output only. No prose about what
-  you're about to do, no concluding essays.
+you're about to do, no concluding essays.
 - Targeted reads: grep to locate, then read only needed line ranges.
   Never re-read content already extracted into plan artifacts.
 - Never echo PART-00, PART-01, or large files — reference by path/section.
