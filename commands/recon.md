@@ -24,3 +24,8 @@ OWNER-ONLY items: append exact commands/SQL to OPEN-QUESTIONS.md under
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:
 verified X / pending-owner Y / failed Z.
+
+Next: the owner answers OPEN-QUESTIONS.md in the Plan Console Owner
+pass tab (answers land in PART-01.draft.md ## OWNER ANSWERS — a
+TEMPORARY inbox), then commands/owner-resolve.md <slug> integrates
+them into the draft.

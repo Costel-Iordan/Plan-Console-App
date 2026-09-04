@@ -59,3 +59,6 @@ Execute in order:
    RECON-CHECKLIST.md — full files). End your notes with exactly one
    line: answers integrated X / need clarification Y / questions
    sharpened Z / checklist ticked W / owner-only V.
+
+Next: commands/validate-plan.md <slug> — validation is the step after
+integration; Freeze only unlocks on "PART-01 READY".

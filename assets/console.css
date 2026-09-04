@@ -1,0 +1,263 @@
+/* assets/console.css — vendored stylesheet for the offline HTML guides
+   (UserGuide.html, no-api-key-guide.html). Token names/values mirror the
+   THEMES dict in plan-console.py so the app and the guides stay in
+   lockstep (PART-01 §C, §G). Local file only: no CDN, no build step —
+   guides render fully offline from file:// (PART-01 §E). */
+
+/* ---- semantic tokens (light defaults; dark via html[data-theme]) ---- */
+:root {
+    color-scheme: light;
+    --bg-main: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-accent: #e2e8f0;
+    --text-main: #0f172a;
+    --text-muted: #475569;
+    --accent-cyan: #0284c7;
+    --accent-green: #16a34a;
+    --accent-orange: #ea580c;
+    --accent-red: #dc2626;
+    --border-color: #cbd5e1;
+    --radius: 8px;
+}
+
+html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-main: #0f172a;
+    --bg-card: #1e293b;
+    --bg-accent: #334155;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --accent-cyan: #38bdf8;
+    --accent-green: #4ade80;
+    --accent-orange: #fb923c;
+    --accent-red: #f87171;
+    --border-color: #475569;
+}
+
+/* ---- base elements ---- */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    line-height: 1.6;
+    padding: 2rem 1rem;
+}
+
+h1 {
+    font-size: 2.25rem;
+    color: var(--accent-cyan);
+    margin-bottom: 0.5rem;
+}
+
+h2 {
+    font-size: 1.5rem;
+    color: var(--accent-cyan);
+    margin-top: 2.5rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--bg-accent);
+    padding-bottom: 0.5rem;
+}
+
+h3 {
+    font-size: 1.15rem;
+    color: var(--text-main);
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+p {
+    margin-bottom: 1rem;
+}
+
+strong {
+    color: var(--text-main);
+}
+
+hr {
+    border: 0;
+    height: 1px;
+    background: var(--border-color);
+    margin: 3rem 0;
+}
+
+code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    background-color: var(--bg-accent);
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.9em;
+    color: var(--accent-cyan);
+}
+
+ol, ul {
+    margin-bottom: 1.5rem;
+    padding-left: 1.5rem;
+}
+
+li {
+    margin-bottom: 0.75rem;
+}
+
+li::marker {
+    color: var(--accent-cyan);
+    font-weight: bold;
+}
+
+ul li::marker {
+    content: "• ";
+    color: var(--accent-cyan);
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--bg-accent);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--border-color);
+}
+
+/* ---- components ---- */
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+header {
+    margin-bottom: 3rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 1.5rem;
+}
+
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.note-box {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--accent-orange);
+    padding: 1rem;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin-bottom: 1.5rem;
+}
+
+.note-box-green {
+    border-left-color: var(--accent-green);
+}
+
+.pill {
+    display: inline-block;
+    background: var(--bg-accent);
+    color: var(--accent-cyan);
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border-color);
+}
+
+.kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    background: var(--bg-accent);
+    border: 1px solid var(--border-color);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.85em;
+}
+
+.btn {
+    display: inline-block;
+    background: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color 150ms ease, border-color 150ms ease;
+}
+.btn:hover {
+    background: var(--bg-accent);
+}
+.btn-primary {
+    background: var(--accent-cyan);
+    border-color: var(--accent-cyan);
+    color: #ffffff;
+}
+
+.terminal-code {
+    display: block;
+    background-color: var(--bg-main);
+    padding: 1rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    color: var(--accent-green);
+    margin-top: 0.5rem;
+    overflow-x: auto;
+}
+
+/* ---- utilities (Tailwind-named; only classes the guides use) ---- */
+.max-w-2xl { max-width: 720px; }
+.block { display: block; }
+.flex { display: flex; }
+.flex-1 { flex: 1 1 0%; }
+.flex-shrink-0 { flex-shrink: 0; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.gap-4 { gap: 1rem; }
+.border { border: 1px solid var(--border-color); }
+.rounded-lg { border-radius: var(--radius); }
+.rounded-full { border-radius: 9999px; }
+.w-8 { width: 2rem; }
+.h-8 { height: 2rem; }
+.p-4 { padding: 1rem; }
+.mb-0 { margin-bottom: 0; }
+.mb-1 { margin-bottom: 0.25rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mb-6 { margin-bottom: 1.5rem; }
+.ml-2 { margin-left: 0.5rem; }
+.mt-0 { margin-top: 0; }
+.mt-2 { margin-top: 0.5rem; }
+.mt-4 { margin-top: 1rem; }
+.last\:mb-0:last-child { margin-bottom: 0; }
+.overflow-x-auto { overflow-x: auto; }
+.text-main { color: var(--text-main); }
+.text-muted { color: var(--text-muted); }
+.text-cyan { color: var(--accent-cyan); }
+.text-center { text-align: center; }
+.text-sm { font-size: 0.875rem; }
+.text-lg { font-size: 1.125rem; }
+.font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.font-bold { font-weight: 700; }
+.font-medium { font-weight: 500; }
+.font-normal { font-weight: 400; }
+.bg-main { background-color: var(--bg-main); }
+.bg-accent { background-color: var(--bg-accent); }
+.list-none { list-style: none; }

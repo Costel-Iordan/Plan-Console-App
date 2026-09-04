@@ -79,3 +79,6 @@ TYPE=audit also produces:
 
 Never invent facts to fill gaps — gaps stay blank and surface in
 OPEN-QUESTIONS.md. Emit every file you created.
+
+Next: commands/recon.md <slug> — verify the draft's claims; then the
+owner answers OPEN-QUESTIONS.md in the console Owner pass tab.

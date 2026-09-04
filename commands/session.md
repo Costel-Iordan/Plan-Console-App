@@ -76,3 +76,6 @@ console parses leniently and flags non-canonical lines, but canonical
 is what reports cleanly. Gate IDs come from PART-01 §A session N.
 Execute per PART-00. Stop after gates pass and the PROGRESS line is
 appended.
+
+Next: the next session number (Plan health shows it), or
+commands/plan-status.md <slug> after the last session.

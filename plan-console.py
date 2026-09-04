@@ -80,6 +80,10 @@ v2.6.3 — audit hardening: DEFERRED must be a tag (prose like 'not
   guard is module-level (parse_files) and unit-tested; the auto-update
   dialog text comes from COMMAND_UPDATE_NOTE; socket timeouts are
   caught on Python 3.9 too.
+v2.6.4 — the Owner-pass status line now checks the third Freeze gate
+  (VALIDATION.md) too: "ready to Freeze" only appears when the report
+  exists and reads exactly "PART-01 READY", so a stale validation
+  report can no longer make the counter contradict the Freeze button.
 
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
@@ -101,6 +105,10 @@ from datetime import date, datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog
+try:
+    import winreg                    # Windows registry (theme detection)
+except ImportError:                  # non-Windows: guarded fallbacks below
+    winreg = None
 
 HERE = Path(__file__).resolve().parent
 CFG = HERE / "plan-console.json"
@@ -129,6 +137,160 @@ RECON_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s*)?\[( |x|X)\]")
 # an open item.
 DEFERRED_START_RE = re.compile(r"^DEFERRED\b", re.I)
 DEFERRED_BRACKET_RE = re.compile(r"[\[(]\s*DEFERRED\b", re.I)
+
+# ------------------------------------------------------------- v3.0 theme
+# Semantic token system — mirrors the guides' CSS token names/values
+# (UserGuide.html :root palette; assets/console.css keeps them in
+# lockstep, PART-01 §G). This module-level dict is the ONLY place hex
+# color literals may live (PART-01 §E grep gate).
+THEMES = {
+    "light": {
+        "bg-main": "#f8fafc",
+        "bg-card": "#ffffff",
+        "bg-accent": "#e2e8f0",
+        "text-main": "#0f172a",
+        "text-muted": "#475569",
+        "accent-cyan": "#0284c7",
+        "accent-green": "#16a34a",
+        "accent-orange": "#ea580c",
+        "accent-red": "#dc2626",
+        "border-color": "#cbd5e1",
+    },
+    "dark": {
+        "bg-main": "#0f172a",
+        "bg-card": "#1e293b",
+        "bg-accent": "#334155",
+        "text-main": "#f8fafc",
+        "text-muted": "#94a3b8",
+        "accent-cyan": "#38bdf8",
+        "accent-green": "#4ade80",
+        "accent-orange": "#fb923c",
+        "accent-red": "#f87171",
+        "border-color": "#475569",
+    },
+}
+# persisted selector values (PART-01 §E): "light" | "dark" | "system"
+THEME_SETTINGS = ("light", "dark", "system")
+THEME_LABELS = {"light": "Light", "dark": "Dark", "system": "Follow OS"}
+THEME_SETTING_BY_LABEL = {v: k for k, v in THEME_LABELS.items()}
+
+
+def _detect_os_theme():
+    """'light' or 'dark' — best-effort OS theme detection. Windows reads
+    HKCU\\...\\Themes\\Personalize → AppsUseLightTheme; anything else
+    (non-Windows, winreg missing, key unreadable) falls back to 'light'
+    without crashing (PART-01 §G)."""
+    if winreg is not None and os.name == "nt":
+        try:
+            with winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion"
+                    r"\Themes\Personalize") as key:
+                return ("dark" if winreg.QueryValueEx(key,
+                        "AppsUseLightTheme")[0] == 0 else "light")
+        except OSError:
+            pass
+    return "light"
+
+
+def _high_contrast_active():
+    """True when Windows high-contrast mode is on — or when the check
+    cannot be performed (non-Windows, winreg missing, key unreadable):
+    skipping custom colors is the safe default, never fight the OS
+    (PART-01 §G)."""
+    if winreg is None or os.name != "nt":
+        return True
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Control Panel\Accessibility"
+                            r"\HighContrast") as key:
+            return bool(int(winreg.QueryValueEx(key, "Flags")[0]) & 1)
+    except OSError:
+        return True
+
+
+def apply_theme(root, style, name):
+    """Apply the named token set ('light' or 'dark') to the whole app:
+    ttk styling via 'clam' (fallback 'default' when clam is missing,
+    §G) plus a walk over classic tk widgets, which ttk.Style cannot
+    restyle (§G). Returns True when colors were applied, False when
+    skipped because Windows high-contrast mode is active (or cannot be
+    ruled out)."""
+    if _high_contrast_active():
+        return False
+    t = THEMES[name]
+    style.theme_use("clam" if "clam" in style.theme_names() else "default")
+    style.configure(".", background=t["bg-main"], foreground=t["text-main"],
+                    fieldbackground=t["bg-card"],
+                    bordercolor=t["border-color"],
+                    lightcolor=t["bg-card"], darkcolor=t["bg-card"],
+                    troughcolor=t["bg-card"],
+                    selectbackground=t["bg-accent"],
+                    selectforeground=t["text-main"])
+    style.configure("TFrame", background=t["bg-main"])
+    style.configure("TLabel", background=t["bg-main"],
+                    foreground=t["text-main"])
+    style.configure("TLabelframe", background=t["bg-main"],
+                    foreground=t["text-main"],
+                    bordercolor=t["border-color"])
+    style.configure("TLabelframe.Label", background=t["bg-main"],
+                    foreground=t["text-main"])
+    style.configure("TNotebook", background=t["bg-main"],
+                    bordercolor=t["border-color"])
+    style.configure("TNotebook.Tab", background=t["bg-card"],
+                    foreground=t["text-muted"], padding=(10, 4))
+    style.map("TNotebook.Tab", background=[("selected", t["bg-card"])],
+              foreground=[("selected", t["text-main"])])
+    style.configure("TButton", background=t["bg-card"],
+                    foreground=t["text-main"],
+                    bordercolor=t["border-color"])
+    style.map("TButton",
+              background=[("pressed", t["bg-accent"]),
+                          ("active", t["bg-card"])],
+              foreground=[("disabled", t["text-muted"])])
+    style.configure("TEntry", fieldbackground=t["bg-card"],
+                    foreground=t["text-main"],
+                    insertbackground=t["text-main"],
+                    bordercolor=t["border-color"])
+    style.map("TEntry", fieldbackground=[("readonly", t["bg-card"])])
+    style.configure("TCombobox", fieldbackground=t["bg-card"],
+                    foreground=t["text-main"],
+                    bordercolor=t["border-color"])
+    style.map("TCombobox", fieldbackground=[("readonly", t["bg-card"])],
+              foreground=[("readonly", t["text-main"])])
+    style.configure("TCheckbutton", background=t["bg-main"],
+                    foreground=t["text-main"])
+    style.map("TCheckbutton", background=[("active", t["bg-main"])])
+    style.configure("TSpinbox", fieldbackground=t["bg-card"],
+                    foreground=t["text-main"],
+                    insertbackground=t["text-main"],
+                    bordercolor=t["border-color"])
+    style.configure("TScrollbar", background=t["bg-card"],
+                    troughcolor=t["bg-main"],
+                    bordercolor=t["border-color"])
+    root.configure(bg=t["bg-main"])
+    _walk_classic_widgets(root, t)
+    return True
+
+
+def _walk_classic_widgets(widget, t):
+    """Recolor classic tk widgets (ttk.Style cannot reach them, §G).
+    Toplevels are skipped: popups always use the theme active at their
+    creation time (accepted exception, §G)."""
+    for child in widget.winfo_children():
+        if isinstance(child, tk.Toplevel):
+            continue
+        cls = child.winfo_class()
+        if cls == "Text":
+            child.configure(bg=t["bg-card"], fg=t["text-main"],
+                            insertbackground=t["text-main"],
+                            selectbackground=t["bg-accent"],
+                            selectforeground=t["text-main"])
+        elif cls == "Listbox":
+            child.configure(bg=t["bg-card"], fg=t["text-main"],
+                            selectbackground=t["bg-accent"],
+                            selectforeground=t["text-main"])
+        _walk_classic_widgets(child, t)
 
 
 def recon_item_state(line):
@@ -250,6 +412,35 @@ def recommend_line(text, lineno):
         if m:
             return m.group(1).strip()
     return ""
+
+
+def count_owner_answers(text):
+    """v2.7 — leftover Q/A pairs under '## OWNER ANSWERS' in a PART-01
+    draft. The section is a TEMPORARY inbox: per the owner-pass rule
+    (commands/owner-resolve.md) every answered pair must be integrated
+    into §A–§G and removed; only pairs marked NEEDS CLARIFICATION may
+    stay. A '- Q:' line opens a pair; a line of the pair containing
+    'NEEDS CLARIFICATION' exempts it. Pairs outside the section never
+    count. Console-side twin of the validate-plan leftover check, so
+    the Freeze gate and the Owner-pass tab see the same number the
+    validator reports."""
+    pos = text.find("## OWNER ANSWERS")
+    if pos == -1:
+        return 0
+    leftover, in_pair, flagged = 0, False, False
+    for line in text[pos:].splitlines()[1:]:
+        s = line.strip()
+        if s.startswith("#"):
+            break                      # a later heading ends the section
+        if line.startswith("- Q:"):
+            if in_pair and not flagged:
+                leftover += 1
+            in_pair, flagged = True, False
+        elif in_pair and "NEEDS CLARIFICATION" in s:
+            flagged = True
+    if in_pair and not flagged:
+        leftover += 1
+    return leftover
 
 
 # ----------------------------------------------------------------------------
@@ -874,6 +1065,9 @@ TYPE=audit also produces:
 
 Never invent facts to fill gaps — gaps stay blank and surface in
 OPEN-QUESTIONS.md. Emit every file you created.
+
+Next: commands/recon.md <slug> — verify the draft's claims; then the
+owner answers OPEN-QUESTIONS.md in the console Owner pass tab.
 """,
 
 "commands/owner-resolve.md": """---
@@ -937,6 +1131,9 @@ Execute in order:
    RECON-CHECKLIST.md — full files). End your notes with exactly one
    line: answers integrated X / need clarification Y / questions
    sharpened Z / checklist ticked W / owner-only V.
+
+Next: commands/validate-plan.md <slug> — validation is the step after
+integration; Freeze only unlocks on "PART-01 READY".
 """,
 
 "commands/recon.md": """---
@@ -965,6 +1162,11 @@ OWNER-ONLY items: append exact commands/SQL to OPEN-QUESTIONS.md under
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:
 verified X / pending-owner Y / failed Z.
+
+Next: the owner answers OPEN-QUESTIONS.md in the Plan Console Owner
+pass tab (answers land in PART-01.draft.md ## OWNER ANSWERS — a
+TEMPORARY inbox), then commands/owner-resolve.md <slug> integrates
+them into the draft.
 """,
 
 "commands/validate-plan.md": """---
@@ -990,8 +1192,15 @@ templates/PART-01.md. Check ONLY:
   NEEDS CLARIFICATION only)
 
 Write the findings to plans/$ARGUMENTS/VALIDATION.md (one line per
-finding, overwrite previous). If none: write exactly "PART-01 READY".
-Findings only — no fixes, no rewrites.
+finding, overwrite previous). Each finding line MUST end with the
+remediation as the exact next command to run, e.g. "→ run
+owner-resolve <slug>" or "→ fix in the draft, then re-validate" —
+findings read as instructions, never as puzzles. If none: write
+exactly "PART-01 READY". Findings only — no fixes, no rewrites.
+
+Next: "PART-01 READY" → commands/freeze-plan.md <slug> (or the
+console Freeze button); otherwise fix the findings and re-run this
+command before Freezing.
 """,
 
 "commands/freeze-plan.md": """---
@@ -1018,6 +1227,9 @@ If all pass:
 - Keep the draft as history; create PROGRESS.md with header
   "# PROGRESS — <slug> | PART-01 v1.0 | <date>"
 - Report "FROZEN v1.0 — N sessions mapped, deploy = session N"
+
+Next: commands/session.md <slug> 1 — sessions execute against the
+frozen file, in §A order.
 """,
 
 "commands/session.md": """---
@@ -1098,6 +1310,9 @@ console parses leniently and flags non-canonical lines, but canonical
 is what reports cleanly. Gate IDs come from PART-01 §A session N.
 Execute per PART-00. Stop after gates pass and the PROGRESS line is
 appended.
+
+Next: the next session number (Plan health shows it), or
+commands/plan-status.md <slug> after the last session.
 """,
 
 "commands/plan-status.md": """---
@@ -1105,10 +1320,12 @@ description: Report what a plan needs next
 argument-hint: <slug>
 ---
 Read plans/$ARGUMENTS/ only. Report in ≤6 lines:
-- stage: intake | recon | owner-pass | validation | frozen | in-progress | done
+- stage: intake | recon | owner-pass (answers → owner-resolve
+  integration) | validation | frozen | in-progress | done
 - last PROGRESS.md line
 - interrupted: IN-PROGRESS.md exists → re-run the session command (it resumes)
-- blockers: unanswered questions, unresolved recon items
+- blockers: unanswered questions, owner answers not yet integrated
+  (## OWNER ANSWERS in PART-01.draft.md), unresolved recon items
 - next action as the exact command to run
 No fixes, no rewrites.
 """,
@@ -1123,10 +1340,22 @@ class App:
         self._cancel_lock = threading.Lock()
         self._n_busy = 0
         self._cmd_checked = set()   # v2.2 — repos already auto-checked
+        # v3.0 — theme: persisted setting ("light"|"dark"|"system", §E)
+        # + effective token set for creation-time widget colors
+        self.theme_setting = (self.cfg["theme"]
+                              if self.cfg.get("theme") in THEME_SETTINGS
+                              else "system")
+        self._theme_effective = (self.theme_setting
+                                 if self.theme_setting != "system"
+                                 else _detect_os_theme())
+        self._tokens = (None if _high_contrast_active()
+                        else THEMES[self._theme_effective])
+        self.style = ttk.Style(root)
         root.title("Plan Console")
         root.geometry("1020x800")
         self._topbar()
         self._tabs()
+        self._apply_theme_setting()
         self._fetch_models()
         root.after(100, self._drain)
         # v2.2 — started repos: offer new command-file protocols at startup
@@ -1196,12 +1425,11 @@ class App:
         # Row 3: hint under the key field + PDF link (visible when unchecked)
         self._key_hint = ttk.Label(
             top, text="Works faster WITHOUT a key — the console hands "
-                      "ready-made instructions to your agent instead.",
-            foreground="#666")
+                      "ready-made instructions to your agent instead.")
         self._key_hint.grid(row=3, column=1, sticky="w", padx=4)
         self._pdf_link = ttk.Label(
             top, text="How to use without a key (PDF guide) »",
-            foreground="#0066cc", cursor="hand2")
+            cursor="hand2")
         self._pdf_link.grid(row=3, column=2, padx=(16, 0))
         self._pdf_link.bind("<Button-1>", lambda _e: self._open_nokey_pdf())
 
@@ -1226,6 +1454,49 @@ class App:
         ttk.Button(top, text="Cancel API call",
                    command=self.on_cancel_api)\
             .grid(row=4, column=2, padx=(16, 0), pady=(8, 0))
+        # v3.0 — theme selector (Light / Dark / Follow OS), persisted §E
+        ttk.Label(top, text="Theme").grid(row=4, column=3, sticky="e",
+                                          padx=(16, 4), pady=(8, 0))
+        self.theme_var = tk.StringVar(value=THEME_LABELS[self.theme_setting])
+        self.theme_cb = ttk.Combobox(top, textvariable=self.theme_var,
+                                     values=tuple(THEME_LABELS[s] for s
+                                                  in THEME_SETTINGS),
+                                     state="readonly", width=10)
+        self.theme_cb.grid(row=4, column=4, sticky="w", pady=(8, 0))
+        self.theme_cb.bind("<<ComboboxSelected>>", self.on_theme_change)
+
+    # ---------------------------------------------------------- v3.0 theme
+    def on_theme_change(self, _event=None):
+        """Theme selector callback: resolve the new setting, apply it to
+        the whole app, and persist the raw setting in plan-console.json
+        (PART-01 §E)."""
+        self.theme_setting = THEME_SETTING_BY_LABEL.get(
+            self.theme_cb.get(), "system")
+        self._apply_theme_setting()
+        self.cfg["theme"] = self.theme_setting
+        self._save_cfg()
+
+    def _apply_theme_setting(self):
+        """Apply the current theme setting to the whole app (no
+        persistence — on_theme_change persists)."""
+        self._theme_effective = (self.theme_setting
+                                 if self.theme_setting != "system"
+                                 else _detect_os_theme())
+        applied = apply_theme(self.root, self.style, self._theme_effective)
+        self._tokens = THEMES[self._theme_effective] if applied else None
+        self._tint_labels()
+
+    def _tint_labels(self):
+        """Re-color the token-driven labels (hints, link, full-question
+        text) for the current effective theme. No-op when high-contrast
+        mode is active — never fight the OS (§G)."""
+        t = self._tokens
+        if not t:
+            return
+        for w in (self._key_hint, self._flow_hint, self._agent_hint):
+            w.configure(foreground=t["text-muted"])
+        self._pdf_link.configure(foreground=t["accent-cyan"])
+        self.q_full.configure(foreground=t["text-main"])
 
     @staticmethod
     def _open_path(path):
@@ -1317,8 +1588,11 @@ class App:
 
     def _mklog(self, parent, name, height):
         st = ttk.Label(parent, text="idle"); st.pack(anchor="w", padx=10)
+        t = self._tokens
+        log_kw = ({"bg": t["bg-card"], "fg": t["text-main"],
+                   "insertbackground": t["text-main"]} if t else {})
         log = scrolledtext.ScrolledText(parent, height=height, wrap="word",
-                                        state="disabled")
+                                        state="disabled", **log_kw)
         log.pack(fill="both", expand=True, padx=10, pady=(4, 10))
         self.logs[name], self.status[name] = log, st
 
@@ -1385,13 +1659,14 @@ class App:
         self.owner_status = ttk.Label(top, text="enter slug and click Refresh")
         self.owner_status.grid(row=0, column=4, padx=10)
         # v2.0 — flow hint so the next step is always visible
-        ttk.Label(f, text="Flow: Refresh → answer every question (saved to "
-                          "PART-01.draft.md ## OWNER ANSWERS) → 'Agent: finish "
-                          "owner pass' → paste to agent → Refresh → tick recon → "
-                          "Validate → Freeze. Nothing you answer or remove is "
-                          "ever lost (owner-pass.log + .bak).",
-                  foreground="#666", wraplength=900, justify="left")\
-            .pack(anchor="w", padx=10, pady=(2, 0))
+        self._flow_hint = ttk.Label(
+            f, text="Flow: Refresh → answer every question (saved to "
+                    "PART-01.draft.md ## OWNER ANSWERS) → 'Agent: finish "
+                    "owner pass' → paste to agent → Refresh → tick recon → "
+                    "Validate → Freeze. Nothing you answer or remove is "
+                    "ever lost (owner-pass.log + .bak).",
+            wraplength=900, justify="left")
+        self._flow_hint.pack(anchor="w", padx=10, pady=(2, 0))
         body = ttk.Frame(f); body.pack(fill="both", expand=True, padx=10, pady=6)
         # left: open questions
         lq = ttk.Labelframe(body, text="Open questions — select, type answer below")
@@ -1400,7 +1675,7 @@ class App:
         self.oq_list.pack(fill="both", expand=True, padx=6, pady=6)
         # v2.0 — full question text above the answer box (no 120-char guesswork)
         self.q_full = ttk.Label(lq, text="(select a question to read it in full)",
-                                wraplength=520, justify="left", foreground="#333")
+                                wraplength=520, justify="left")
         self.q_full.pack(fill="x", padx=6, pady=(4, 0))
         self.oq_list.bind("<<ListboxSelect>>", self._show_full_question)
         self.answer = scrolledtext.ScrolledText(lq, height=3, wrap="word")
@@ -1428,12 +1703,13 @@ class App:
         bar2 = ttk.Frame(f); bar2.pack(fill="x", padx=10, pady=(0, 4))
         ttk.Button(bar2, text="Agent: finish owner pass",
                    command=self.on_owner_resolve).pack(side="left")
-        ttk.Label(bar2, text="Answer questions above first — then this hands "
-                             "the rest to your agent: it integrates your "
-                             "answers, ticks what it can verify locally, and "
-                             "rewrites unclear questions instead of guessing.",
-                  foreground="#666", wraplength=900, justify="left")\
-            .pack(side="left", padx=8)
+        self._agent_hint = ttk.Label(
+            bar2, text="Answer questions above first — then this hands "
+                       "the rest to your agent: it integrates your "
+                       "answers, ticks what it can verify locally, and "
+                       "rewrites unclear questions instead of guessing.",
+            wraplength=900, justify="left")
+        self._agent_hint.pack(side="left", padx=8)
         self._oq_items, self._rc_items = [], []
         self._oq_file = self._rc_file = None
         self._oq_text = ""      # v2.1 — raw text for full-block display
@@ -1515,14 +1791,43 @@ class App:
         nu = sum(1 for _, l in self._rc_items
                  if recon_item_state(l) == "open"
                  and not is_deferred(l))
-        # v2.0 — the status line states the NEXT action
-        hint = (" — next: answer questions, then 'Agent: finish owner pass'"
-                if nq else (" — next: tick recon items" if nu
-                            else " — ready to Freeze"))
+        # v2.7 — answers parked in ## OWNER ANSWERS awaiting the
+        # owner-resolve integration: the section is a TEMPORARY inbox,
+        # not a final home, so the count is surfaced here explicitly
+        na = 0
+        draft = pdir / "PART-01.draft.md"
+        if draft.is_file():
+            na = count_owner_answers(draft.read_text(encoding="utf-8"))
+        # v2.6.4 — third Freeze gate surfaced here too: the status line
+        # checks VALIDATION.md (missing or != "PART-01 READY") so it can
+        # never say "ready to Freeze" while the Freeze button would fail
+        # on a stale validation report (same condition as _freeze_blockers).
+        val = pdir / "VALIDATION.md"
+        if not val.is_file():
+            vnote = " — VALIDATION.md not found — click 'Validate draft' first"
+        elif val.read_text(encoding="utf-8").strip() != "PART-01 READY":
+            vnote = " — VALIDATION.md is not 'PART-01 READY' — re-validate"
+        else:
+            vnote = ""
+        # v2.0 — the status line states the NEXT action; v2.7 — answers
+        # awaiting integration outrank recon ticks: the owner has
+        # answered, but the plan body does not know yet
+        if nq:
+            hint = " — next: answer questions, then 'Agent: finish owner pass'"
+        elif na:
+            hint = (" — next: 'Agent: finish owner pass' — integrates %d "
+                    "answered question(s) into the draft" % na)
+        elif nu:
+            hint = " — next: tick recon items"
+        elif vnote:
+            hint = vnote
+        else:
+            hint = " — ready to Freeze"
         self.owner_status.configure(
-            text="%d open question(s), %d unchecked item(s)%s" % (nq, nu, hint))
-        if nq == 0 and nu == 0 and (self._oq_file.is_file()
-                                    or self._rc_file.is_file()):
+            text=("%d open question(s), %d answer(s) awaiting integration, "
+                  "%d unchecked item(s)%s" % (nq, na, nu, hint)))
+        if (nq == 0 and na == 0 and nu == 0 and not vnote
+                and (self._oq_file.is_file() or self._rc_file.is_file())):
             self.say("intake", "owner pass: everything resolved — Freeze "
                      "is unblocked.")
 
@@ -1586,8 +1891,14 @@ class App:
                 "draft), or edit the draft manually.")
             return
         if "## OWNER ANSWERS" not in text:
-            text = text.rstrip() + ("\n\n## OWNER ANSWERS (appended %s)\n"
-                                    % date.today())
+            # v2.7 — self-labeling inbox: the header states what the
+            # section is and which command empties it, so "answered but
+            # not integrated" can never look like a final state
+            text = text.rstrip() + (
+                "\n\n## OWNER ANSWERS (appended %s — TEMPORARY inbox: "
+                "run commands/owner-resolve.md to integrate these "
+                "answers into §A–§G, then delete this section)\n"
+                % date.today())
         else:
             text = text.rstrip() + "\n"
         # v2.1 — the Q side keeps the full block, so the agent integrating
@@ -1809,6 +2120,7 @@ class App:
                                  "intake first." % slug)
             return
         body = draft.read_text(encoding="utf-8")
+        na = count_owner_answers(body)
         if "## OWNER ANSWERS" not in body:
             if not messagebox.askyesno("Owner pass",
                     "No answers recorded yet (## OWNER ANSWERS is empty).\n"
@@ -1821,10 +2133,11 @@ class App:
             pdir / "instructions" / "owner-resolve.txt")
         self.say("intake", "owner pass: instruction copied — paste into your "
                  "agent (repo open as workspace). It will integrate your "
-                 "answers into the draft, tick locally-verifiable checklist "
+                 "%d answer(s) into the draft body (§A–§G) and delete the "
+                 "## OWNER ANSWERS inbox, tick locally-verifiable checklist "
                  "items, and rewrite unclear questions (NEEDS CLARIFICATION) "
                  "instead of guessing. When it finishes, click Refresh here, "
-                 "then 'Show validation report' → Freeze.")
+                 "then 'Show validation report' → Freeze." % na)
 
     # ------------------------------------------------------- small helpers
     def _browse_repo(self):
@@ -1861,7 +2174,8 @@ class App:
         self.cfg.update(repo=str(self.repo_path()),
                         model=self.model_cb.get().strip(),
                         use_key=self.use_key.get(),
-                        kind=self.kind.get())
+                        kind=self.kind.get(),
+                        theme=self.theme_setting)
         self.cfg.pop("or_key", None)
         CFG.write_text(json.dumps(self.cfg, indent=2), encoding="utf-8")
 
@@ -1894,11 +2208,15 @@ class App:
                        "(repo open as workspace):",
                   font=("", 10, "bold"), wraplength=660, justify="left")\
             .pack(anchor="w", padx=10, pady=(8, 2))
+        t = self._tokens   # popups use the theme active at creation (§G)
         if saved:
+            lbl_kw = {"foreground": t["text-muted"]} if t else {}
             ttk.Label(win, text="Backup copy saved to: %s" % saved,
-                      foreground="#666", wraplength=660, justify="left")\
+                      wraplength=660, justify="left", **lbl_kw)\
                 .pack(anchor="w", padx=10)
-        txt = scrolledtext.ScrolledText(win, wrap="word")
+        txt_kw = ({"bg": t["bg-card"], "fg": t["text-main"],
+                   "insertbackground": t["text-main"]} if t else {})
+        txt = scrolledtext.ScrolledText(win, wrap="word", **txt_kw)
         txt.insert("1.0", text)
         txt.configure(state="disabled")
         txt.pack(fill="both", expand=True, padx=10, pady=6)
@@ -2575,6 +2893,16 @@ class App:
             if qs:
                 out.append("%d open question(s) in OPEN-QUESTIONS.md — "
                            "answer them in the Owner pass tab" % len(qs))
+        draft = pdir / "PART-01.draft.md"
+        if draft.is_file():
+            # v2.7 — owner-resolve gate: answers parked in ## OWNER
+            # ANSWERS are not yet part of the plan body
+            na = count_owner_answers(draft.read_text(encoding="utf-8"))
+            if na:
+                out.append("%d owner answer(s) parked in ## OWNER ANSWERS "
+                           "— run 'Agent: finish owner pass' "
+                           "(owner-resolve) to integrate them, then "
+                           "re-validate" % na)
         rc = pdir / "RECON-CHECKLIST.md"
         if rc.is_file():
             # v2.0 — owner-marked DEFERRED items no longer block Freeze;
@@ -2672,6 +3000,18 @@ class App:
                     "lines do not count as questions)."
                     % (len(qs), "\n".join(shown)))
                 return
+        # v2.7 — owner-resolve gate (matches _freeze_blockers): answers
+        # parked in ## OWNER ANSWERS are a TEMPORARY inbox — they must
+        # be integrated into §A–§G before the plan is frozen
+        na = count_owner_answers(draft.read_text(encoding="utf-8"))
+        if na:
+            messagebox.showerror("Freeze",
+                "PART-01.draft.md still parks %d owner answer(s) in "
+                "## OWNER ANSWERS (a TEMPORARY inbox — they are not yet "
+                "part of the plan body).\n\nClick 'Agent: finish owner "
+                "pass' so they are integrated into §A–§G, then "
+                "re-validate and Freeze." % na)
+            return
         rc = pdir / "RECON-CHECKLIST.md"
         if rc.is_file():
             # v2.0 — owner-marked DEFERRED items no longer block Freeze;

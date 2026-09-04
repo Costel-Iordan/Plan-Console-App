@@ -326,6 +326,49 @@ def test_flip_recon_item_toggles_only_the_checkbox():
     assert pc.flip_recon_item("plain prose") is None
 
 
+# --------------------------------------- v2.7 count_owner_answers
+def test_count_owner_answers_empty_and_absent():
+    # no section at all → 0
+    assert pc.count_owner_answers("A. MISSION\n    text\n") == 0
+    # section present but empty (integrated + deleted note only) → 0
+    text = ("## OWNER ANSWERS\n"
+            "(All answers integrated; section intentionally empty.)\n")
+    assert pc.count_owner_answers(text) == 0
+
+
+def test_count_owner_answers_counts_pairs():
+    text = ("F. ARTIFACTS\n"
+            "    body\n"
+            "\n"
+            "## OWNER ANSWERS (appended 2026-09-04)\n"
+            "- Q: 1. PROBLEM: gap\n"
+            "      QUESTION: decide?\n"
+            "  A: yes\n"
+            "- Q: 2. PROBLEM: gap\n"
+            "  A: no\n")
+    assert pc.count_owner_answers(text) == 2
+
+
+def test_count_owner_answers_needs_clarification_exempt():
+    text = ("## OWNER ANSWERS\n"
+            "- Q: 1. PROBLEM: gap\n"
+            "  A: unclear — NEEDS CLARIFICATION\n"
+            "- Q: 2. PROBLEM: gap\n"
+            "  A: plain answer\n")
+    # the flagged pair may stay; only the plain one is leftover
+    assert pc.count_owner_answers(text) == 1
+
+
+def test_count_owner_answers_stops_at_next_heading():
+    text = ("## OWNER ANSWERS\n"
+            "- Q: 1. PROBLEM: gap\n"
+            "  A: yes\n"
+            "\n"
+            "## LATER HEADING\n"
+            "- Q: this is another section, never counted\n")
+    assert pc.count_owner_answers(text) == 1
+
+
 def main():
     fns = [(k, v) for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]
