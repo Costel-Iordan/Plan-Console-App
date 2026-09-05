@@ -10,6 +10,21 @@ Run either way:
     py test/test_theme.py
     py -m pytest test/test_theme.py
 """
+
+# Copyright 2026 Costel Iordan (costel.iordan@gmail.com)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import importlib.util
 import re
 import sys
@@ -39,7 +54,8 @@ def test_token_names_mirror_the_guide_palette():
     # PART-01 §G)
     expected = ("bg-main", "bg-card", "bg-accent", "text-main",
                 "text-muted", "accent-cyan", "accent-green",
-                "accent-orange", "accent-red", "border-color")
+                "accent-orange", "accent-red", "border-color",
+                "text-on-accent")
     for name, theme in pc.THEMES.items():
         assert tuple(theme) == expected, \
             "%s tokens drift from the guide palette" % name
@@ -60,7 +76,8 @@ def test_dark_tokens_match_the_guide_values():
         "bg-accent": "#334155", "text-main": "#f8fafc",
         "text-muted": "#94a3b8", "accent-cyan": "#38bdf8",
         "accent-green": "#4ade80", "accent-orange": "#fb923c",
-        "accent-red": "#f87171", "border-color": "#475569"}
+        "accent-red": "#f87171", "border-color": "#475569",
+        "text-on-accent": "#ffffff"}
 
 
 def test_theme_settings_and_labels_cover_the_same_values():

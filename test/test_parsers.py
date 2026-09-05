@@ -5,6 +5,21 @@ Run either way:
     py test/test_parsers.py
     py -m pytest test/test_parsers.py
 """
+
+# Copyright 2026 Costel Iordan (costel.iordan@gmail.com)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import importlib.util
 import sys
 from pathlib import Path
@@ -772,6 +787,196 @@ def test_mark_sb_verified_never_touches_verified_or_outside_b():
     new2, _ = pc.mark_sb_verified(draft, "plan-console.json claim",
                                   "2026-09-06")
     assert new2 is None, "§A lines never match — only the §B region"
+
+
+# ------------------------------------------------- R-03 read-only git flags
+def test_readonly_forbidden_rejects_ext_diff_textconv_and_c_flag():
+    # the RE is the load-bearing guard for prefixed commands like
+    # "git diff --ext-diff" (the prefix whitelist alone lets them pass)
+    for cmd in ("git diff --ext-diff HEAD~1",
+                "git diff --textconv HEAD~1",
+                "git -c core.fsmonitor=./evil.exe status",
+                "git -cfsmonitor=./evil.exe status",
+                "git diff --stat --ext-diff"):
+        assert pc.READONLY_FORBIDDEN_RE.search(cmd), \
+            "R-03: %r must hit READONLY_FORBIDDEN_RE" % cmd
+        assert not pc.is_readonly_command(cmd), \
+            "R-03: %r must not auto-run (code-execution vector)" % cmd
+    # the new alternation must not swallow previously-allowed read-onlys
+    for cmd in ("git status", "git diff", "git log --oneline",
+                "git show HEAD", "get-content README.md",
+                "git diff --check", "git show --color-words HEAD"):
+        assert not pc.READONLY_FORBIDDEN_RE.search(cmd), \
+            "R-03 regression: %r must not hit READONLY_FORBIDDEN_RE" % cmd
+        assert pc.is_readonly_command(cmd), \
+            "R-03 regression: %r must stay read-only runnable" % cmd
+
+
+# ------------------------------------------------- R-01 _drain resilience
+class _FakeRoot:
+    def __init__(self):
+        self.after_calls = []
+
+    def after(self, ms, fn):
+        self.after_calls.append((ms, fn))
+
+    def clipboard_clear(self):
+        pass
+
+    def clipboard_append(self, text):
+        pass
+
+
+def _drain_harness(q_items, apply_models, logs=None):
+    """Bare harness calling the unbound App._drain — no Tk app built."""
+    app = type("H", (), {})()
+    app.root = _FakeRoot()
+    app.q = pc.DropOldestQueue(maxsize=pc.DRAIN_MAXSIZE)
+    for item in q_items:
+        app.q.put(item)
+    app._apply_models = apply_models
+    app.logs = logs or {}
+    app.status = {}
+    app.prog = None
+    app._n_busy = 0
+    app._drain = lambda: pc.App._drain(app)
+    return app
+
+
+def test_drain_reschedules_after_handler_exception():
+    # R-01: a handler exception must not kill the loop — the reschedule
+    # lives in `finally` and the exception goes to the fallback channel,
+    # never raised.
+    import io
+    from contextlib import redirect_stderr
+
+    def boom(_ids):
+        raise RuntimeError("simulated handler crash")
+
+    app = _drain_harness([("__models__", ["m1"])], boom)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        pc.App._drain(app)          # must NOT propagate
+    assert "simulated handler crash" in err.getvalue(), \
+        "handler exception must be logged via the fallback channel"
+    assert app.root.after_calls == [(100, app._drain)], \
+        "R-01: _drain must reschedule itself even after a handler exception"
+    assert app.q.empty(), "the failing event is consumed, queue still drains"
+
+
+def test_drain_processes_queue_and_reschedules_once():
+    seen = []
+
+    def ok(ids):
+        seen.extend(ids)
+
+    app = _drain_harness([("__models__", ["a"]),
+                          ("__models__", ["b"])], ok)
+    pc.App._drain(app)
+    assert seen == ["a", "b"]
+    assert len(app.root.after_calls) == 1 and app.root.after_calls[0][0] == 100
+
+
+def test_drop_oldest_queue_caps_and_drops_oldest():
+    q = pc.DropOldestQueue(maxsize=3)
+    for i in range(5):
+        q.put(i)                    # never blocks, never raises
+    assert q.qsize() == 3
+    dropped_ahead = []
+    while not q.empty():
+        dropped_ahead.append(q.get_nowait())
+    assert dropped_ahead == [2, 3, 4], \
+        "R-01: oldest events are dropped first when the queue is full"
+
+
+# --------------------------------------- R-02 context-pack secret filtering
+def _pack_harness():
+    """Bare harness calling the unbound App._context_pack — no Tk app."""
+    app = type("H", (), {})()
+    app._said = []
+
+    def _say(target, line):
+        app._said.append((target, line))
+
+    app.say = _say
+    return app
+
+
+def test_context_pack_refuses_dotfiles_and_secret_names(tmp_path):
+    # R-02 (§E): dotfiles and the owner-confirmed deny-list globs must
+    # never be inlined, even when their path matches the checklist words.
+    (tmp_path / "src").mkdir()
+    for name, body in ((".env", "SECRET=1"),
+                       (".env.local", "SECRET=2"),
+                       ("deploy.pem", "-----BEGIN"),
+                       ("server.pfx", "x"),
+                       ("apikey.txt", "sk-123"),
+                       ("auth_token.json", "{}"),
+                       ("credentials.yaml", "user: x"),
+                       ("app_main.py", "print('hi')\n")):
+        (tmp_path / "src" / name).write_text(body)
+    (tmp_path / ".idea").mkdir()
+    (tmp_path / ".idea" / "app_main.xml").write_text("x")
+    app = _pack_harness()
+    pack = pc.App._context_pack(app, tmp_path, "app_main")
+    assert "app_main.py" in pack, "the safe match must still be inlined"
+    for banned in (".env", ".env.local", "deploy.pem", "server.pfx",
+                   "apikey.txt", "auth_token.json", "credentials.yaml",
+                   "app_main.xml"):
+        assert banned not in pack, \
+            "R-02: %s must never be inlined into the context pack" % banned
+
+
+def test_context_pack_logs_every_inlined_file(tmp_path):
+    (tmp_path / "alpha_notes.md").write_text("a")
+    (tmp_path / "beta_alpha.txt").write_text("b")
+    app = _pack_harness()
+    pc.App._context_pack(app, tmp_path, "alpha")
+    logged = [line for target, line in app._said if target == "intake"]
+    assert any("context-pack: inlined alpha_notes.md" in l for l in logged) \
+        and any("context-pack: inlined beta_alpha.txt" in l for l in logged), \
+        "R-02: every inlined file path must be logged to the console"
+
+
+def test_context_pack_caps_max_files(tmp_path):
+    # R-30: the walk stops at max_files matches.
+    for i in range(12):
+        (tmp_path / ("alpha_%02d.txt" % i)).write_text("x" * 20)
+    app = _pack_harness()
+    pack = pc.App._context_pack(app, tmp_path, "alpha",
+                                max_files=3, max_bytes=100)
+    assert pack.count("----- ") == 3, "R-30: max_files cap must hold"
+    assert len(app._said) == 3, "R-02: only the inlined files are logged"
+
+
+def test_context_pack_respects_max_bytes(tmp_path):
+    # R-30: files at or above max_bytes are never inlined.
+    (tmp_path / "big_alpha.txt").write_text("x" * 500)
+    (tmp_path / "small_alpha.txt").write_text("tiny")
+    app = _pack_harness()
+    pack = pc.App._context_pack(app, tmp_path, "alpha", max_bytes=100)
+    assert "small_alpha.txt" in pack and "big_alpha.txt" not in pack, \
+        "R-30: max_bytes cap must hold"
+    assert len(app._said) == 1, "R-02: skipped files are not logged as sent"
+
+
+# ------------------------------------------------------------------- R-09
+def test_starter_files_byte_identity():
+    # R-09: every embedded STARTER_FILES entry is byte-identical to the
+    # on-disk repo file AND to the test/ fixture copy. The app's own
+    # write path (Path.write_text) translates \n to os.linesep, so the
+    # comparison normalizes CRLF -> LF on both sides — any other byte
+    # difference (edit, drift, encoding) still fails.
+    for key, embedded in pc.STARTER_FILES.items():
+        want = embedded.encode("utf-8").replace(b"\r\n", b"\n")
+        disk = HERE.parent / key
+        fixture = HERE / key
+        assert disk.is_file(), "R-09: %s missing from repo root" % key
+        assert fixture.is_file(), "R-09: %s missing from test/ fixtures" % key
+        assert want == disk.read_bytes().replace(b"\r\n", b"\n"), \
+            "R-09: embedded %s != on-disk bytes" % key
+        assert want == fixture.read_bytes().replace(b"\r\n", b"\n"), \
+            "R-09: embedded %s != test/ fixture bytes" % key
 
 
 def main():

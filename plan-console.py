@@ -138,9 +138,278 @@ One-time: point "Repo folder" at your project folder and click
 "Init starter repo" to create PART-00.md, templates/ and commands/.
 Existing repo: "Update command files" refreshes commands/ only.
 
+Public release: version 1.0.0 (APP_VERSION). The public release starts
+at 1.0.0, continuing the former internal v3.6 lineage; the historical
+v2.x–v3.6 changelog above is kept intact for reference.
+
 Settings are stored in plan-console.json next to this script.
 """
-import json, os, queue, re, socket, subprocess, threading, time
+
+# Copyright 2026 Costel Iordan (costel.iordan@gmail.com)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ---------------------------------------------------------------------------
+# Identity & licensing — the single source of truth for the app's public
+# identity. A rename or copyright-holder change is a one-line edit here;
+# every generated copyright string in the app derives from these constants.
+# ---------------------------------------------------------------------------
+APP_NAME = "Plan Console"
+APP_VERSION = "1.0.0"          # public release
+COPYRIGHT_HOLDER = "Costel Iordan"
+COPYRIGHT_EMAIL = "costel.iordan@gmail.com"
+COPYRIGHT_LINE = f"Copyright © {COPYRIGHT_HOLDER} ({COPYRIGHT_EMAIL})"
+LICENSE_NAME = "Apache License 2.0"
+LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0"
+
+# Canonical Apache 2.0 text embedded verbatim (byte-identical
+# to the repo-root LICENSE file) — fallback for the first-run
+# license dialog when the LICENSE file is missing or unreadable.
+# Generated from LICENSE — do not hand-edit; regenerate instead.
+EMBEDDED_LICENSE_TEXT = """\
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+"""
+
+# First-run "as-is" disclaimer shown in the acceptance dialog next to
+# the license text (plain-text twin of the legal disclaimer in
+# UserGuide section 13).
+AS_IS_DISCLAIMER_TEXT = """\
+LEGAL DISCLAIMER — PROVIDED "AS IS"
+
+This application is provided by the copyright holder and contributors
+"AS IS", free of charge, and is used entirely at your own risk. To the
+maximum extent permitted by applicable law:
+
+- NO WARRANTIES of any kind, express or implied, are given —
+  including but not limited to warranties of merchantability, fitness
+  for a particular purpose, accuracy, availability, non-infringement,
+  and uninterrupted or error-free operation.
+- The copyright holder and contributors accept NO LIABILITY and NO
+  RESPONSIBILITY whatsoever for any direct, indirect, incidental,
+  special, exemplary or consequential damages — including loss of
+  data, loss of profit, business interruption, or damages caused by
+  AI-generated content executed in your repositories — even if advised
+  of the possibility of such damages.
+- You remain solely responsible for anything you run, deploy or
+  publish with the help of this application, including every
+  instruction you execute and every file an AI agent writes on your
+  behalf. Review before you run.
+- Nothing in this application constitutes legal, financial or
+  professional advice.
+
+"""
+
+import fnmatch, json, os, queue, re, shutil, socket, subprocess, threading, time, traceback
 import urllib.request, urllib.error
 from datetime import date, datetime
 from pathlib import Path
@@ -291,11 +560,12 @@ THEMES = {
         "bg-accent": "#e2e8f0",
         "text-main": "#0f172a",
         "text-muted": "#475569",
-        "accent-cyan": "#0284c7",
-        "accent-green": "#16a34a",
+        "accent-cyan": "#0369a1",
+        "accent-green": "#15803d",
         "accent-orange": "#ea580c",
         "accent-red": "#dc2626",
         "border-color": "#cbd5e1",
+        "text-on-accent": "#ffffff",
     },
     "dark": {
         "bg-main": "#0f172a",
@@ -308,6 +578,7 @@ THEMES = {
         "accent-orange": "#fb923c",
         "accent-red": "#f87171",
         "border-color": "#475569",
+        "text-on-accent": "#ffffff",
     },
 }
 # persisted selector values (PART-01 §E): "light" | "dark" | "system"
@@ -429,7 +700,7 @@ def apply_theme(root, style, name):
                   ("selected", t["accent-cyan"]),
                   ("pressed", t["bg-accent"]),
                   ("active", t["bg-card"])],
-              indicatorforeground=[("selected", "#ffffff")])
+              indicatorforeground=[("selected", t["text-on-accent"])])
     style.configure("TSpinbox", fieldbackground=t["bg-card"],
                     foreground=t["text-main"],
                     insertbackground=t["text-main"],
@@ -463,6 +734,11 @@ def _walk_classic_widgets(widget, t):
                             insertbackground=t["text-main"],
                             selectbackground=t["bg-accent"],
                             selectforeground=t["text-main"])
+            # R-12 — recolor the log tags with the active theme
+            for tag, key in (("error", "accent-red"),
+                             ("warn", "accent-orange"),
+                             ("ok", "accent-green")):
+                child.tag_configure(tag, foreground=t[key])
         elif cls == "Listbox":
             child.configure(bg=t["bg-card"], fg=t["text-main"],
                             selectbackground=t["bg-accent"],
@@ -714,7 +990,12 @@ READONLY_FORBIDDEN_RE = re.compile(
     r"[;|&`><$\n\r]|\bforeach\b|\bforeach-object\b|\btee-object\b"
     r"|\bset-content\b|\badd-content\b|\bout-file\b|\bexport-\w+"
     r"|\bstart-process\b|\binvoke-\w+|\biex\b|\bsc\.exe\b"
-    r"|--output\b|--out\b", re.I)
+    r"|--output\b|--out\b"
+    # R-03 — git flags that execute arbitrary local code via planted
+    # .gitattributes diff/merge drivers or config overrides; `-c` matches
+    # the standalone AND attached form (git -c core.fsmonitor=<path>),
+    # never inside another token (lookbehind blocks -x/-foo-c/--ext-diff).
+    r"|--ext-diff\b|--textconv\b|(?<![\w-])-c", re.I)
 
 
 def is_readonly_command(cmd):
@@ -1106,6 +1387,59 @@ def session_row_gates(plan_text, n):
             if ids:
                 return ids
     return []
+
+
+# ---- audit 2026-09-05 session-4 hardening helpers (R-07/R-08/R-12/R-16)
+
+_GIT_EXE = None
+_POWERSHELL_EXE = None
+
+
+def git_exe():
+    """R-07 — pin the git executable once: resolve via PATH a single
+    time and reuse the absolute path, so a planted git.exe in the repo
+    root (the cwd of every subprocess call) cannot be picked up."""
+    global _GIT_EXE
+    if _GIT_EXE is None:
+        _GIT_EXE = shutil.which("git") or "git"
+    return _GIT_EXE
+
+
+def powershell_exe():
+    """R-07 — absolute path to the OS-shipped powershell.exe, never a
+    bare name resolved against PATH/cwd."""
+    global _POWERSHELL_EXE
+    if _POWERSHELL_EXE is None:
+        cand = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                            "System32", "WindowsPowerShell", "v1.0",
+                            "powershell.exe")
+        _POWERSHELL_EXE = cand if os.path.isfile(cand) else "powershell"
+    return _POWERSHELL_EXE
+
+
+def atomic_write_text(path, text):
+    """R-08/R-26 — write via a sibling temp file + os.replace(): the
+    target is either the old file or the complete new one, never a
+    truncated halfway write (os.replace is atomic on Windows and POSIX,
+    PART-01 §G)."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def log_tag(line):
+    """R-12 — classify a log line for coloring by prefix."""
+    if line.startswith("ERROR"):
+        return "error"
+    if line.startswith("WARN"):
+        return "warn"
+    if line.startswith("OK"):
+        return "ok"
+    return None
+
+
+LOG_MAX_LINES = 2000   # R-16 — per-widget log cap (trimmed on write)
 
 
 class _Cancelled(Exception):
@@ -1803,9 +2137,405 @@ No fixes, no rewrites.
 """,
 
 }
+# R-01 — bounded event queue: when the drain loop is slower than the
+# producers (or momentarily dead), the queue must not grow without
+# bound. The OLDEST event is dropped first; every producer call site
+# stays a plain fire-and-forget self.q.put(...).
+DRAIN_MAXSIZE = 1000
+# R-02 — secret deny-list (owner-confirmed 2026-09-05, PART-01 §E): a file
+# whose NAME matches one of these globs is never inlined into a context
+# pack; dotfiles are refused separately in _context_pack.
+CTX_PACK_DENY = (".env*", "*key*", "*token*", "*secret*",
+                 "*credential*", "*.pem", "*.pfx")
+
+
+class DropOldestQueue(queue.Queue):
+    """queue.Queue with maxsize + drop-oldest: put never blocks and
+    never raises queue.Full — when full, the oldest queued event is
+    silently discarded to make room (audit R-01)."""
+
+    def put(self, item, block=True, timeout=None):
+        self.put_nowait(item)
+
+    def put_nowait(self, item):
+        # mirrors queue.Queue.put_nowait (whose base implementation
+        # calls back into self.put — do NOT delegate to it), but drops
+        # the OLDEST event instead of raising Full at capacity
+        with self.not_full:
+            if self.maxsize > 0 and self._qsize() >= self.maxsize:
+                self._get()
+            self._put(item)
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
+
+
+# ---------------------------------------------------------------------------
+# App identity UI (public release): splash screen, shared license text
+# viewer and the first-run license acceptance gate. Everything here is
+# failure-safe — a splash or license-dialog problem must NEVER prevent
+# the app from starting.
+# ---------------------------------------------------------------------------
+
+APP_TAGLINE = "Paste-to-plan intake + session lifecycle manager"
+
+
+def _load_license_text():
+    """License text for the viewer dialogs: the canonical LICENSE file
+    next to this script, falling back to EMBEDDED_LICENSE_TEXT (the
+    exact same canonical Apache 2.0 text, embedded verbatim above) when
+    the file is missing or unreadable — the dialog can never be empty."""
+    try:
+        f = HERE / "LICENSE"
+        if f.is_file():
+            return f.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return EMBEDDED_LICENSE_TEXT
+
+
+def _destroy_quietly(win):
+    try:
+        win.destroy()
+    except Exception:
+        pass
+
+
+def _theme_text_widget(txt, t):
+    """Recolor a classic tk Text — plus the classic Scrollbar a
+    ScrolledText wraps around it — from the active palette tokens.
+    Needed because ttk.Style cannot reach classic widgets and the
+    central theme walk (_walk_classic_widgets) deliberately skips
+    Toplevels (§G), so the read-only Text widgets inside the shared
+    license viewer and the first-run gate must be colored explicitly
+    at creation. No-op when t is None (Windows high-contrast: never
+    fight the OS, §G)."""
+    if not t:
+        return
+    try:
+        txt.configure(bg=t["bg-card"], fg=t["text-main"],
+                      insertbackground=t["text-main"],
+                      selectbackground=t["bg-accent"],
+                      selectforeground=t["text-main"])
+        sb = getattr(txt, "vbar", None)
+        if sb is not None:
+            sb.configure(bg=t["bg-card"], troughcolor=t["bg-main"],
+                         activebackground=t["bg-card"])
+    except tk.TclError:
+        pass
+
+
+def _fit_dialog_to_screen(dlg, max_w, max_h, margin=32):
+    """Clamp a dialog's size to the usable WORKAREA — the screen area
+    minus the Windows taskbar — and center it inside that workarea, so
+    pinned bottom rows (checkboxes, buttons) are fully visible even on
+    small 1366x768 laptops with a taskbar at the bottom. winfo_
+    screenheight() reports the FULL screen including the taskbar strip,
+    so centering against it alone would let a dialog's bottom edge sink
+    behind/below the taskbar; the true workarea comes from
+    SystemParametersInfoW(SPI_GETWORKAREA) instead. The max values are
+    caps, not minimums: height never exceeds ~92% of the workarea
+    height and width never exceeds the workarea minus a 2*margin safety
+    band. DPI-safe: the ctypes RECT is in physical pixels on scaled
+    displays, so it is mapped into Tk's coordinate space by the ratio
+    winfo_screenheight() / GetSystemMetrics(SM_CYSCREEN) — exactly 1 at
+    100% DPI, and otherwise exact because the taskbar occupies a fixed
+    physical fraction of the same monitor both APIs describe. Inside
+    the dialog, grid row weights make the scrollable text areas absorb
+    any shrink, so resize stays graceful. Because wm geometry +x+y
+    addresses the outer window frame while Windows draws the title bar
+    ABOVE the client area, a one-shot post-Map nudge re-centers using
+    the MEASURED decoration offsets so the client rect — where the
+    pinned checkbox/button rows live — stays fully inside the workarea.
+    Failure-safe: falls back to a conservative taskbar reserve when the
+    query fails, and never blocks app startup."""
+    try:
+        sw = max(1, dlg.winfo_screenwidth())
+        sh = max(1, dlg.winfo_screenheight())
+        # Conservative fallback: full screen minus a fixed taskbar
+        # reserve, top-anchored (used when the workarea query fails or
+        # on non-Windows platforms).
+        wa_left, wa_top = 0, 0
+        wa_w = sw
+        wa_h = max(1, sh - (64 if os.name == "nt" else 32))
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                class _RECT(ctypes.Structure):
+                    _fields_ = [("left", wintypes.LONG),
+                                ("top", wintypes.LONG),
+                                ("right", wintypes.LONG),
+                                ("bottom", wintypes.LONG)]
+
+                rect = _RECT()
+                sys_h = ctypes.windll.user32.GetSystemMetrics(1)
+                if (sys_h > 0
+                        and ctypes.windll.user32.SystemParametersInfoW(
+                            0x0030,             # SPI_GETWORKAREA
+                            0, ctypes.byref(rect), 0)):
+                    # Physical → Tk pixel mapping (DPI-safe, see above).
+                    scale = sh / float(sys_h)
+                    l = int(round(rect.left * scale))
+                    t = int(round(rect.top * scale))
+                    r = int(round(rect.right * scale))
+                    b = int(round(rect.bottom * scale))
+                    cw, ch = r - l, b - t
+                    if 0 < cw <= sw + 2 and 0 < ch <= sh + 2 \
+                            and t >= 0 and l >= 0:
+                        wa_left, wa_top, wa_w, wa_h = l, t, cw, ch
+            except Exception:
+                pass            # keep the conservative fallback workarea
+        w = max(420, min(int(max_w), wa_w - 2 * margin))
+        if w > wa_w:
+            w = max(1, wa_w)
+        h = max(340, min(int(max_h), (wa_h * 92) // 100))
+        if h > wa_h:
+            h = max(1, wa_h)
+        dlg.geometry("%dx%d+%d+%d" % (
+            w, h,
+            wa_left + max(0, (wa_w - w) // 2),
+            wa_top + max(0, (wa_h - h) // 2)))
+        dlg.minsize(420, 340)
+
+        # Post-Map nudge (see docstring): measure the WM decoration
+        # offsets once mapped, then re-center so the CLIENT rect stays
+        # inside the workarea. Idempotent; no-op when already in place
+        # or never mapped.
+        def _nudge():
+            try:
+                if not dlg.winfo_ismapped():
+                    return
+                dlg.update_idletasks()
+                g = dlg.winfo_geometry()      # WxH+X+Y (as requested)
+                cw2 = dlg.winfo_width()
+                ch2 = dlg.winfo_height()
+                ox = dlg.winfo_rootx() - int(g.split("+")[1])
+                oy = dlg.winfo_rooty() - int(g.split("+")[2])
+                if ox < 0 or oy < 0:
+                    return                    # wm metrics not ready yet
+                wa_right = wa_left + wa_w
+                wa_bottom = wa_top + wa_h
+                h2 = ch2
+                if oy + ch2 > wa_h:
+                    h2 = max(1, wa_h - oy)    # keep client fully inside
+                x2 = max(wa_left, min(wa_left - ox + (wa_w - cw2) // 2,
+                                      wa_right - ox - cw2))
+                y2 = max(wa_top, min(wa_top - oy + (wa_h - h2) // 2,
+                                     wa_bottom - oy - h2))
+                dlg.geometry("%dx%d+%d+%d" % (cw2, h2, x2, y2))
+            except Exception:
+                pass
+
+        dlg.bind("<Map>", lambda _e: dlg.after_idle(_nudge))
+        dlg.after(250, _nudge)                # fallback if Map already fired
+    except Exception:
+        pass
+
+
+def open_license_viewer(parent, title, tokens=None):
+    """Scrollable read-only license text window. Shared by the About
+    dialog's 'View License' button and the first-run acceptance gate.
+
+    tokens — the caller's active palette (App._tokens) captured at
+    creation: Toplevels are never re-themed by the central walk (§G
+    accepted exception), so the viewer uses the theme active when it
+    is created, exactly like every other dialog in the app."""
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    t = tokens if isinstance(tokens, dict) else None
+    if t:
+        dlg.configure(bg=t["bg-main"])
+    frm = ttk.Frame(dlg, padding=8)
+    frm.pack(fill="both", expand=True)
+    frm.rowconfigure(0, weight=1)
+    frm.columnconfigure(0, weight=1)
+    txt = scrolledtext.ScrolledText(frm, wrap="word", width=92, height=24)
+    txt.grid(row=0, column=0, sticky="nsew")
+    txt.insert("1.0", _load_license_text())
+    txt.configure(state="disabled")
+    _theme_text_widget(txt, t)
+    ttk.Button(frm, text="Close", command=dlg.destroy)\
+        .grid(row=1, column=0, sticky="e", pady=(8, 0))
+    dlg.bind("<Escape>", lambda _e: dlg.destroy())
+    # Fit-to-screen: the natural request size of the 92-wide Text can
+    # still exceed a small laptop workarea — clamp + center so the
+    # Close button is always fully visible (same pattern as the gate).
+    dlg.update_idletasks()
+    _fit_dialog_to_screen(dlg, dlg.winfo_reqwidth(),
+                          dlg.winfo_reqheight())
+    try:
+        dlg.wait_visibility()
+        dlg.grab_set()
+    except tk.TclError:
+        pass
+    return dlg
+
+
+def _make_splash(root, duration_ms=1700):
+    """Borderless splash shown while the main window builds (entry path
+    only, never tests). Styled with the persisted theme's palette when
+    available; neutral slate fallbacks consistent with both themes
+    otherwise (e.g. Windows high-contrast, where custom theming is
+    skipped). Auto-destroyed via root.after — no sleep, no threads.
+    Returns the Toplevel, or None on ANY failure: a broken splash can
+    never prevent app startup."""
+    try:
+        # Theme preference only — App.__init__ re-reads the config.
+        try:
+            cfg = App._load_cfg()
+        except Exception:
+            cfg = {}
+        setting = (cfg.get("theme")
+                   if cfg.get("theme") in THEME_SETTINGS else "system")
+        effective = (setting if setting != "system"
+                     else _detect_os_theme())
+        t = None if _high_contrast_active() else THEMES.get(effective)
+        bg = t["bg-main"] if t else "#f8fafc"
+        fg = t["text-main"] if t else "#0f172a"
+        muted = t["text-muted"] if t else "#475569"
+        accent = t["accent-cyan"] if t else "#0369a1"
+        border = t["border-color"] if t else "#cbd5e1"
+        sp = tk.Toplevel(root)
+        sp.overrideredirect(True)
+        sp.configure(bg=bg, highlightthickness=1,
+                     highlightbackground=border, highlightcolor=border)
+        w, h = 460, 250
+        sp.geometry("%dx%d+%d+%d" % (
+            w, h,
+            max(0, (sp.winfo_screenwidth() - w) // 2),
+            max(0, (sp.winfo_screenheight() - h) // 3)))
+        tk.Label(sp, text=APP_NAME, bg=bg, fg=accent,
+                 font=("TkDefaultFont", 22, "bold")).pack(pady=(52, 0))
+        tk.Label(sp, text="Version %s" % APP_VERSION,
+                 bg=bg, fg=muted).pack(pady=(2, 12))
+        tk.Label(sp, text=APP_TAGLINE, bg=bg, fg=fg).pack()
+        tk.Label(sp, text=COPYRIGHT_LINE, bg=bg, fg=muted)\
+            .pack(pady=(20, 0))
+        tk.Label(sp, text="Licensed under the %s" % LICENSE_NAME,
+                 bg=bg, fg=muted).pack()
+        tk.Label(sp, text=LICENSE_URL, bg=bg, fg=muted,
+                 font=("TkDefaultFont", 8)).pack()
+        try:
+            sp.attributes("-topmost", True)
+            sp.lift()
+        except tk.TclError:
+            pass
+        root.after(duration_ms, _destroy_quietly, sp)
+        return sp
+    except Exception:
+        return None
+
+
+def _run_license_gate(app):
+    """First-run license acceptance. Called ONLY from the __main__ entry
+    path — never when App is constructed directly (the test fixtures) —
+    so the modal can never block or break the test suite. Returns True
+    when the app may start.
+
+    DUAL ACCEPTANCE (documented for README/UserGuide §3.2): the dialog
+    shows BOTH the Apache 2.0 license text AND the as-is disclaimer
+    (AS_IS_DISCLAIMER_TEXT), each with its own 'I agree' checkbox. The
+    I Agree button stays disabled until BOTH boxes are ticked;
+    declining (or closing the window) exits the app and stores nothing.
+
+    PERSISTENCE (documented for README/UserGuide): acceptance is stored
+    in plan-console.json via App._save_cfg() → atomic_write_text()
+    (R-08/R-26) with these keys:
+      license_accepted:         true
+      license_accepted_version: "Apache-2.0"   (SPDX id of LICENSE_NAME)
+      license_accepted_date:    ISO date of acceptance
+    On any later launch a truthy license_accepted skips the dialog. A
+    corrupt plan-console.json is reset by App._load_cfg (backed up as
+    plan-console.json.corrupt), so the gate re-prompts — acceptable."""
+    if app.cfg.get("license_accepted"):
+        return True
+    root = app.root
+    agreed = [False]
+    dlg = tk.Toplevel(root)
+    dlg.title("License Agreement — %s %s" % (APP_NAME, APP_VERSION))
+    _fit_dialog_to_screen(dlg, 980, 720)
+    # THEME — reuse the exact tokens App.__init__ resolved from the
+    # persisted setting (cfg theme → light/dark via _detect_os_theme;
+    # None under Windows high-contrast, where custom theming is skipped
+    # and Tk/OS defaults apply, §G). Live re-theming is not needed: the
+    # theme selector is unreachable until the main window is revealed
+    # after this gate closes.
+    t = getattr(app, "_tokens", None)
+    if t:
+        dlg.configure(bg=t["bg-main"])
+    frm = ttk.Frame(dlg, padding=10)
+    frm.pack(fill="both", expand=True)
+    frm.rowconfigure(1, weight=3)     # license text gets the most room
+    frm.rowconfigure(2, weight=1)     # disclaimer text below it
+    frm.columnconfigure(0, weight=1)
+    ttk.Label(frm, text="%s %s is licensed under the %s and provided "
+              "\"AS IS\". Review BOTH texts below, tick BOTH agreement "
+              "boxes, then choose:" % (APP_NAME, APP_VERSION,
+                                       LICENSE_NAME),
+              wraplength=900, justify="left").grid(row=0, column=0,
+                                                   sticky="w")
+    lic = scrolledtext.ScrolledText(frm, wrap="word", height=14)
+    lic.grid(row=1, column=0, sticky="nsew", pady=(8, 4))
+    lic.insert("1.0", _load_license_text())
+    lic.configure(state="disabled")
+    _theme_text_widget(lic, t)
+    disc = scrolledtext.ScrolledText(frm, wrap="word", height=6)
+    disc.grid(row=2, column=0, sticky="nsew", pady=(0, 4))
+    disc.insert("1.0", AS_IS_DISCLAIMER_TEXT)
+    disc.configure(state="disabled")
+    _theme_text_widget(disc, t)
+
+    # DUAL ACCEPTANCE — two independent checkboxes; the I Agree button
+    # stays disabled until BOTH are ticked. The dialog itself still
+    # forces acceptance: closing it declines, nothing is stored.
+    lic_var = tk.BooleanVar(value=False)
+    disc_var = tk.BooleanVar(value=False)
+
+    def _agree():
+        agreed[0] = True
+        app.cfg["license_accepted"] = True
+        app.cfg["license_accepted_version"] = "Apache-2.0"
+        app.cfg["license_accepted_date"] = date.today().isoformat()
+        try:
+            app._save_cfg()
+        except Exception:
+            pass            # acceptance still honored for this session
+        dlg.destroy()
+
+    def _sync_agree():
+        btn_agree.state(["!disabled"] if (lic_var.get() and disc_var.get())
+                        else ["disabled"])
+
+    boxes = ttk.Frame(frm)
+    boxes.grid(row=3, column=0, sticky="we")
+    ttk.Checkbutton(boxes, text="I have read and agree to the Apache "
+                    "License 2.0 terms.", variable=lic_var,
+                    command=_sync_agree).pack(anchor="w")
+    ttk.Checkbutton(boxes, text="I understand and accept the "
+                    "\"as-is\" disclaimer — no warranties, no "
+                    "liability.", variable=disc_var,
+                    command=_sync_agree).pack(anchor="w", pady=(2, 0))
+
+    ttk.Button(frm, text="Decline", command=dlg.destroy)\
+        .grid(row=4, column=0, sticky="w", pady=(10, 0))
+    btn_agree = ttk.Button(frm, text="I Agree", command=_agree,
+                           state="disabled")
+    btn_agree.grid(row=4, column=0, sticky="e", pady=(10, 0))
+    dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+    dlg.transient(root)
+    try:
+        dlg.wait_visibility()
+        dlg.grab_set()
+    except tk.TclError:
+        pass
+    root.wait_window(dlg)
+    return agreed[0]
+
+
 class App:
     def __init__(self, root):
-        self.root, self.q = root, queue.Queue()
+        self.root, self.q = root, DropOldestQueue(maxsize=DRAIN_MAXSIZE)
         self.logs, self.status = {}, {}
         self.cfg = self._load_cfg()
         # v3.2 — one shared slug for all three tabs, restored from cfg
@@ -1827,9 +2557,14 @@ class App:
         self._tokens = (None if _high_contrast_active()
                         else THEMES[self._theme_effective])
         self.style = ttk.Style(root)
-        root.title("Plan Console")
-        # v3.1 — resizable window, size remembered in cfg, minsize 820x600
-        # (below that the three-tab layout clips — PART-01 §C)
+        # public release: the window title carries name + version; the
+        # copyright lives in the About dialog
+        root.title("%s %s" % (APP_NAME, APP_VERSION))
+        # v3.1 — resizable window, minsize 820x600 (below that the
+        # three-tab layout clips — PART-01 §C). Public release: the app
+        # STARTS MAXIMIZED ("full screen") on every launch; the
+        # remembered win_w/win_h still set the un-maximized geometry
+        # and the size restored when the user un-maximizes.
         try:
             geo = "%dx%d" % (int(self.cfg.get("win_w", 1020)),
                              int(self.cfg.get("win_h", 800)))
@@ -1837,6 +2572,13 @@ class App:
             geo = "1020x800"
         root.geometry(geo)
         root.minsize(820, 600)
+        try:
+            root.state("zoomed")                   # Windows: maximized
+        except tk.TclError:
+            try:
+                root.attributes("-zoomed", True)   # Linux/X11: maximized
+            except tk.TclError:
+                pass          # other platforms: best-effort, normal size
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._topbar()
         self._tabs()
@@ -1890,11 +2632,13 @@ class App:
         self.repo_var.trace_add("write", self._on_repo_changed)
         ttk.Button(top, text="Browse…", command=self._browse_repo)\
             .grid(row=0, column=2, padx=(4, 0))
-        ttk.Button(top, text="Init starter repo",
-                   command=self.on_init_repo).grid(row=0, column=3, padx=(12, 4))
-        ttk.Button(top, text="Update command files",
-                   command=self.on_update_commands).grid(row=0, column=4,
-                                                         padx=(4, 0))
+        # R-11 — named so the __busy__ handler can disable them
+        self.btn_init_repo = ttk.Button(top, text="Init starter repo",
+                                        command=self.on_init_repo)
+        self.btn_init_repo.grid(row=0, column=3, padx=(12, 4))
+        self.btn_update_cmds = ttk.Button(top, text="Update command files",
+                                          command=self.on_update_commands)
+        self.btn_update_cmds.grid(row=0, column=4, padx=(4, 0))
         # Row 1: model picker + its own reload button
         ttk.Label(top, text="OpenRouter model").grid(row=1, column=0, sticky="w",
                                                      pady=(6, 0))
@@ -1924,27 +2668,30 @@ class App:
         self.key.insert(0, os.environ.get("OPENROUTER_API_KEY", ""))
         self.key.grid(row=2, column=1, sticky="w", padx=4, pady=(6, 0))
         self.use_key = tk.BooleanVar(value=self.cfg.get("use_key", False))
-        # Row 3: hint under the key field + PDF link (visible when unchecked)
+        # Row 3: hint under the key field + guide link (visible when unchecked)
         self._key_hint = ttk.Label(
             top, text="Works faster WITHOUT a key — the console hands "
                       "ready-made instructions to your agent instead.",
             wraplength=680, justify="left")
         self._key_hint.grid(row=3, column=1, sticky="w", padx=4)
-        self._pdf_link = ttk.Label(
-            top, text="How to use without a key (PDF guide) »",
-            cursor="hand2")
-        self._pdf_link.grid(row=3, column=2, padx=(16, 0))
-        self._pdf_link.bind("<Button-1>", lambda _e: self._open_nokey_pdf())
+        # R-13 — takefocus=True + a Return binding make the link
+        # keyboard-operable (Tab to it, Enter opens the guide).
+        self._guide_link = ttk.Label(
+            top, text="How to use without a key (guide) »",
+            cursor="hand2", takefocus=True)
+        self._guide_link.grid(row=3, column=2, padx=(16, 0))
+        self._guide_link.bind("<Button-1>", lambda _e: self._open_nokey_guide())
+        self._guide_link.bind("<Return>", lambda _e: self._open_nokey_guide())
 
         def _toggle_key():
             # checked = API mode → key field editable, link hidden;
-            # unchecked = paste mode → key field grayed, PDF link shown
+            # unchecked = paste mode → key field grayed, guide link shown
             self.key.configure(state="normal" if self.use_key.get()
                                else "disabled")
             if self.use_key.get():
-                self._pdf_link.grid_remove()
+                self._guide_link.grid_remove()
             else:
-                self._pdf_link.grid()
+                self._guide_link.grid()
 
         ttk.Checkbutton(top, text="Use API key",
                         variable=self.use_key,
@@ -1954,9 +2701,12 @@ class App:
         # Row 4: live progress + cancel
         self.prog = ttk.Label(top, text="")
         self.prog.grid(row=4, column=1, sticky="w", padx=4, pady=(6, 0))
-        ttk.Button(top, text="Cancel API call",
-                   command=self.on_cancel_api)\
-            .grid(row=4, column=2, padx=(16, 0), pady=(6, 0))
+        # R-11 — Cancel is only meaningful while a chain runs: it starts
+        # disabled (idle) and the __busy__ handler flips it with the rest.
+        self.btn_cancel = ttk.Button(top, text="Cancel API call",
+                                     command=self.on_cancel_api,
+                                     state="disabled")
+        self.btn_cancel.grid(row=4, column=2, padx=(16, 0), pady=(6, 0))
         # v3.0 — theme selector (Light / Dark / Follow OS), persisted §E
         ttk.Label(top, text="Theme").grid(row=4, column=3, sticky="e",
                                           padx=(16, 4), pady=(6, 0))
@@ -1967,6 +2717,9 @@ class App:
                                      state="readonly", width=10)
         self.theme_cb.grid(row=4, column=4, sticky="w", pady=(6, 0))
         self.theme_cb.bind("<<ComboboxSelected>>", self.on_theme_change)
+        # public release — About box (name / version / copyright / license)
+        ttk.Button(top, text="About", command=self._show_about)\
+            .grid(row=4, column=5, padx=(12, 0), pady=(6, 0))
 
     # ---------------------------------------------------------- v3.0 theme
     def on_theme_change(self, _event=None):
@@ -2003,7 +2756,7 @@ class App:
             return
         for w in (self._key_hint, self._flow_hint, self._agent_hint):
             w.configure(foreground=t["text-muted"])
-        self._pdf_link.configure(foreground=t["accent-cyan"])
+        self._guide_link.configure(foreground=t["accent-cyan"])
         self.q_full.configure(foreground=t["text-main"])
 
     @staticmethod
@@ -2021,16 +2774,62 @@ class App:
         except Exception:
             return False
 
-    def _open_nokey_pdf(self):
-        """Open the 'how to use without a key' PDF next to the app."""
-        pdf = HERE / "no-api-key-guide.pdf"
-        if not pdf.is_file():
+    def _open_nokey_guide(self):
+        """Open the 'how to use without a key' HTML guide next to the
+        app (public release: the offline guide is HTML, not a PDF)."""
+        guide = HERE / "no-api-key-guide.html"
+        if not guide.is_file():
             messagebox.showinfo("Guide not found",
-                "Expected:\n%s\n\nExport the guide as a PDF with exactly "
-                "this name, in the same folder as plan-console.py." % pdf)
+                "Expected:\n%s\n\nThe guide (no-api-key-guide.html) must "
+                "sit in the same folder as plan-console.py." % guide)
             return
-        if not self._open_path(pdf):
-            messagebox.showinfo("Guide", "Open manually:\n%s" % pdf)
+        if not self._open_path(guide):
+            messagebox.showinfo("Guide", "Open manually:\n%s" % guide)
+
+    # ------------------------------------------------------- About dialog
+    def _show_about(self):
+        """Modal About box: name, version, copyright and license info
+        (public-release identity). 'View License' reuses the shared
+        scrollable license viewer."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("About %s" % APP_NAME)
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=16)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="%s %s" % (APP_NAME, APP_VERSION),
+                  font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
+        ttk.Label(frm, text=APP_TAGLINE).pack(anchor="w", pady=(2, 8))
+        ttk.Label(frm, text=COPYRIGHT_LINE).pack(anchor="w")
+        ttk.Label(frm, text="Licensed under the %s" % LICENSE_NAME)\
+            .pack(anchor="w", pady=(8, 0))
+        link = ttk.Label(frm, text=LICENSE_URL, cursor="hand2",
+                         takefocus=True)
+        link.pack(anchor="w")
+        link.bind("<Button-1>", lambda _e: self._open_license_url())
+        link.bind("<Return>", lambda _e: self._open_license_url())
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(12, 0))
+        ttk.Button(btns, text="View License",
+                   command=lambda: open_license_viewer(
+                       dlg, "License — %s %s" % (APP_NAME, APP_VERSION),
+                       tokens=self._tokens))\
+            .pack(side="left")
+        ttk.Button(btns, text="Close", command=dlg.destroy)\
+            .pack(side="right")
+        dlg.transient(self.root)
+        try:
+            dlg.wait_visibility()
+            dlg.grab_set()
+        except tk.TclError:
+            pass
+
+    def _open_license_url(self):
+        """Open LICENSE_URL in the default browser (best-effort)."""
+        try:
+            import webbrowser
+            webbrowser.open(LICENSE_URL)
+        except Exception:
+            pass
 
     # --------------------------------------------- v2.3 standing orders
     def _agent_orders(self, repo=None):
@@ -2104,6 +2903,12 @@ class App:
         log = scrolledtext.ScrolledText(parent, height=height, wrap="word",
                                         state="disabled", **log_kw)
         log.pack(fill="both", expand=True, padx=10, pady=(4, 8))
+        if t:
+            # R-12 — ERROR/WARN/OK lines get distinct Text tags
+            for tag, key in (("error", "accent-red"),
+                             ("warn", "accent-orange"),
+                             ("ok", "accent-green")):
+                log.tag_configure(tag, foreground=t[key])
         self.logs[name], self.status[name] = log, st
 
     def _intake_tab(self, f):
@@ -2132,16 +2937,26 @@ class App:
         self.btn_freeze = ttk.Button(top, text="Freeze", command=self.on_freeze)
         self.btn_freeze.grid(row=0, column=8)
         rowb = ttk.Frame(f); rowb.pack(anchor="w", padx=10, pady=(6, 0))
-        ttk.Button(rowb, text="Run recon",
-                   command=self.on_recon).pack(side="left")
-        ttk.Button(rowb, text="Validate draft",
-                   command=self.on_validate).pack(side="left", padx=6)
+        # R-11 — named so the __busy__ handler can disable them
+        self.btn_recon = ttk.Button(rowb, text="Run recon",
+                                    command=self.on_recon)
+        self.btn_recon.pack(side="left")
+        self.btn_validate = ttk.Button(rowb, text="Validate draft",
+                                       command=self.on_validate)
+        self.btn_validate.pack(side="left", padx=6)
         self.btn_auto = ttk.Button(rowb, text="Auto-resolve findings",
                                    command=self.on_auto_resolve)
         self.btn_auto.pack(side="left")
-        ttk.Button(rowb, text="Show validation report",
-                   command=self.on_show_validation).pack(side="left", padx=6)
-        ttk.Label(f, text="Paste a plan, brainstorm, or audit report below:")\
+        self.btn_showval = ttk.Button(rowb, text="Show validation report",
+                                      command=self.on_show_validation)
+        self.btn_showval.pack(side="left", padx=6)
+        # bundled sample — one click to copy + open the worked example repo
+        self.btn_sample = ttk.Button(rowb, text="Open sample project…",
+                                     command=self.on_open_sample)
+        self.btn_sample.pack(side="left", padx=(12, 0))
+        ttk.Label(f, text="Paste a plan, brainstorm, or audit report below — "
+                          "or click 'Open sample project…' to explore a "
+                          "finished example first:")\
             .pack(anchor="w", padx=10, pady=(2, 0))
         self.src = scrolledtext.ScrolledText(f, height=8, wrap="word")
         self.src.pack(fill="x", padx=10, pady=4)
@@ -2157,11 +2972,14 @@ class App:
         self.btn_copy = ttk.Button(top, text="Copy session instruction",
                                    command=self.on_copy_instr)
         self.btn_copy.grid(row=0, column=4, padx=6)
-        ttk.Button(top, text="Status", command=self.on_status).grid(row=0, column=5, padx=4)
-        ttk.Button(top, text="Session report",
-                   command=self.on_report).grid(row=0, column=6, padx=4)
-        ttk.Button(top, text="Plan health",
-                   command=self.on_health).grid(row=0, column=7, padx=4)
+        self.btn_status = ttk.Button(top, text="Status", command=self.on_status)
+        self.btn_status.grid(row=0, column=5, padx=4)
+        self.btn_report = ttk.Button(top, text="Session report",
+                                     command=self.on_report)
+        self.btn_report.grid(row=0, column=6, padx=4)
+        self.btn_health = ttk.Button(top, text="Plan health",
+                                     command=self.on_health)
+        self.btn_health.grid(row=0, column=7, padx=4)
         self._mklog(f, "sessions", 22)
 
     # ---------------------------------------------------------- owner pass
@@ -2169,11 +2987,13 @@ class App:
         top = ttk.Frame(f); top.pack(fill="x", padx=10, pady=(6, 0))
         ttk.Label(top, text="Slug").grid(row=0, column=0)
         self.oslug = self._slug_field(top, 0, 1)
-        ttk.Button(top, text="Refresh",
-                   command=self.on_owner_refresh).grid(row=0, column=2, padx=4)
+        self.btn_own_refresh = ttk.Button(top, text="Refresh",
+                                          command=self.on_owner_refresh)
+        self.btn_own_refresh.grid(row=0, column=2, padx=4)
         # v2.6 — P1: read-only dry-run of the Freeze gates, on this tab
-        ttk.Button(top, text="What's blocking Freeze?",
-                   command=self.on_freeze_dry_run).grid(row=0, column=3, padx=4)
+        self.btn_freeze_dry = ttk.Button(top, text="What's blocking Freeze?",
+                                         command=self.on_freeze_dry_run)
+        self.btn_freeze_dry.grid(row=0, column=3, padx=4)
         self.owner_status = ttk.Label(top, text="enter slug and click Refresh",
                                       style="Pill.TLabel")
         self.owner_status.grid(row=0, column=4, padx=10)
@@ -2190,34 +3010,54 @@ class App:
         # left: open questions
         lq = ttk.Labelframe(body, text="Open questions — select, type answer below")
         lq.pack(side="left", fill="both", expand=True, padx=(0, 5))
-        self.oq_list = tk.Listbox(lq, height=10, activestyle="dotbox")
-        self.oq_list.pack(fill="both", expand=True, padx=6, pady=6)
-        # v2.0 — full question text above the answer box (no 120-char guesswork)
-        self.q_full = ttk.Label(lq, text="(select a question to read it in full)",
-                                wraplength=380, justify="left")
-        self.q_full.pack(fill="x", padx=6, pady=(4, 0))
-        self.oq_list.bind("<<ListboxSelect>>", self._show_full_question)
+        # v3.6 — the answer box and the action bar are packed FIRST from the
+        # bottom edge, so a tight window can only ever shrink the resizable
+        # panes above them: the buttons can never be pushed off-screen
+        barq = ttk.Frame(lq); barq.pack(side="bottom", fill="x", padx=6, pady=6)
         self.answer = scrolledtext.ScrolledText(lq, height=3, wrap="word")
-        self.answer.pack(fill="x", padx=6)
-        barq = ttk.Frame(lq); barq.pack(fill="x", padx=6, pady=6)
-        ttk.Button(barq, text="Save answer → draft + remove",
-                   command=self.on_answer_save).pack(side="left")
+        self.answer.pack(side="bottom", fill="x", padx=6)
+        # v3.6 — questions area is a vertical paned window (user-draggable
+        # sash): question list on top, read-only full-question text below.
+        # The text pane scrolls internally, so a long PROBLEM/QUESTION/
+        # RECOMMEND block can no longer grow the layout and push the
+        # "Accept recommendation" button below the viewport (v2.0 bug).
+        pw = ttk.Panedwindow(lq, orient="vertical")
+        pw.pack(side="top", fill="both", expand=True, padx=6, pady=6)
+        self.oq_list = tk.Listbox(pw, height=8, activestyle="dotbox")
+        pw.add(self.oq_list, weight=1)
+        qf = ttk.Frame(pw)
+        self.q_full = tk.Text(qf, height=6, wrap="word", relief="flat",
+                              borderwidth=0, highlightthickness=0,
+                              state="disabled", takefocus=0)
+        qsb = ttk.Scrollbar(qf, orient="vertical", command=self.q_full.yview)
+        self.q_full.configure(yscrollcommand=qsb.set)
+        qsb.pack(side="right", fill="y")
+        self.q_full.pack(side="left", fill="both", expand=True)
+        pw.add(qf, weight=2)
+        self.oq_list.bind("<<ListboxSelect>>", self._show_full_question)
+        self.btn_answer_save = ttk.Button(barq, text="Save answer → draft + remove",
+                                          command=self.on_answer_save)
+        self.btn_answer_save.pack(side="left")
         # v2.5 — one-click accept of the selected block's RECOMMEND line
-        ttk.Button(barq, text="Accept recommendation",
-                   command=self.on_recommend_accept).pack(side="left", padx=6)
+        self.btn_recommend = ttk.Button(barq, text="Accept recommendation",
+                                        command=self.on_recommend_accept)
+        self.btn_recommend.pack(side="left", padx=6)
         # v2.1 — archives the WHOLE question block, never just the header
-        ttk.Button(barq, text="Archive question (keep log)",
-                   command=self.on_question_remove).pack(side="left", padx=6)
+        self.btn_question_remove = ttk.Button(barq, text="Archive question (keep log)",
+                                              command=self.on_question_remove)
+        self.btn_question_remove.pack(side="left", padx=6)
         # right: recon checklist
         rc = ttk.Labelframe(body, text="Recon checklist")
         rc.pack(side="left", fill="both", expand=True, padx=(5, 0))
         self.rc_list = tk.Listbox(rc, height=10)
         self.rc_list.pack(fill="both", expand=True, padx=6, pady=6)
         barr = ttk.Frame(rc); barr.pack(fill="x", padx=6, pady=6)
-        ttk.Button(barr, text="Tick/untick selected",
-                   command=self.on_tick_toggle).pack(side="left")
-        ttk.Button(barr, text="Verify EXISTS items",
-                   command=self.on_verify_exists).pack(side="left", padx=6)
+        self.btn_tick_toggle = ttk.Button(barr, text="Tick/untick selected",
+                                          command=self.on_tick_toggle)
+        self.btn_tick_toggle.pack(side="left")
+        self.btn_verify_exists = ttk.Button(barr, text="Verify EXISTS items",
+                                            command=self.on_verify_exists)
+        self.btn_verify_exists.pack(side="left", padx=6)
         # v3.5 — owner actions: commands only the owner may run, surfaced
         # here so they can never be silently skipped before Freeze
         oa = ttk.Labelframe(body, text="Owner actions")
@@ -2228,14 +3068,17 @@ class App:
         self.btn_oa_run = ttk.Button(baro, text="Run (read-only)",
                                      command=self.on_owner_action_run)
         self.btn_oa_run.pack(side="left")
-        ttk.Button(baro, text="Copy command",
-                   command=self.on_owner_action_copy).pack(side="left", padx=4)
-        ttk.Button(baro, text="Mark done",
-                   command=self.on_owner_action_done).pack(side="left")
+        self.btn_oa_copy = ttk.Button(baro, text="Copy command",
+                                      command=self.on_owner_action_copy)
+        self.btn_oa_copy.pack(side="left", padx=4)
+        self.btn_oa_done = ttk.Button(baro, text="Mark done",
+                                      command=self.on_owner_action_done)
+        self.btn_oa_done.pack(side="left")
         # bottom: hand the rest to the agent
         bar2 = ttk.Frame(f); bar2.pack(fill="x", padx=10, pady=(0, 4))
-        ttk.Button(bar2, text="Agent: finish owner pass",
-                   command=self.on_owner_resolve).pack(side="left")
+        self.btn_owner_resolve = ttk.Button(bar2, text="Agent: finish owner pass",
+                                            command=self.on_owner_resolve)
+        self.btn_owner_resolve.pack(side="left")
         self._agent_hint = ttk.Label(
             bar2, text="Answer questions above first — then this hands "
                        "the rest to your agent: it integrates your "
@@ -2300,7 +3143,7 @@ class App:
         self.oq_list.delete(0, "end"); self.rc_list.delete(0, "end")
         self.oa_list.delete(0, "end")
         if hasattr(self, "q_full"):
-            self.q_full.configure(text="(select a question to read it in full)")
+            self._set_q_full("(select a question to read it in full)")
         if not pdir.is_dir():
             self.owner_status.configure(text="plans/%s not found" % slug)
             return
@@ -2482,7 +3325,7 @@ class App:
             return
         try:
             r = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", a["command"]],
+                [powershell_exe(), "-NoProfile", "-Command", a["command"]],
                 cwd=str(self.repo_path()), capture_output=True, text=True,
                 timeout=60)
         except Exception as e:
@@ -2552,7 +3395,7 @@ class App:
                 "Owner actions",
                 "Write this into PART-01.draft.md §B?\n\n%s" % new_line):
             return
-        draft.write_text(new_text, encoding="utf-8")
+        atomic_write_text(draft, new_text)   # R-08 — atomic
         self._log_owner_action(action, "§B line marked VERIFIED",
                                output.splitlines()[0] if output else "")
         if self._tick_owner_action(action):
@@ -2636,7 +3479,7 @@ class App:
         for cont in qlines[1:]:
             text += "      %s\n" % cont
         text += "  A: %s\n" % ans
-        draft.write_text(text, encoding="utf-8")
+        atomic_write_text(draft, text)   # R-08 — atomic
         # 2) whole question block removed from OPEN-QUESTIONS.md — archived first
         self._oq_backup()
         self._oq_archive(pdir, tag, "\n".join(qlines), ans)
@@ -2723,15 +3566,26 @@ class App:
         self.on_owner_refresh()
 
     # ------------------------------------------------- v2.0 owner helpers
+    def _set_q_full(self, text):
+        """v3.6 — replace the read-only full-question text. q_full is a
+        disabled, scrollable tk.Text inside a fixed-height pane instead
+        of a self-sizing ttk.Label, so long question blocks scroll
+        inside the pane instead of resizing the whole tab layout."""
+        self.q_full.configure(state="normal")
+        self.q_full.delete("1.0", "end")
+        self.q_full.insert("1.0", text)
+        self.q_full.see("1.0")
+        self.q_full.configure(state="disabled")
+
     def _show_full_question(self, _e=None):
         sel = self.oq_list.curselection()
         if sel and sel[0] < len(self._oq_items):
             # v2.1 — full PROBLEM/QUESTION/RECOMMEND block, not just the header
-            self.q_full.configure(
-                text=question_block(self._oq_text,
-                                    self._oq_items[sel[0]][0]).strip())
+            # v3.6 — write via the read-only Text helper (was: growing Label)
+            self._set_q_full(question_block(self._oq_text,
+                                            self._oq_items[sel[0]][0]).strip())
         else:
-            self.q_full.configure(text="")
+            self._set_q_full("")
 
     def _q_label(self, lineno):
         """One-line label for the question list: the QUESTION: line of a
@@ -2761,7 +3615,11 @@ class App:
                 bak.write_text(self._oq_file.read_text(encoding="utf-8"),
                                encoding="utf-8")
             except Exception:
-                pass
+                # R-10 — a backup that silently failed is data loss found
+                # at restore time: log with traceback and surface it.
+                traceback.print_exc()
+                self.say("owner", "WARN: OPEN-QUESTIONS.md backup failed — "
+                         "no .bak snapshot was written.")
 
     def _oq_archive(self, pdir, tag, qtext, ans=""):
         """Append removed questions/answers to the append-only owner-pass
@@ -2778,7 +3636,11 @@ class App:
                 if ans:
                     f.write("    A: %s\n" % ans)
         except Exception:
-            pass
+            # R-10 — the owner-pass log is the append-only record; a
+            # failed archive write must never be silent.
+            traceback.print_exc()
+            self.say("owner", "WARN: owner-pass archive write failed — the "
+                     "removed question/answer was NOT archived.")
 
     def on_tick_toggle(self):
         got = self._owner_paths()
@@ -2897,6 +3759,48 @@ class App:
             # trace on repo_var would also fire, but do it here so the
             # values are correct the moment the dialog closes.
             self._refresh_slug_values(clear_invalid=True)
+
+    def on_open_sample(self):
+        """Copy the bundled sample project (samples/demo-project/ next to
+        this script) into a user-chosen folder and point the Repo folder
+        field there. The sample must be COPIED, never opened in place —
+        the app writes into the repo it points at. Failure-safe: a
+        stripped deployment (no samples/ folder) shows an info dialog,
+        never a traceback."""
+        src = HERE / "samples" / "demo-project"
+        if not src.is_dir():
+            messagebox.showinfo(
+                "Sample project",
+                "The bundled sample is not installed — the folder\n"
+                "%s\nwas not found next to the app." % src)
+            return
+        d = filedialog.askdirectory(
+            title="Choose a folder to copy the sample project into")
+        if not d:
+            return
+        dest = Path(d)
+        try:
+            if dest.is_dir() and any(dest.iterdir()):
+                if not messagebox.askyesno(
+                        "Sample project",
+                        "The chosen folder is not empty.\n\nCopy the "
+                        "sample into it anyway? Files with the same names "
+                        "would be overwritten."):
+                    return
+                shutil.copytree(src, dest, dirs_exist_ok=True)
+            else:
+                shutil.copytree(src, dest)
+        except Exception as exc:
+            messagebox.showerror("Sample project",
+                                 "Copying the sample failed:\n\n%s" % exc)
+            return
+        self.repo.delete(0, "end"); self.repo.insert(0, str(dest))
+        self._refresh_slug_values(clear_invalid=True)
+        self.say("intake",
+                 "Sample copied to %s — explore plans/demo-recipe-cli/ "
+                 "(finished example) and plans/demo-journal-wip/ "
+                 "(mid-workflow example). Click 'Init starter repo' to "
+                 "add PART-00.md, templates/ and commands/." % dest)
 
     def _on_repo_changed(self, *_):
         """v3.3 — debounced reaction to manual Repo-folder edits: refresh
@@ -3052,7 +3956,7 @@ class App:
                         last_slug=self.slug_var.get().strip(),
                         recent_slugs=self._recent_slugs)
         self.cfg.pop("or_key", None)
-        CFG.write_text(json.dumps(self.cfg, indent=2), encoding="utf-8")
+        atomic_write_text(CFG, json.dumps(self.cfg, indent=2))   # R-08/R-26
 
     def say(self, target, line):
         self.q.put((target, line))
@@ -3109,46 +4013,82 @@ class App:
         win.lift()
 
     def _drain(self):
-        while not self.q.empty():
-            target, payload = self.q.get()
-            if target == "__models__":
-                self._apply_models(payload)
-            elif target == "__models_failed__":
-                self._log_line("intake",
-                               "model list fetch failed (%s) — you can type a "
-                               "model id by hand." % payload)
-            elif target == "__prog__":
-                self.prog.configure(text=payload)
-            elif target == "__popup__":
-                title, text, saved = payload
-                self.root.clipboard_clear()
-                self.root.clipboard_append(text)
-                self._instruction_popup(title, text, saved)
-            elif target == "__busy__":
-                on, msg = payload
-                if on:
-                    self._n_busy += 1
+        # R-01 — the reschedule lives in `finally`: a handler exception
+        # must never kill the loop (log output, busy-state recovery and
+        # popups all die permanently with it). Handler exceptions go to
+        # the fallback channel (traceback.print_exc), never raised; the
+        # failing event is already consumed, so the queue still drains
+        # on the following ticks.
+        try:
+            while not self.q.empty():
+                target, payload = self.q.get()
+                if target == "__models__":
+                    self._apply_models(payload)
+                elif target == "__models_failed__":
+                    self._log_line("intake",
+                                   "model list fetch failed (%s) — you can type a "
+                                   "model id by hand." % payload)
+                elif target == "__prog__":
+                    self.prog.configure(text=payload)
+                elif target == "__popup__":
+                    title, text, saved = payload
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(text)
+                    self._instruction_popup(title, text, saved)
+                elif target == "__busy__":
+                    on, msg = payload
+                    if on:
+                        self._n_busy += 1
+                    else:
+                        self._n_busy = max(0, self._n_busy - 1)
+                    busy_now = self._n_busy > 0
+                    # R-11 — full busy-disable set: every button that can
+                    # start a chain or mutate plan/repo files, so parallel
+                    # chains (and interleaved writes) are impossible.
+                    for name in ("btn_proceed", "btn_freeze", "btn_recon",
+                                 "btn_validate", "btn_auto", "btn_showval",
+                                 "btn_sample",
+                                 "btn_copy", "btn_status", "btn_report",
+                                 "btn_health", "btn_init_repo",
+                                 "btn_update_cmds", "btn_own_refresh",
+                                 "btn_freeze_dry", "btn_answer_save",
+                                 "btn_recommend", "btn_question_remove",
+                                 "btn_tick_toggle", "btn_verify_exists",
+                                 "btn_oa_run", "btn_oa_copy", "btn_oa_done",
+                                 "btn_owner_resolve"):
+                        b = getattr(self, name, None)
+                        if b:
+                            b.configure(state="disabled" if busy_now
+                                        else "normal")
+                    # R-11 — Cancel is the inverse: enabled only while a
+                    # chain is actually running, disabled when idle.
+                    cb = getattr(self, "btn_cancel", None)
+                    if cb:
+                        cb.configure(state="normal" if busy_now
+                                     else "disabled")
+                    for st in self.status.values():
+                        st.configure(text=(msg or "working …") if busy_now else "idle")
+                    if not busy_now:
+                        self.prog.configure(text="")
                 else:
-                    self._n_busy = max(0, self._n_busy - 1)
-                busy_now = self._n_busy > 0
-                for b in (getattr(self, "btn_proceed", None),
-                          getattr(self, "btn_freeze", None),
-                          getattr(self, "btn_auto", None),
-                          getattr(self, "btn_copy", None)):
-                    if b:
-                        b.configure(state="disabled" if busy_now else "normal")
-                for st in self.status.values():
-                    st.configure(text=(msg or "working …") if busy_now else "idle")
-                if not busy_now:
-                    self.prog.configure(text="")
-            else:
-                self._log_line(target, payload)
-        self.root.after(100, self._drain)
+                    self._log_line(target, payload)
+        except Exception:
+            # the log widgets themselves may be the broken part — never
+            # route this failure back through _log_line
+            traceback.print_exc()
+        finally:
+            self.root.after(100, self._drain)
 
     def _log_line(self, target, line):
         w = self.logs.get(target)
         if w:
-            w.configure(state="normal"); w.insert("end", line + "\n")
+            w.configure(state="normal")
+            tag = log_tag(line)   # R-12 — ERROR/WARN/OK coloring
+            w.insert("end", line + "\n", (tag,) if tag else ())
+            # R-16 — cap the widget: trim to the last LOG_MAX_LINES lines
+            end = int(w.index("end-1c").split(".")[0])
+            if end > LOG_MAX_LINES:
+                w.delete("1.0", "%d.0" % (end - LOG_MAX_LINES))
             w.see("end"); w.configure(state="disabled")
 
     def _busy(self, on, msg=""):
@@ -3268,24 +4208,31 @@ class App:
 
     # -------------------------------------------------------------- intake
     def on_proceed(self):
+        # R-38 — disable synchronously at the top, before any scheduling:
+        # the queued __busy__ message only lands on the main loop ~100ms
+        # later, and a double click inside that window started two API
+        # chains. Re-enabled on early returns; the __busy__ handler keeps
+        # it disabled for the duration of the chain.
+        self.btn_proceed.configure(state="disabled")
         repo = self._preflight()
-        if repo is None: return
+        if repo is None:
+            self.btn_proceed.configure(state="normal"); return
         slug = self.slug_var.get().strip()
         text = self.src.get("1.0", "end").strip()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Slug", "Slug must be kebab-case, e.g. payments-v2")
-            return
+            self.btn_proceed.configure(state="normal"); return
         if len(text) < 40:
             messagebox.showerror("Source", "Paste the plan, brainstorm, or "
                                  "audit report first.")
-            return
+            self.btn_proceed.configure(state="normal"); return
         pdir = repo / "plans" / slug
         if self._frozen_file(pdir):   # v2.0 — any frozen name blocks re-intake
             messagebox.showerror("Frozen", "plans/%s is already frozen — pick a new slug." % slug)
-            return
+            self.btn_proceed.configure(state="normal"); return
         if pdir.exists() and any(pdir.iterdir()) and not messagebox.askyesno(
                 "Exists", "plans/%s already has files — continue anyway?" % slug):
-            return
+            self.btn_proceed.configure(state="normal"); return
         pdir.mkdir(parents=True, exist_ok=True)
         (pdir / "SOURCE.md").write_text(
             "# SOURCE — %s\nType: %s | Captured: %s (plan-console)\n\n---\n\n%s\n"
@@ -3457,7 +4404,11 @@ class App:
                 "plans/%s/PART-01.draft.md not found.\n\n"
                 "Files in plans/%s/: %s\n\n%s" % (slug, slug, have, hint))
             return
-        ui = {"model": self.model_cb.get().strip(), "key": self._or_key_value()}
+        # R-06 — snapshot auto_resolve on the MAIN thread: the read used
+        # to happen inside the daemon thread's work() closure, and no Tk
+        # variable/widget may be touched off the main thread (PART-01 §G).
+        ui = {"model": self.model_cb.get().strip(), "key": self._or_key_value(),
+              "auto_fix": self.auto_resolve.get()}
 
         def work():
             self._busy(True, "validating …")
@@ -3483,7 +4434,7 @@ class App:
                 self._run_api(repo, "intake", "validate-plan.md", slug, slug,
                               extra, ui["model"], ui["key"])
                 self._echo_validation(pdir)
-                if self.auto_resolve.get():
+                if ui["auto_fix"]:
                     self._chain_auto_resolve(repo, slug, ui)
             finally:
                 self._busy(False)
@@ -3910,10 +4861,19 @@ class App:
                 "__pycache__", ".vscode", "dist", "build"}
         picked = []
         for root, dirs, files in os.walk(repo):
-            dirs[:] = [d for d in dirs if d not in skip]
+            # R-02: dot-directories (.git, .idea, …) are never walked
+            dirs[:] = [d for d in dirs
+                       if d not in skip and not d.startswith(".")]
             for name in files:
                 if len(picked) >= max_files:
                     break
+                # R-02 (§E): refuse dotfiles and secret-named files —
+                # they must never be inlined into a prompt sent off-box.
+                low = name.lower()
+                if low.startswith(".") or any(
+                        fnmatch.fnmatchcase(low, pat)
+                        for pat in CTX_PACK_DENY):
+                    continue
                 p = Path(root) / name
                 rel = p.relative_to(repo).as_posix()
                 if any(w in rel.lower() for w in words):
@@ -3921,6 +4881,9 @@ class App:
                         if p.stat().st_size < max_bytes:
                             picked.append("----- %s -----\n%s"
                                           % (rel, p.read_text(errors="replace")))
+                            # R-02 (§E): every inlined file is logged so the
+                            # owner can audit exactly what was sent.
+                            self.say("intake", "context-pack: inlined %s" % rel)
                     except OSError:
                         pass
             if len(picked) >= max_files:
@@ -4100,9 +5063,9 @@ class App:
         body = draft.read_text(encoding="utf-8")
         # v2.0 — versioned filename: PART-01 v1.0.md
         frozen = pdir / "PART-01 v1.0.md"
-        frozen.write_text(
-            "PART 01 — %s | v1.0 frozen %s\n\n%s" % (slug, date.today(), body),
-            encoding="utf-8")
+        atomic_write_text(frozen,   # R-08 — atomic: a freeze must never truncate
+                          "PART 01 — %s | v1.0 frozen %s\n\n%s"
+                          % (slug, date.today(), body))
         prog = pdir / "PROGRESS.md"
         if not prog.is_file():
             prog.write_text("# PROGRESS — %s | PART-01 v1.0 | %s\n"
@@ -4606,7 +5569,8 @@ class App:
     # ----------------------------------------------------------------- git
     def _git_dirty(self, repo):
         try:
-            r = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+            r = subprocess.run([git_exe(), "-C", str(repo), "status",
+                                "--porcelain"],
                                capture_output=True, text=True, timeout=10)
             if r.returncode != 0:
                 return None
@@ -4617,5 +5581,25 @@ class App:
 
 if __name__ == "__main__":
     _root = tk.Tk()
-    App(_root)
+    _root.withdraw()          # hidden behind the splash until ready
+    _splash = _make_splash(_root)          # None on failure — startup
+    _app = App(_root)                      # continues regardless
+
+    def _reveal_main():
+        # Splash teardown is failure-safe: a stuck splash can never keep
+        # the main window hidden. The license gate runs ONLY here on the
+        # entry path — the test fixtures construct App directly and are
+        # never blocked by it. Declining the license exits gracefully.
+        if _splash is not None:
+            _destroy_quietly(_splash)
+        try:
+            if _root.winfo_exists():
+                if _run_license_gate(_app):
+                    _root.deiconify()
+                else:
+                    _root.destroy()
+        except tk.TclError:
+            pass
+
+    _root.after(1700, _reveal_main)
     _root.mainloop()

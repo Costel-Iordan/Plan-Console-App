@@ -3,84 +3,391 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>How to Use Plan Console Without an API Key</title>
+    <title>Working Without an API Key — Plan Console 1.0.0</title>
     <link rel="stylesheet" href="assets/console.css">
     <script src="assets/theme.js" defer></script>
 </head>
 <body>
 
-<div class="container max-w-2xl">
-    <header class="text-center">
-        <span class="pill">No-API Workflow</span>
-        <h1>How to Use Plan Console Without an API Key</h1>
-        <p class="text-muted text-lg">The API key is optional. Plan Console works seamlessly with your AI coding agent via copy-paste—completely free, with zero model queues.</p>
+<div class="container">
+
+    <header>
+        <span class="pill">No-API-Key Workflow</span>
+        <h1>Working Without an API Key</h1>
+        <p class="text-muted text-lg">Plan Console 1.0.0 — the complete copy-paste workflow for people who
+        do not have (or do not want) an OpenRouter API key. Everything below works fully offline,
+        costs nothing, and uses no external services.</p>
     </header>
 
-    <div class="card">
-        <h2 class="mt-0">How It Works</h2>
-        <p class="text-muted">The console and your agent never talk to each other directly. Instead, communication happens securely through clipboard actions and repository files:</p>
+    <nav class="card" aria-label="Table of contents">
+        <h2 class="mt-0" id="toc">Contents</h2>
+        <ol>
+            <li><a href="#do-i-need-a-key">Do I need an API key?</a></li>
+            <li><a href="#quick-start">Quick start without a key</a></li>
+            <li><a href="#agent-loop">The agent-instruction loop</a></li>
+            <li><a href="#owner-pass">The owner pass without a key</a></li>
+            <li><a href="#validate-freeze">Validate, auto-resolve and freeze without a key</a></li>
+            <li><a href="#sessions">Sessions without a key</a></li>
+            <li><a href="#sample-project">See it live in 5 minutes (sample project)</a></li>
+            <li><a href="#troubleshooting">Troubleshooting (no-key specific)</a></li>
+            <li><a href="#faq">FAQ</a></li>
+        </ol>
+    </nav>
 
-        <div class="font-mono bg-main border rounded-lg p-4 text-sm text-cyan overflow-x-auto mb-4">
-            <span class="block mb-1"><strong>Console → Agent</strong> : ready-made instructions (copied to clipboard, popup, or saved in <span class="text-cyan font-medium">plans/<slug>/instructions/</span>)</span>
-            <span class="block mb-1"><strong>Agent → Console</strong> : files generated in your repo (<span class="text-cyan font-medium">plans/<slug>/...</span>)</span>
-        </div>
-        <p class="mt-4 mb-0 text-sm text-muted"><em>The console always checks the files afterward, ensuring half-finished or lazy agent work still gets caught.</em></p>
+    <h2 id="do-i-need-a-key">1. Do I need an API key?</h2>
+
+    <div class="note-box note-box-green">
+        <p class="mb-0"><strong>No.</strong> The OpenRouter API key is entirely optional. Plan Console is
+        built agent-agnostic: it hands ready-made instructions to <em>your</em> coding agent
+        (Zoo Code, Claude Code, Cursor, Codex, or any other), which does the actual work inside
+        your repository. Without a key the app is not a "demo mode" — it is the full product.</p>
     </div>
 
+    <h3>What the key adds</h3>
+    <ul>
+        <li>The <strong>Model</strong> picker in the top bar can fetch the live OpenRouter model list.</li>
+        <li>Optionally, the console itself can call the model to scaffold the first draft
+            (<code>PART-01.draft.md</code>, <code>RECON-CHECKLIST.md</code>, <code>OPEN-QUESTIONS.md</code>)
+            instead of you pasting an instruction into your agent.</li>
+    </ul>
+
+    <h3>What works without it — everything else</h3>
+    <ul>
+        <li>Pointing <strong>Repo folder</strong> at a project and <strong>Init starter repo</strong>.</li>
+        <li>The <strong>Intake</strong> tab: pasting a plan / brainstorm / audit, and saving it as
+            <code>plans/&lt;slug&gt;/SOURCE.md</code>.</li>
+        <li>Copying the ready-made instruction for your coding agent — the console generates the exact
+            text, you paste it, the agent scaffolds the plan files in your repo.</li>
+        <li>The whole <strong>Owner pass</strong> tab: answering open questions, ticking the recon
+            checklist, running whitelisted read-only owner actions.</li>
+        <li><strong>Validate draft</strong>, <strong>Auto-resolve findings</strong> and
+            <strong>Freeze</strong> (with all its safety gates).</li>
+        <li>The entire <strong>Sessions</strong> loop: session instructions, verdicts, plan health.</li>
+        <li>Themes, window size, sample project — all key-free.</li>
+    </ul>
+
+    <p class="text-muted">Security note: the key is <strong>never</strong> written to disk. It lives in
+    memory for the current session only (legacy stored keys are removed on load). Without a key, nothing
+    leaves your machine except what you yourself paste into your agent.</p>
+
+    <hr>
+
+    <h2 id="quick-start">2. Quick start without a key</h2>
+
+    <p>The end-to-end path from zero to a finished plan, with no key anywhere:</p>
+
+    <ol>
+        <li><strong>Start the app</strong> — double-click <code>plan.bat</code> (or run
+            <code>python plan-console.py</code>). Leave the <strong>API key</strong> field in the top
+            bar empty and leave <strong>"use key"</strong> unticked. You never need to touch either.</li>
+        <li><strong>Point Repo folder</strong> (top bar, <strong>Browse…</strong>) at your project
+            folder — the folder whose code your agent will work on. First time? Create an empty
+            test folder, or use the bundled sample project (see
+            <a href="#sample-project">section 7</a>).</li>
+        <li><strong>Click Init starter repo</strong>. This writes <code>PART-00.md</code> (the rulebook),
+            <code>templates/</code> and <code>commands/</code> into your repo. Existing files are
+            never overwritten.</li>
+        <li><strong>Open the Intake tab.</strong> Paste your plan, brainstorm or audit report into the
+            big text box. Pick the <strong>Type</strong> (<code>plan</code>, <code>brainstorm</code> or
+            <code>audit</code>) and type a short <strong>Slug</strong> — lowercase-with-dashes, e.g.
+            <code>payments-v2</code>.</li>
+        <li><strong>Click Proceed.</strong> Your text is saved as <code>plans/&lt;slug&gt;/SOURCE.md</code>
+            and a popup appears with a ready-made instruction. <strong>Copy it</strong> (there is a
+            copy button; a backup also lands in <code>plans/&lt;slug&gt;/instructions/</code>).</li>
+        <li><strong>Paste the instruction into your coding agent</strong> (Zoo Code, Claude Code,
+            Cursor, Codex, …) with your repo folder open as the workspace. The agent scaffolds
+            <code>PART-01.draft.md</code>, <code>RECON-CHECKLIST.md</code> and
+            <code>OPEN-QUESTIONS.md</code> in <code>plans/&lt;slug&gt;/</code>.</li>
+        <li><strong>Owner pass</strong> — answer the open questions and tick the recon checklist
+            (see <a href="#owner-pass">section 4</a>).</li>
+        <li><strong>Validate draft</strong> → fix gaps → <strong>Freeze</strong>. You now have
+            <code>PART-01 v1.0.md</code>, the locked official plan.</li>
+        <li><strong>Sessions tab</strong> — copy the session instruction, paste it into your agent,
+            repeat until <strong>Plan health</strong> says <code>PLAN COMPLETE</code>.</li>
+    </ol>
+
+    <p class="note-box">That is the whole loop: <strong>Intake → copy instruction → agent works →
+    owner pass → validate → freeze → sessions → plan complete.</strong> The console never needs
+    to talk to a model; every hand-off goes through your clipboard and files in your own repo.</p>
+
+    <hr>
+
+    <h2 id="agent-loop">3. The agent-instruction loop</h2>
+
+    <p>The console and your agent never talk to each other directly. Communication happens through
+    the clipboard and through files in your repository:</p>
+
     <div class="card">
-        <h2 class="mt-0">Step by Step</h2>
-        <ul class="list-none">
-            <li class="flex gap-4 mb-6 last:mb-0">
-                <div class="w-8 h-8 flex-shrink-0 rounded-full bg-accent flex items-center justify-center font-bold text-sm">1</div>
-                <div class="flex-1">
-                    <div class="font-bold text-main mb-1">Intake</div>
-                    <div class="text-muted text-sm">Paste your brainstorm or audit report into the <strong>Intake tab</strong>. Pick the type, type a slug, and click <strong>Proceed</strong>. Copy the instruction from the popup and paste it into your agent with the repo open as the workspace folder. The agent will create the draft plan, open questions, and the recon checklist.</div>
-                </div>
-            </li>
-            <li class="flex gap-4 mb-6 last:mb-0">
-                <div class="w-8 h-8 flex-shrink-0 rounded-full bg-accent flex items-center justify-center font-bold text-sm">2</div>
-                <div class="flex-1">
-                    <div class="font-bold text-main mb-1">Owner Pass</div>
-                    <div class="text-muted text-sm">Answer the questions in <span class="text-cyan font-medium">OPEN-QUESTIONS.md</span> (delete each answered line), run any owner-only commands yourself, and tick <span class="text-cyan font-medium">[x]</span> the finished items in <span class="text-cyan font-medium">RECON-CHECKLIST.md</span>.</div>
-                </div>
-            </li>
-            <li class="flex gap-4 mb-6 last:mb-0">
-                <div class="w-8 h-8 flex-shrink-0 rounded-full bg-accent flex items-center justify-center font-bold text-sm">3</div>
-                <div class="flex-1">
-                    <div class="font-bold text-main mb-1">Recon <span class="text-sm text-muted font-normal ml-2">(Optional)</span></div>
-                    <div class="text-muted text-sm">Click <strong>"Run recon"</strong> and paste the popup instruction into your agent. It checks your repo locally—instant and free.</div>
-                </div>
-            </li>
-            <li class="flex gap-4 mb-6 last:mb-0">
-                <div class="w-8 h-8 flex-shrink-0 rounded-full bg-accent flex items-center justify-center font-bold text-sm">4</div>
-                <div class="flex-1">
-                    <div class="font-bold text-main mb-1">Validate</div>
-                    <div class="text-muted text-sm">Click <strong>"Validate draft"</strong> and paste the instruction. The agent writes the report to <span class="text-cyan font-medium">plans/<slug>/VALIDATION.md</span>. Click <strong>"Show validation report"</strong> in the console to read it with a verdict.</div>
-                </div>
-            </li>
-            <li class="flex gap-4 mb-6 last:mb-0">
-                <div class="w-8 h-8 flex-shrink-0 rounded-full bg-accent flex items-center justify-center font-bold text-sm">5</div>
-                <div class="flex-1">
-                    <div class="font-bold text-main mb-1">Freeze</div>
-                    <div class="text-muted text-sm">Click <strong>Freeze</strong>. This step is instant and involves no agent. By design, the console will refuse to freeze while questions or checklist items remain unresolved.</div>
-                </div>
-            </li>
-            <li class="flex gap-4 mb-6 last:mb-0">
-                <div class="w-8 h-8 flex-shrink-0 rounded-full bg-accent flex items-center justify-center font-bold text-sm">6</div>
-                <div class="flex-1">
-                    <div class="font-bold text-main mb-1">Sessions</div>
-                    <div class="text-muted text-sm">Go to the <strong>Sessions tab</strong>. Enter your slug + session number, click <strong>"Copy session instruction"</strong>, and paste it into your agent to watch it work. Click <strong>"Session report"</strong> for the verdict before moving to the next session. The console blocks skipping ahead (e.g., session 3 cannot run before 1 and 2 are complete).</div>
-                </div>
-            </li>
-            <li class="flex gap-4 mb-6 last:mb-0">
-                <div class="w-8 h-8 flex-shrink-0 rounded-full bg-accent flex items-center justify-center font-bold text-sm">7</div>
-                <div class="flex-1">
-                    <div class="font-bold text-main mb-1">Deploy</div>
-                    <div class="text-muted text-sm">The final session is owner-supervised. Click <strong>"Plan health"</strong> first for the pre-deploy check.</div>
-                </div>
-            </li>
-        </ul>
+        <p class="font-mono text-sm mb-1"><strong>Console → Agent:</strong> ready-made instructions
+        (copied to your clipboard or saved under <code class="text-cyan">plans/&lt;slug&gt;/instructions/</code>)</p>
+        <p class="font-mono text-sm mb-0"><strong>Agent → Console:</strong> files the agent writes back
+        into <code class="text-cyan">plans/&lt;slug&gt;/</code> — the console always re-reads and checks them
+        afterward, so half-finished work gets caught.</p>
     </div>
+
+    <p>Every instruction the console produces is self-contained: it tells the agent which rules file
+    to load (<code>PART-00.md</code>), which files to read, exactly which files to write, and in
+    which format. The same mechanism works with any capable coding agent.</p>
+
+    <h3>What the agent does per intake type</h3>
+
+    <table style="border-collapse:collapse; width:100%;">
+        <thead>
+            <tr>
+                <th style="text-align:left; border-bottom:1px solid var(--border-color); padding:0.4rem;">Intake type</th>
+                <th style="text-align:left; border-bottom:1px solid var(--border-color); padding:0.4rem;">You paste</th>
+                <th style="text-align:left; border-bottom:1px solid var(--border-color); padding:0.4rem;">The agent writes back</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td style="padding:0.4rem;"><code>plan</code></td>
+                <td style="padding:0.4rem;">A finished plan / task description</td>
+                <td style="padding:0.4rem;"><code>PART-01.draft.md</code> (the plan in the standard form),
+                    <code>RECON-CHECKLIST.md</code>, <code>OPEN-QUESTIONS.md</code></td>
+            </tr>
+            <tr>
+                <td style="padding:0.4rem;"><code>brainstorm</code></td>
+                <td style="padding:0.4rem;">Rough ideas, options, notes</td>
+                <td style="padding:0.4rem;">Same three files — the agent distills the brainstorm into a
+                    coherent draft plan, listing what still needs your decision</td>
+            </tr>
+            <tr>
+                <td style="padding:0.4rem;"><code>audit</code></td>
+                <td style="padding:0.4rem;">An audit report with findings</td>
+                <td style="padding:0.4rem;">The same three files <em>plus</em> <code>TRIAGE.md</code>,
+                    which sorts every finding into fix-now / fix-later / accept</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p>In all three cases the draft's <code>## Owner actions</code> section and
+    <code>OPEN-QUESTIONS.md</code> are where the agent parks anything only you can decide — that is
+    what the next step is for.</p>
+
+    <hr>
+
+    <h2 id="owner-pass">4. The owner pass without a key</h2>
+
+    <p>Open the <strong>Owner pass</strong> tab, type the slug, click <strong>Refresh</strong>. The
+    tab loads the plan's open questions, owner actions and recon checklist. None of this needs a key:</p>
+
+    <ul>
+        <li><strong>Open questions.</strong> Questions the agent could not answer itself. If a question
+            carries a <code>RECOMMEND:</code> line (shown with a <code>·has rec</code> suffix) and you
+            agree with it, select it and click <strong>Accept recommendation</strong> — one confirmed
+            click saves it as your answer. Otherwise type your answer in the answer box and click
+            <strong>Save answer → draft + remove</strong>. Answers land in
+            <code>plans/&lt;slug&gt;/PART-01.draft.md</code> under <code>## OWNER ANSWERS</code> and the
+            question is removed from <code>OPEN-QUESTIONS.md</code> (a <code>.bak</code> snapshot is kept,
+            and the exchange is archived to <code>owner-pass.log</code>).</li>
+        <li><strong>Recon checklist.</strong> Items the agent could already verify are ticked
+            <code>[x]</code> for you. Items left for you: run the check, then change <code>[ ]</code> to
+            <code>[x]</code> in <code>RECON-CHECKLIST.md</code> (or delete lines you decide to skip).
+            Freeze is blocked while any <code>[ ]</code> remains.</li>
+        <li><strong>Owner actions</strong> (right-hand panel). Commands the agent must never run —
+            anything needing your passwords, dashboards or owner-only files, listed from
+            <code>## Owner actions</code> in <code>OPEN-QUESTIONS.md</code>.
+            <ul>
+                <li>Whitelisted read-only commands (<code>Select-String</code>, <code>Test-Path</code>,
+                    <code>Get-Content</code>, <code>git status/diff/log</code>) get a
+                    <strong>Run (read-only)</strong> button: the console runs the command in your repo,
+                    shows the output in the log, and — after you confirm — marks the linked §B line
+                    <code>VERIFIED &lt;today&gt;</code> in the draft and ticks the action done.</li>
+                <li>Anything else: <strong>Copy command</strong>, run it in your own terminal, then
+                    <strong>Mark done</strong>.</li>
+                <li>Nothing runs or is written without your confirmation; every event goes to
+                    <code>owner-pass.log</code>.</li>
+            </ul>
+        </li>
+    </ul>
+
+    <p>Not sure why Freeze is refusing? Click <strong>What's blocking Freeze?</strong> — a read-only
+    dry-run that lists exactly what would block Freeze right now, without changing anything.</p>
+
+    <hr>
+
+    <h2 id="validate-freeze">5. Validate, auto-resolve and freeze without a key</h2>
+
+    <h3>Validate draft</h3>
+    <p>Click <strong>Validate draft</strong>. Without a key the console copies one ready-made
+    instruction; paste it into your agent and the agent writes a gap-report to
+    <code>plans/&lt;slug&gt;/VALIDATION.md</code> (verdict + every gap it found). Click
+    <strong>Show validation report</strong> to read it in the console log.</p>
+
+    <h3>Auto-resolve findings</h3>
+    <p><strong>Auto-resolve findings</strong> parses <code>VALIDATION.md</code> and chains the
+    remediation for you. Without a key it copies <strong>one</strong> ready-made instruction that
+    makes the agent do both steps back-to-back: answer/fix the findings (owner-resolve) and then
+    re-validate. Paste it, let the agent finish, and the fresh report supersedes the old one.
+    When <em>"auto-resolve findings"</em> is ticked, this also chains automatically after
+    <strong>Validate draft</strong>.</p>
+
+    <h3>Freeze — the gates</h3>
+    <p><strong>Freeze</strong> is instant and involves no agent, but it is deliberately gated. It
+    refuses (with a clear message) unless <em>all</em> of these hold:</p>
+    <ul>
+        <li><strong>0 open questions</strong> in <code>OPEN-QUESTIONS.md</code></li>
+        <li><strong>0 unchecked recon items</strong> (<code>[ ]</code>) in <code>RECON-CHECKLIST.md</code></li>
+        <li><strong>0 unchecked owner actions</strong></li>
+        <li><code>VALIDATION.md</code> verdict is exactly <strong>"PART-01 READY"</strong></li>
+    </ul>
+    <p>When it succeeds, <code>PART-01 v1.0.md</code> is created — the locked official plan with its
+    session list. <strong>Frozen means locked.</strong> If you must change it later, edit it and add
+    <code>" | v1.1 frozen &lt;date&gt;"</code> to its first line, and note why in
+    <code>PROGRESS.md</code>.</p>
+
+    <hr>
+
+    <h2 id="sessions">6. Sessions without a key</h2>
+
+    <p>The session loop is 100% key-free by design — sessions always run in your agent, with whatever
+    model you chose there.</p>
+
+    <ol>
+        <li>Open the <strong>Sessions</strong> tab. Type the slug, set the session number (start with 1).</li>
+        <li>Click <strong>Copy session instruction</strong>. The instruction embeds your standing
+            orders from <code>AGENT-ORDERS.md</code> (edit them any time via <strong>Agent orders…</strong>
+            in the top bar — things like "always write tests", "never push to main") plus the exact
+            scope of this session.</li>
+        <li>Paste it into your agent (repo open as the workspace) and let it work. The agent records
+            its completion when done.</li>
+        <li>Back in the console, click <strong>Session report</strong>. You get a verdict:
+            <ul>
+                <li><strong>OK</strong> — session complete. The session number advances by 1
+                    automatically (never past the deploy session).</li>
+                <li><strong>⚠ CHECK</strong> — something's off (usually a completion line not in the
+                    exact required format). A "fix:" hint is shown and copied to your clipboard —
+                    paste it into your agent and click <strong>Session report</strong> again.</li>
+                <li><strong>✖ BLOCKED</strong> — the agent wrote <code>BLOCKED.md</code> explaining what
+                    stopped it and what it tried. Fix the cause (often you must run a command or provide
+                    access), rename <code>BLOCKED.md</code> to <code>BLOCKED-resolved.md</code>, and
+                    re-run the session.</li>
+                <li><strong>✖ INCOMPLETE</strong> — no completion record at all; the session never
+                    finished.</li>
+            </ul>
+        </li>
+        <li>Repeat until the last session — the <strong>deploy session</strong> (marked
+            <code>[DEPLOY]</code> in the plan). Run it the same way but stay and watch: the agent
+            runs checks before <em>and</em> after deploying, and stops immediately if a post-deploy
+            check fails.</li>
+    </ol>
+
+    <p>You cannot jump ahead: session 3 will not run before sessions 1 and 2 have OK records. That is
+    deliberate — plans die from skipped steps.</p>
+
+    <p><strong>Plan health</strong> — click any time for one line per session: what's done, what's
+    broken, what's next. Always click it before the deploy session (the "pre-deploy sweep") and when
+    returning to a plan after a break. Every health run is appended to
+    <code>plans/&lt;slug&gt;/HEALTH.md</code>. <strong>Status</strong> is the quicker one-line
+    "where am I". When all sessions pass, health tells you to write <code>PLAN COMPLETE</code> —
+    paste that hint into your agent or add the line to <code>PROGRESS.md</code> yourself. The plan is done.</p>
+
+    <hr>
+
+    <h2 id="sample-project">7. See it live in 5 minutes (sample project)</h2>
+
+    <p class="note-box note-box-green">The fastest way to understand the workflow — <strong>no key and
+    no agent needed</strong> — is the bundled sample project, new in this release.</p>
+
+    <ol>
+        <li>On the <strong>Intake</strong> tab, click <strong>Open sample project…</strong>.</li>
+        <li>Choose an empty folder. The console copies the bundled <code>samples/demo-project/</code>
+            there and points <strong>Repo folder</strong> at it.</li>
+        <li>Explore the two bundled plans:
+            <ul>
+                <li><code>plans/demo-recipe-cli</code> — a <strong>finished example</strong>: frozen plan
+                    (<code>PART-01 v1.0.md</code>), completed recon checklist, answered questions, a
+                    <code>VALIDATION.md</code> that says <code>PART-01 READY</code>, and a
+                    <code>PROGRESS.md</code>/​<code>HEALTH.md</code> history. This is what "done" looks like.</li>
+                <li><code>plans/demo-journal-wip</code> — a <strong>mid-workflow example</strong>: draft in
+                    progress with open questions still unanswered and recon items still unticked. Use it to
+                    exercise the <strong>Owner pass</strong> tab, <strong>What's blocking Freeze?</strong>
+                    and the freeze gates safely.</li>
+            </ul>
+        </li>
+        <li>Try it out: click <strong>Refresh</strong> in the Owner pass tab on the
+            <code>demo-journal-wip</code> slug, answer a question, tick a recon item, then click
+            <strong>What's blocking Freeze?</strong> to watch the blocker list shrink.</li>
+    </ol>
+
+    <hr>
+
+    <h2 id="troubleshooting">8. Troubleshooting (no-key specific)</h2>
+
+    <table style="border-collapse:collapse; width:100%;">
+        <thead>
+            <tr>
+                <th style="text-align:left; border-bottom:1px solid var(--border-color); padding:0.4rem;">Problem</th>
+                <th style="text-align:left; border-bottom:1px solid var(--border-color); padding:0.4rem;">Fix</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td style="padding:0.4rem;">A copy button "did nothing" — nothing lands in the clipboard</td><td style="padding:0.4rem;">Some window managers block clipboard access from Tk. Use the popup's text area: select all, copy manually (<span class="kbd">Ctrl</span>+<span class="kbd">C</span>). Every instruction is also saved under <code>plans/&lt;slug&gt;/instructions/</code> — open the file and copy from there.</td></tr>
+            <tr><td style="padding:0.4rem;">The agent didn't create the plan files</td><td style="padding:0.4rem;">Check the agent had your <em>repo folder</em> open as the workspace (not a parent or subfolder), that it actually finished, and that the slug matches. Re-copy the instruction from <code>plans/&lt;slug&gt;/instructions/</code> and paste it again — the instructions are idempotent, re-running them is safe.</td></tr>
+            <tr><td style="padding:0.4rem;">The agent created files in the wrong place</td><td style="padding:0.4rem;">Move them into <code>plans/&lt;slug&gt;/</code> yourself; the console re-reads the folder on <strong>Refresh</strong>. The instruction always names the exact target paths.</td></tr>
+            <tr><td style="padding:0.4rem;">Owner pass tab shows no questions</td><td style="padding:0.4rem;">Wrong slug, or the agent never wrote <code>OPEN-QUESTIONS.md</code>. Verify the folder <code>plans/&lt;slug&gt;/</code> exists in the repo and click <strong>Refresh</strong>.</td></tr>
+            <tr><td style="padding:0.4rem;">"Not a plan repo" popup</td><td style="padding:0.4rem;">Starter files are missing in the chosen folder — click <strong>Init starter repo</strong> (it never overwrites existing files).</td></tr>
+            <tr><td style="padding:0.4rem;">Freeze is blocked</td><td style="padding:0.4rem;">It tells you exactly what's open. Click <strong>What's blocking Freeze?</strong> for the full list: unanswered questions, unticked recon <code>[ ]</code> items, unchecked owner actions, or a <code>VALIDATION.md</code> verdict that is not <code>PART-01 READY</code>.</td></tr>
+            <tr><td style="padding:0.4rem;">Validation keeps coming back not-READY</td><td style="padding:0.4rem;">Click <strong>Auto-resolve findings</strong> and paste the single combined instruction (fix + re-validate) into your agent; iterate until the report says <code>PART-01 READY</code>.</td></tr>
+            <tr><td style="padding:0.4rem;">Session report says "not canonical"</td><td style="padding:0.4rem;">The agent wrote its completion line in the wrong format. The "fix:" hint is already on your clipboard — paste it into your agent, then click <strong>Session report</strong> again.</td></tr>
+            <tr><td style="padding:0.4rem;">Model list is empty / "Reload models" does nothing</td><td style="padding:0.4rem;">Expected without a key — the live list comes from OpenRouter. You don't need it: your agent uses its own model. You can also type a model id by hand.</td></tr>
+            <tr><td style="padding:0.4rem;">Sample project button did nothing</td><td style="padding:0.4rem;">Choose an empty (or new) folder; the copy is aborted if the target already contains conflicting files. Then check the new folder was pointed at as <strong>Repo folder</strong>.</td></tr>
+            <tr><td style="padding:0.4rem;">Want to reset everything</td><td style="padding:0.4rem;">Delete <code>plan-console.json</code> (settings only) — plans live in your repo and are untouched.</td></tr>
+        </tbody>
+    </table>
+
+    <p class="text-muted">General (key-or-not) issues — window doesn't open, session order, deploy —
+    are covered in the main <a href="UserGuide.html">User Guide</a>.</p>
+
+    <hr>
+
+    <h2 id="faq">9. FAQ</h2>
+
+    <h3>Is the app crippled without a key?</h3>
+    <p>No. The key only changes <em>who</em> scaffolds the first draft: the console's model call, or
+    your own agent via a pasted instruction. Every other feature — owner pass, validation, freeze
+    gates, sessions, plan health — is identical with or without a key.</p>
+
+    <h3>Which agents can I use?</h3>
+    <p>Any capable coding agent: Zoo Code, Claude Code, Cursor, Codex, and others. The instructions are
+    plain text with explicit file paths and formats, so nothing is tied to one product.</p>
+
+    <h3>Does anything get sent to the internet without a key?</h3>
+    <p>No. Without a key the console makes no network calls at all. The only data leaving your machine
+    is what you yourself paste into your agent, under your control.</p>
+
+    <h3>Is my API key safe if I later add one?</h3>
+    <p>Yes — the key is kept in memory for the current session only and is never written to disk. Legacy
+    keys found in the settings file are removed on load.</p>
+
+    <h3>Can I mix modes — key for intake, agent for sessions?</h3>
+    <p>Yes. Sessions always run in your agent regardless. The key only affects the intake scaffolding
+    step; you can start some plans key-free and others with a model call, in the same repo.</p>
+
+    <h3>What if my agent writes a bad or lazy draft?</h3>
+    <p>The console always re-reads and checks what the agent wrote. The freeze gates (zero open
+    questions, zero unticked items, <code>PART-01 READY</code> validation) exist precisely to catch
+    half-finished work before a plan is locked.</p>
+
+    <h3>Do free OpenRouter models change anything?</h3>
+    <p>If you later add a key, models ending in <code>:free</code> cost nothing — but that path is
+    entirely optional. The copy-paste loop is the zero-cost path and always available.</p>
+
+    <h3>Where do I learn the full workflow (including key usage)?</h3>
+    <p>See the main <a href="UserGuide.html">User Guide</a> (<code>UserGuide.html</code>) in the app
+    folder — it covers the key-based intake, the button reference, and the file meanings in detail.</p>
+
+    <hr>
+
+    <footer>
+        <p class="text-muted mb-1"><strong>Plan Console</strong> 1.0.0 — offline copy-paste guide.</p>
+        <p class="text-muted mb-1">Copyright © Costel Iordan (costel.iordan@gmail.com)</p>
+        <p class="text-muted mb-0">Licensed under the Apache License, Version 2.0. You may obtain a copy
+        of the License at <a href="https://www.apache.org/licenses/LICENSE-2.0">https://www.apache.org/licenses/LICENSE-2.0</a>
+        — see the <code>LICENSE</code> file in the project repository for the full text.</p>
+    </footer>
+
 </div>
 
 </body>

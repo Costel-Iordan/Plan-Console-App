@@ -1,257 +1,1006 @@
+   _______________________________________________
 
+|                                               |
+|   ██████╗ ██╗      █████╗ ███╗   ██╗          |
+|   ██╔══██╗██║     ██╔══██╗████╗  ██║          |
+|   ██████╔╝██║     ███████║██╔██╗ ██║          |
+|   ██╔═══╝ ██║     ██╔══██║██║╚██╗██║          |
+|   ██║     ███████╗██║  ██║██║ ╚████║ console  |
+|   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝          |
+|_______________________________________________|
+
+PLAN CONSOLE 1.0.0 — USER GUIDE
+Paste-to-plan intake + session lifecycle manager
+
+Copyright © Costel Iordan (costel.iordan@gmail.com)
+Licensed under the Apache License, Version 2.0
+(see the LICENSE file, or https://www.apache.org/licenses/LICENSE-2.0)
+
+This application is provided "AS IS", without warranty of any kind
+and without any liability on the part of the author — see the full
+legal disclaimer in section 13. On first launch you must agree to
+both the Apache License 2.0 and this disclaimer; if you do not agree
+with one or both, the application exits.
+
+A styled offline copy of this guide lives next to the app as
+UserGuide.html. A companion guide, no-api-key-guide.html, covers the
+copy-paste workflow in depth.
+
+CONTENTS
+--------
+ 1. Introduction
+ 2. Installation
+ 3. First launch
+ 4. Core concepts
+ 5. Step-by-step walkthrough
+ 6. Every major feature in depth
+ 7. Working without an API key
+ 8. File reference
+ 9. Settings & data (privacy and security)
+10. Troubleshooting
+11. FAQ
+12. Advanced usage
+13. License & credits
+
+
+1. INTRODUCTION
+===============
+
+1.1 What Plan Console is
+------------------------
+Plan Console is a small desktop application (one Python file, no
+installer, no pip dependencies) that turns rough text — a plan, a
+brainstorm, or an audit report — into a disciplined, gated software
+project that a coding agent executes for you, session by session,
+under your control.
+
+It is a Tkinter app: double-click it and a window opens. It runs
+fully offline except for one optional feature (fetching the OpenRouter
+model list and, if you opt in, one model call during intake).
+
+1.2 The problem it solves
+-------------------------
+Handing a task to a coding agent is easy. Keeping it on track is not.
+Agents drift, skip steps, invent facts, declare victory early, and
+leave no trace of what was decided or why. Plans die from skipped
+steps and unanswered questions.
+
+Plan Console fixes this with structure instead of supervision:
+
+- Every plan starts from a saved source document (SOURCE.md).
+- Facts are verified before work begins (a recon checklist).
+- Decisions only you can make are parked as open questions and must
+  be answered before anything is locked.
+- The plan is "frozen" only after every gate passes — then it is the
+  single source of truth.
+- Work happens in numbered sessions with a strict order, a completion
+  record per session, and a verdict you check after each one.
+- Nothing jumps ahead: session 3 will not run before sessions 1 and 2
+  have OK records.
+
+1.3 Who it's for
+----------------
+- Owners of any coding agent (command-line agents, IDE agents, or
+  standalone tools) who want repeatable, auditable results instead of
+  chat roulette.
+- Novices: the console tells you exactly what to paste, when, and
+  what to check. The bundled sample project shows every artifact in
+  its finished state before you run anything live.
+- Experienced users: the gates, verdicts, standing orders and file
+  conventions are plain text in your repo — inspectable, editable,
+  and scriptable.
+
+1.4 How it works at a high level
+--------------------------------
+You are the owner. The console is the paperwork machine. The agent is
+the workforce.
+
+- YOU plan: paste text into the Intake tab, answer the questions only
+  you can answer (the "owner pass"), and freeze the plan.
+- THE CONSOLE manages files: it scaffolds plans/<slug>/ in your repo,
+  generates ready-made instructions for the agent, checks the agent's
+  work, and enforces the gates.
+- THE AGENT executes: you paste the console's instruction into your
+  coding agent with your repo open as the workspace; the agent reads
+  the rulebook (PART-00.md), does the scoped work, and writes its
+  completion record back into the plan folder.
+
+The console and the agent never talk to each other directly. All
+communication goes through your clipboard and through files in your
+own repository — which is why Plan Console works with any capable
+agent and why, without an API key, nothing ever leaves your machine.
+
+
+2. INSTALLATION
+===============
+
+2.1 Requirements
+----------------
+- Python 3.9 or newer, with Tkinter (Tkinter is included in the
+  standard installers from python.org; on some Linux distributions
+  it is a separate package, see 2.4).
+- Zero pip dependencies. Plan Console uses only the Python standard
+  library.
+- An operating system with a desktop (Windows, macOS, Linux).
+- Optional: pytest, only if you want to run the project's own test
+  suite.
+- Network access is needed ONLY for the optional OpenRouter model
+  list and the optional intake model call. Everything else is
+  offline.
+
+2.2 Windows
+-----------
 1. Install Python from https://www.python.org/downloads/ — tick
    "Add python.exe to PATH" during setup.
-2. Put plan-console.py and plan.bat in any folder and double-click
-   plan.bat.
-3. (If `py` doesn't work, try `python` instead. On Mac/Linux run
-   `python3 plan-console.py` in a terminal.)
+2. Put plan-console.py and plan.bat in any folder (for example
+   C:\Tools\PlanConsole).
+3. Double-click plan.bat. It finds a usable Python even when the
+   Microsoft Store "python stub" is installed (the stub that opens
+   the Store instead of running Python).
 
-4. Start the app. A window with three tabs appears: **Intake**,
-**Sessions** and **Owner pass**.
-5. **Repo folder** (top bar): click **Browse…** and choose your project
-folder — the folder whose code your agent will work on.
-First time experimenting? Create an empty test folder and use that.
-6. Click **Init starter repo**. This creates inside your repo:
-- `PART-00.md` — the rulebook every agent session must follow
-- `templates/PART-01.md` — the blank plan form
-- `commands/` — 7 instruction files the console and agent use
-Existing files are never overwritten.
-7. **API key** (top bar): paste your OpenRouter key, or leave empty for
-copy-paste mode. It is stored only on your computer, in
-`plan-console.json` next to the app.
-8. **Model** (top bar): click **Reload models** — the list comes live
-from OpenRouter, so it always matches what you use in Zoo Code.
-Pick your favorite (free models end in `:free`). Models you pick are
-remembered at the top of the list. This model is used only by the
-console for the intake step — sessions always run in your agent,
-with whatever model you chose there.
+2.3 macOS
+---------
+1. Install Python 3 from https://www.python.org/downloads/ (the
+   python.org installer includes Tkinter; the macOS system Python
+   may not).
+2. Put plan-console.py in any folder.
+3. In Terminal:  python3 plan-console.py
 
-Done. You never have to do steps 5–8 again (they're remembered).
+2.4 Linux
+---------
+1. Install Python 3 and Tkinter. Examples:
+   - Debian/Ubuntu:  sudo apt install python3 python3-tk
+   - Fedora:         sudo dnf install python3-tkinter
+   - Arch:           sudo pacman -S tk
+2. Put plan-console.py in any folder.
+3. Run:  python3 plan-console.py
 
----
+2.5 Checking Python and Tkinter
+-------------------------------
+In a terminal:
+  python --version        (Windows)   or   python3 --version
+  python -c "import tkinter"          (should print nothing = OK)
 
-## 4. Creating a new plan (from a brainstorm or audit report)
+If the version is below 3.9, or the import fails, install a current
+Python from python.org (Windows/macOS) or your package manager
+(Linux, with the tk package).
 
-1. Open the **Intake** tab.
-2. Paste your brainstorm or audit report into the big text box.
-3. **Type**: choose `brainstorm` or `audit`.
-4. **Slug**: a short name for the plan, lowercase-with-dashes,
-e.g. `payments-v2` or `edge-hardening`.
-5. Click **Proceed**.
+2.6 Troubleshooting installation
+--------------------------------
+- "python is not recognized" — Python is not on PATH. Re-run the
+  installer and tick "Add python.exe to PATH", or use plan.bat.
+- The Microsoft Store opens when you type python — that is the Store
+  stub. plan.bat handles it; otherwise disable the stub in
+  Settings > Apps > App execution aliases.
+- "No module named tkinter" — install the Tk package for your
+  distribution (see 2.4) or reinstall Python from python.org with
+  tcl/tk enabled.
+- Headless server / no display — Tkinter needs a desktop; run the
+  app on a machine with a GUI.
 
-What happens next:
-- The console saves your pasted text as `plans/<slug>/SOURCE.md`
-  (permanent record of what you started from).
-- Then it creates the plan files: a draft plan
-  (`PART-01.draft.md`), a checklist of facts to verify
-  (`RECON-CHECKLIST.md`), and questions only you can answer
-  (`OPEN-QUESTIONS.md`). For audits, also a `TRIAGE.md` that sorts every
-  finding into fix-now / later / accept.
-- Everything the console did appears in the log at the bottom.
 
-### The owner pass (the only manual thinking step)
+3. FIRST LAUNCH
+===============
 
-Open the **Owner pass** tab, type the slug and click **Refresh**. The
-question list shows every open question; blocks that carry a
-`RECOMMEND:` line are marked with a `·has rec` suffix.
+3.1 The splash screen
+---------------------
+At launch a small borderless splash window appears for a moment,
+showing the app name (Plan Console), the version (1.0.0), the tagline
+("Paste-to-plan intake + session lifecycle manager"), the copyright
+line, and the Apache 2.0 licensing note. It disappears by itself when
+the main window is ready. If anything goes wrong with the splash, the
+app still starts normally.
 
-For each question:
-- If the agent left a `RECOMMEND:` line and you agree with it: select
-  the question and click **Accept recommendation**. It shows you the
-  recommendation, asks for confirmation, then saves it as your answer
-  (stamped `[recommendation accepted <date>]`) and removes the question
-  — same guards and logging as a hand-typed answer. Questions without a
-  RECOMMEND line (legacy one-liners) get a clear error; type those in
-  the answer box instead.
-- If you know the answer yourself: type it in the answer box and click
-  **Save answer → draft + remove**. Answers land in
-  `plans/<slug>/PART-01.draft.md ## OWNER ANSWERS` and the question is
-  removed from `OPEN-QUESTIONS.md` (a `.bak` snapshot is kept first,
-  and the exchange is archived to `owner-pass.log`).
-- **Owner actions** (the right-hand panel): commands the agent may never
-  run — things needing your passwords, dashboards or owner-only files —
-  are listed here from `## Owner actions` in `OPEN-QUESTIONS.md`.
-  - Read-only commands (Select-String, Test-Path, Get-Content, git
-    status/diff/log) get a **Run (read-only)** button: the console runs
-    the command in your repo, shows the output in the log, and — after
-    you confirm — marks the linked §B line `VERIFIED <today>` in the
-    draft and ticks the action done.
-  - Anything else: click **Copy command**, run it in your own terminal,
-    then click **Mark done**.
-  - Nothing runs or is written without your confirmation; every event
-    is archived to `owner-pass.log`.
+3.2 First-run license and disclaimer acceptance
+-----------------------------------------------
+The first time Plan Console starts, an acceptance window opens
+showing the full Apache License 2.0 text AND the legal disclaimer,
+each with its own "I agree" checkbox. The "I Agree" button stays
+disabled until BOTH checkboxes are ticked — one accepting the Apache
+License 2.0 terms, one accepting the legal disclaimer (the app is
+provided "as is", with no warranties and no liability — full text in
+section 13). If you do not agree with one or both, close the window
+or decline: the application exits.
 
-Not sure why Freeze is refusing? Click **What's blocking Freeze?** for
-a read-only dry-run: it lists exactly what would block Freeze right
-now (open questions, unchecked owner actions, unchecked recon items,
-missing validation) without changing anything.
+What is stored, and where: your acceptance is written to
+plan-console.json, in the same folder as plan-console.py, as:
 
-Then handle `RECON-CHECKLIST.md`: items the agent could already check
-are ticked `[x]`. Items left for you: run them, and change `[ ]` to
-`[x]` when done (or delete lines you decide to skip).
+  "license_accepted":         true
+  "license_accepted_version": "Apache-2.0"
+  "license_accepted_date":    <ISO date, e.g. 2026-09-05>
 
-### Freezing the plan
+On every later launch a truthy license_accepted skips the dialog.
 
-Click **Freeze**. It refuses (with a clear message) while questions or
-unchecked items remain — that's intentional, it's protecting you.
-When it succeeds, `PART-01 v1.0.md` is created (the version lives in
-the filename): the locked, official plan with its session list.
-**Frozen means locked.** If you must change it later, edit it and add
-" | v1.1 frozen <date>" to its first line, and note why in PROGRESS.md.
+To see the license again at any time, click the About button in the
+top bar and then "View License". The About box also shows a clickable
+link to https://www.apache.org/licenses/LICENSE-2.0.
 
-Tip: click **Validate draft** before freezing for an automatic
-gap-report (written to `plans/<slug>/VALIDATION.md` and shown in the
-log).
+To reset acceptance (for example to review the license again), open
+plan-console.json in a text editor and delete the
+"license_accepted" key (or the whole file — see 9.1 for what else
+that resets), then start the app.
 
----
+If plan-console.json is corrupted (undecodable), the app backs it up
+as plan-console.json.corrupt, starts with empty settings, and asks
+for license acceptance again. Your plans in the repo are never
+touched by this.
 
-## 5. Running sessions (the daily loop)
+3.3 Window tour (text layout map)
+---------------------------------
+The window title reads "Plan Console 1.0.0". The layout, top to
+bottom:
 
-1. Open the **Sessions** tab.
-2. Type the slug, set the session number (start with 1).
-3. Click **Copy session instruction**. An instruction is now in your
-clipboard.
-4. In VS Codium: open the repo folder as your workspace, paste the
-instruction into your agent's chat, and let it work. The instruction
-tells it exactly which rules file to load, what the session's scope
-is, and what to record when done.
-5. When the agent says it's done, come back and click **Session
-report**. You get a verdict:
-- **OK** — session complete, move on. The session number advances by 1
-  automatically (only when a next session exists in the plan — the
-  deploy session is never auto-advanced past).
-- **⚠ CHECK** — something's off (usually the agent didn't write its
+  TOP BAR (always visible)
+    Row 1: Repo folder field + Browse... button
+           | Init starter repo | Update command files
+    Row 2: Model picker (combobox) | Reload models
+           | Agent orders...
+    Row 3: API key field + "Use API key" checkbox
+           (with the checkbox unticked, the key field is grayed out
+            and the link "How to use without a key (guide) »" is
+            shown; clicking it opens no-api-key-guide.html)
+    Row 4: Cancel API call | Theme (Light / Dark / Follow OS)
+           | About
+
+  TABS (three, sharing one slug field concept)
+    Intake      — paste source text, pick type, slug, Proceed,
+                  Freeze, and the recon/validate/auto-resolve row
+    Sessions    — session number, Copy session instruction, Status,
+                  Session report, Plan health
+    Owner pass  — open questions, owner actions, recon checklist
+
+  LOG (bottom)
+    Everything the console does is printed here, newest last.
+
+3.4 The sample project
+----------------------
+The best first ten minutes: on the Intake tab click
+"Open sample project...", choose an empty folder, and the console
+copies the bundled samples/demo-project/ there and points the
+Repo folder field at the copy. It contains two worked plans:
+
+- plans/demo-recipe-cli — a FINISHED example: frozen plan
+  (PART-01 v1.0.md), fully ticked recon checklist, zero open
+  questions, VALIDATION.md reading exactly "PART-01 READY", and a
+  PROGRESS.md / HEALTH.md history including a BLOCKED-then-passed
+  session. This is what "done" looks like.
+- plans/demo-journal-wip — a MID-WORKFLOW example: a draft with one
+  answer parked in ## OWNER ANSWERS, 2 ticked + 1 open + 1 DEFERRED
+  recon items, 2 open questions and 1 unchecked owner action. Use it
+  to exercise the Owner pass tab and "What's blocking Freeze?"
+  safely.
+
+Never point the app at the bundled samples/demo-project/ folder
+itself — the app writes into the repo it points at. Always explore
+the copy (the button makes one for you). See
+samples/demo-project/README.md for a guided tour.
+
+
+4. CORE CONCEPTS
+================
+
+Repo folder
+    The project folder your agent works on. The console writes its
+    paperwork there (PART-00.md, templates/, commands/, plans/).
+    You point the app at it with Browse... and initialize it with
+    Init starter repo.
+
+Plan
+    One unit of work, living in plans/<slug>/ inside the repo. A
+    plan goes: source text -> draft -> owner pass -> validation ->
+    frozen plan -> sessions -> PLAN COMPLETE.
+
+Slug
+    The plan's short name, lowercase-with-dashes (kebab-case), e.g.
+    payments-v2. It becomes the folder name under plans/. The
+    console remembers your last slug and a dropdown of recent slugs
+    (per repo) on all three tabs.
+
+SOURCE.md
+    The permanent record of the text you pasted at intake. Frozen at
+    creation; the plan is always traceable back to what you started
+    from.
+
+Draft (PART-01.draft.md)
+    The editable plan in the standard form, produced from your
+    source text. You and the agent refine it here until the gates
+    pass.
+
+Freeze
+    The act of locking the draft into the official plan,
+    "PART-01 v1.0.md" (the version lives in the filename). Freeze is
+    gated: it refuses while anything is open. Frozen means locked.
+
+Gates
+    The four conditions Freeze checks: 0 open questions, 0 unchecked
+    recon items, 0 unchecked owner actions, and VALIDATION.md
+    reading exactly "PART-01 READY".
+
+Session
+    One scoped unit of agent work from the frozen plan's session
+    list. You copy a session instruction, paste it into your agent,
+    and afterwards record a verdict. The last session is the deploy
+    session, marked [DEPLOY] in the plan.
+
+Owner pass
+    The only manual thinking step: answering the questions the agent
+    parked for you (OPEN-QUESTIONS.md), ticking the recon checklist,
+    and handling owner actions (commands the agent must never run).
+
+Standing orders (AGENT-ORDERS.md)
+    Your persistent rules for the agent ("always write tests",
+    "never push to main"), embedded in every session instruction.
+    Edit them via the Agent orders... button.
+
+Verdicts
+    After each session, Session report returns one of:
+    OK (complete; the number auto-advances), CHECK (something is
+    off, usually a completion line not in the exact required format;
+    a "fix:" hint is copied to your clipboard), BLOCKED (the agent
+    wrote BLOCKED.md explaining what stopped it), or INCOMPLETE (no
+    completion record at all). In the console these verdicts carry
+    warning/cross symbols; in this guide they are named in words.
+
+
+5. STEP-BY-STEP WALKTHROUGH
+===========================
+
+A full worked example, end to end. At every step, the bundled sample
+project shows the exact artifact this step produces — open it via
+"Open sample project..." (see 3.4). The scenario: a small offline
+CLI ("rc") that manages a personal recipe collection.
+
+Step 1 — Point the console at a repo
+    Click Browse... and choose your project folder (first time?
+    create an empty test folder, or use the sample). Click
+    Init starter repo. This writes PART-00.md (the rulebook),
+    templates/PART-01.md (the blank plan form) and commands/ (7
+    instruction files) into the repo. Existing files are never
+    overwritten.
+    Reference: the sample repo already has these — see
+    samples/demo-project/.
+
+Step 2 — Intake
+    Open the Intake tab. Paste your text (for the demo: a short
+    brief describing the "rc" recipe CLI). Pick the Type:
+    "plan" for a finished plan, "brainstorm" for rough ideas,
+    "audit" for an audit report. Type a slug, e.g. recipe-cli.
+    Click Proceed.
+    The console saves your text as plans/recipe-cli/SOURCE.md and
+    produces the plan files (see step 3). With a key it can call
+    the model itself; without one it hands you a ready-made
+    instruction to paste into your agent.
+    Reference: samples/demo-project/plans/demo-recipe-cli/SOURCE.md
+    shows exactly what this step stores.
+
+Step 3 — The plan files appear
+    In plans/<slug>/ you now have PART-01.draft.md (the draft
+    plan), RECON-CHECKLIST.md (facts to verify) and
+    OPEN-QUESTIONS.md (decisions only you can make). For an audit
+    intake, also TRIAGE.md sorting findings into fix-now / later /
+    accept.
+    Reference: the same three files (plus the finished versions of
+    each) in samples/demo-project/plans/demo-recipe-cli/.
+
+Step 4 — The owner pass
+    Open the Owner pass tab, type the slug, click Refresh.
+    - Questions: for each open question, either click
+      Accept recommendation (when the block carries a RECOMMEND:
+      line you agree with) or type your answer and click
+      Save answer -> draft + remove. Answers land in the draft
+      under ## OWNER ANSWERS; the question is removed from
+      OPEN-QUESTIONS.md.
+    - Recon checklist: items the agent could verify are already
+      ticked [x]. Run the remaining checks yourself and change
+      [ ] to [x] (or delete lines you decide to skip; an item you
+      consciously postpone is marked DEFERRED with a reason).
+    - Owner actions (right panel): commands needing your passwords
+      or dashboards. Whitelisted read-only ones get a
+      Run (read-only) button; anything else, Copy command, run it
+      yourself, then Mark done.
+    Reference: samples/demo-project/plans/demo-journal-wip/ is
+    frozen mid-owner-pass — exactly what this step looks like
+    before it is done; demo-recipe-cli/OPEN-QUESTIONS.md shows the
+    finished state (0 open questions, owner actions done).
+
+Step 5 — Validate, then freeze
+    Click Validate draft for a gap-report (written to
+    VALIDATION.md and shown in the log). If findings remain, click
+    Auto-resolve findings to chain the fixes and a re-validation.
+    When VALIDATION.md reads exactly "PART-01 READY" and nothing is
+    open, click Freeze. PART-01 v1.0.md is created — the locked
+    official plan with its session list.
+    Reference: samples/demo-project/plans/demo-recipe-cli/VALIDATION.md
+    (says "PART-01 READY") and "PART-01 v1.0.md" (the frozen plan).
+
+Step 6 — Run sessions
+    Open the Sessions tab, type the slug, set the session number
+    (start with 1), click Copy session instruction, and paste it
+    into your coding agent with the repo open as the workspace.
+    When the agent finishes, click Session report and act on the
+    verdict (OK / CHECK / BLOCKED / INCOMPLETE — see 6.9). Repeat
+    for each session. The last session is the deploy session —
+    stay and watch it.
+    Reference: samples/demo-project/plans/demo-recipe-cli/PROGRESS.md
+    shows a full session history, including a BLOCKED session that
+    was fixed and re-run to PASS.
+
+Step 7 — Close out
+    Click Plan health before the deploy session (the "pre-deploy
+    sweep") and whenever you return to a plan after a break. When
+    all sessions pass, health tells you to append
+    "PLAN COMPLETE <date>" to PROGRESS.md. The plan is done.
+    Reference: samples/demo-project/plans/demo-recipe-cli/HEALTH.md
+    and the closing lines of its PROGRESS.md.
+
+The whole loop on one page (cheat sheet)
+----------------------------------------
+ 1. Paste brainstorm/audit/plan -> type + slug -> Proceed
+ 2. Answer OPEN-QUESTIONS (Accept recommendation or type + save)
+ 3. Run owner-only checks -> tick [x] in RECON-CHECKLIST
+ 4. Validate draft -> Auto-resolve findings -> repeat until READY
+ 5. Freeze
+ 6. Sessions tab: slug + 1 -> Copy session instruction
+ 7. Paste into your agent (repo open as workspace)
+ 8. Watch it work
+ 9. Session report -> verdict
+10. verdict OK -> next session number -> back to 6
+11. verdict CHECK -> fix hint is on your clipboard -> paste ->
+    Session report again
+12. verdict BLOCKED -> fix cause -> rename BLOCKED.md to
+    BLOCKED-resolved.md -> re-run
+13. Last session = deploy, supervised -> Plan health -> PLAN COMPLETE
+
+
+6. EVERY MAJOR FEATURE IN DEPTH
+===============================
+
+6.1 Repo folder and Init starter repo
+-------------------------------------
+The Repo folder field (top bar) is where all paperwork lives. Click
+Browse... to choose it; the choice is remembered. Init starter repo
+writes, without ever overwriting existing files:
+
+- PART-00.md — the rulebook every agent session must follow
+- templates/PART-01.md — the blank plan form
+- commands/ — 7 instruction files (new-plan, recon, owner-resolve,
+  validate-plan, freeze-plan, session, plan-status)
+
+"Not a plan repo" means these are missing — click Init starter repo.
+
+6.2 Update command files (and the auto-update check)
+----------------------------------------------------
+The console ships with built-in command protocols. Update command
+files refreshes your repo's commands/ with the current built-in
+versions — but never overwrites a file you have customized (it
+compares content and only touches stale or missing ones).
+
+About 400 ms after start, the console runs the same check silently.
+If newer built-in protocols exist, a dialog tells you exactly what
+changed (one-line note) and offers to update. Declining changes
+nothing.
+
+6.3 Intake: types, slug, Proceed
+--------------------------------
+Paste your text into the big box, pick the Type, type the slug, and
+click Proceed:
+
+- plan — a finished plan/task description.
+- brainstorm — rough ideas; the agent distills them into a coherent
+  draft and lists what needs your decision.
+- audit — an audit report; the agent also writes TRIAGE.md sorting
+  every finding into fix-now / fix-later / accept.
+
+Your text is saved as plans/<slug>/SOURCE.md (permanent record).
+The draft scaffolding then runs: with a key, the console calls the
+model itself; without one, a popup gives you a ready-made
+instruction to paste into your agent (a backup of every instruction
+is kept in plans/<slug>/instructions/). Everything the console did
+appears in the log at the bottom.
+
+6.4 Open sample project...
+--------------------------
+Copies the bundled samples/demo-project/ into a folder you choose
+and points the Repo folder there. If the chosen folder is not empty,
+the console warns you before copying files with clashing names. Use
+it to explore a finished plan (demo-recipe-cli) and a mid-workflow
+plan (demo-journal-wip) before running anything live.
+
+6.5 The Owner pass
+------------------
+Open the Owner pass tab, type the slug, click Refresh. The tab loads
+three things:
+
+Open questions (left panel)
+    Questions from OPEN-QUESTIONS.md, shown as three-line
+    PROBLEM / QUESTION / RECOMMEND blocks. Blocks with a RECOMMEND:
+    line are marked with a "has rec" suffix.
+    - Agree with the recommendation? Select the question and click
+      Accept recommendation. It shows you the recommendation, asks
+      for confirmation, then saves it as your answer (stamped
+      "[recommendation accepted <date>]") and removes the question.
+      Questions without a RECOMMEND line get a clear error — type
+      those in the answer box instead.
+    - Know the answer yourself? Type it in the answer box and click
+      Save answer -> draft + remove. The answer lands in
+      PART-01.draft.md under ## OWNER ANSWERS and the question is
+      removed from OPEN-QUESTIONS.md (a .bak snapshot is kept
+      first, and the exchange is archived to owner-pass.log).
+    - Changed your mind about a question entirely? Archive question
+      (keep log) removes it without answering; the whole block is
+      kept in owner-pass.log.
+
+Owner actions (right panel)
+    Commands the agent may never run — anything needing your
+    passwords, dashboards or owner-only files — listed from
+    ## Owner actions in OPEN-QUESTIONS.md.
+    - Whitelisted read-only commands (Select-String, Test-Path,
+      Get-Content, git status/diff/log) get a Run (read-only)
+      button: the console runs the command in your repo, shows the
+      output in the log, and — after you confirm — marks the linked
+      section-B line "VERIFIED <today>" in the draft and ticks the
+      action done.
+    - Anything else: Copy command, run it in your own terminal,
+      then Mark done.
+    - Nothing runs or is written without your confirmation; every
+      event is archived to owner-pass.log.
+
+Recon checklist
+    Shown with the questions. Items the agent could already check
+    are ticked [x] for you. Items left for you: run the check, then
+    change [ ] to [x] in RECON-CHECKLIST.md (or delete lines you
+    decide to skip). A line marked DEFERRED means a deliberate,
+    documented decision to skip that item — it counts as settled
+    and does not block Freeze, but the reason stays on the record.
+
+What's blocking Freeze? (top of the tab)
+    A read-only dry-run that lists exactly what would block Freeze
+    right now — open questions, unchecked owner actions, unchecked
+    recon items, a missing or not-ready validation report — without
+    changing anything. Use it any time you want to know why Freeze
+    is refusing.
+
+6.6 Validate draft and the validation gap report
+------------------------------------------------
+Click Validate draft. With a key the console asks the model to write
+a gap-report on the current draft; without one it gives you a
+ready-made instruction for your agent. Either way the report lands
+in plans/<slug>/VALIDATION.md and is shown in the log. It lists
+every gap between the draft and a freeze-ready plan, each with a
+remediation line (in "-> run owner-resolve <slug>" style) that
+Auto-resolve findings can act on. A report whose entire content is
+exactly "PART-01 READY" means zero gaps: Freeze is unblocked. Click
+Show validation report to re-read the latest report at any time.
+
+6.7 Auto-resolve findings
+-------------------------
+Auto-resolve findings parses VALIDATION.md and chains the remediation
+for you:
+
+- With a key: the console dispatches the owner-resolve step (answers
+  questions, applies the draft fixes the findings call for) and then
+  re-validation, back to back, and tells you when VALIDATION.md says
+  PART-01 READY.
+- Without a key: it copies ONE ready-made instruction that makes
+  your agent do both steps back to back. Paste it, let the agent
+  finish, and the fresh report supersedes the old one.
+
+When the "auto-resolve findings" checkbox (Intake tab) is ticked,
+this chain also runs automatically after Validate draft. If
+VALIDATION.md already says PART-01 READY, the button tells you there
+is nothing to resolve.
+
+6.8 Freeze and the freeze gates
+-------------------------------
+Freeze locks the draft into the official plan. It refuses — with a
+message naming the offender — unless ALL four gates pass:
+
+1. 0 open questions in OPEN-QUESTIONS.md
+2. 0 unchecked recon items ([ ]) in RECON-CHECKLIST.md
+3. 0 unchecked owner actions
+4. VALIDATION.md reads exactly "PART-01 READY"
+
+On success the frozen plan is written as "PART-01 v1.0.md" (the
+version lives in the filename) together with its session list.
+Frozen means locked. If you must change it later, edit it and add
+" | v1.1 frozen <date>" to its first line, and note why in
+PROGRESS.md.
+
+6.9 Sessions: the daily loop
+----------------------------
+1. Open the Sessions tab. Type the slug, set the session number
+   (start with 1).
+2. Click Copy session instruction. The instruction embeds your
+   standing orders from AGENT-ORDERS.md plus the exact scope of this
+   session: which rules file to load, what to do, what to record.
+3. Paste it into your agent (repo open as the workspace) and let it
+   work. The agent records its completion when done.
+4. Back in the console, click Session report. You get a verdict:
+
+- OK — session complete. The session number advances by 1
+  automatically (never past the deploy session).
+- CHECK — something's off (usually the agent did not write its
   completion line in the exact required format). The report shows a
   "fix:" hint and it is copied to your clipboard automatically —
   paste it into your agent and click Session report again.
-- **✖ BLOCKED** — the agent hit a wall and wrote `BLOCKED.md`
-  explaining exactly what stopped it and what it tried. Fix the
-  cause (often you must run a command or provide access), rename
-  `BLOCKED.md` to `BLOCKED-resolved.md`, and re-run the session.
-- **✖ INCOMPLETE** — no completion record at all; the session never
+- BLOCKED — the agent hit a wall and wrote BLOCKED.md explaining
+  what stopped it and what it tried. Fix the cause (often you must
+  run a command or provide access), rename BLOCKED.md to
+  BLOCKED-resolved.md, and re-run the session.
+- INCOMPLETE — no completion record at all; the session never
   really finished.
-6. On OK the session number is already advanced; otherwise increase it
-by 1 and repeat.
 
-The console refuses to let you jump ahead: you cannot run session 3
-before sessions 1 and 2 have OK records. That's deliberate — plans die
-from skipped steps.
+5. On OK the number is already advanced; otherwise increase it by 1
+   and repeat.
 
-**The last session is the deploy session** (marked `[DEPLOY]` in the
-plan). Run it the same way, but stay and watch: the instruction makes
+You cannot jump ahead: session 3 will not run before sessions 1 and
+2 have OK records. That is deliberate — plans die from skipped
+steps.
+
+The last session is the deploy session (marked [DEPLOY] in the
+plan). Run it the same way but stay and watch: the instruction makes
 the agent run its checks before AND after deploying, and stop
 immediately if a post-deploy check fails.
 
-**Plan health** — click it any time for one line per session: what's
+6.10 Plan health and Status
+---------------------------
+Plan health — click it any time for one line per session: what's
 done, what's broken, what's next. Always click it before the deploy
-session ("pre-deploy sweep") and when returning to a plan after a break.
-Every health run is also appended to `plans/<slug>/HEALTH.md`, so each
-plan keeps its own history of checks.
+session (the "pre-deploy sweep") and when returning to a plan after
+a break. Every health run is appended to plans/<slug>/HEALTH.md, so
+each plan keeps its own history of checks. Status is the quicker
+one-line "where am I". When all sessions pass, health tells you to
+append "PLAN COMPLETE <date>" to PROGRESS.md — paste that hint into
+your agent or add the line yourself. The plan is done.
 
-**Status** — a quicker one-line summary when you just want to know
-where you are.
+6.11 Agent orders (standing orders)
+-----------------------------------
+Agent orders... (top bar) opens AGENT-ORDERS.md from the repo root —
+the standing orders attached to every session instruction. Typical
+entries: "always write tests", "never push to main", "match the
+existing code style". Edit freely; the next Copy session instruction
+picks up your changes. The file is only created if missing — your
+customized text is never overwritten by the app.
 
-When all sessions pass, health tells you to write `PLAN COMPLETE` —
-paste that hint into your agent or add the line to PROGRESS.md
-yourself. The plan is done.
+6.12 API key and model selection
+--------------------------------
+The OpenRouter key is optional. Paste it in the top bar and tick
+"Use API key" (or set the OPENROUTER_API_KEY environment variable —
+the field stays empty and the env value is used instead; it is never
+persisted). Click Reload models to fetch the live model list — free
+models end in ":free" — and pick a favorite; your picks are
+remembered at the top of the list. The model is used only by the
+console for the intake and auto-resolve steps; sessions always run
+in your agent, with whatever model you chose there. The key is kept
+in memory for the current session only and is never written to disk.
 
----
+6.13 Themes and window size
+---------------------------
+Theme (top bar): Light, Dark, or Follow OS. Follow OS matches your
+system personalization and switches automatically. On Windows
+high-contrast mode the app steps aside entirely and lets the OS
+colors rule. Your choice is saved in plan-console.json. The window
+starts maximized (full screen) and is freely resizable (smallest
+820 x 600); the size you close it with is remembered for the next
+start.
 
-## 6. Button reference
+6.14 Button reference
+---------------------
+| Button                        | Tab        | What it does                                                   | Needs API key? |
+|-------------------------------|------------|----------------------------------------------------------------|----------------|
+| Browse...                     | top        | Chooses the repo folder                                        | no             |
+| Init starter repo             | top        | Creates PART-00.md, templates/, commands/ in the repo          | no             |
+| Update command files          | top        | Refreshes commands/ with the current built-in protocols        | no             |
+| Reload models                 | top        | Refreshes the OpenRouter model list                            | yes (for the list) |
+| Agent orders...               | top        | Edits AGENT-ORDERS.md standing orders                          | no             |
+| Cancel API call               | top        | Aborts a running model call                                    | n/a            |
+| About                         | top        | Name, version, copyright, license link and viewer              | no             |
+| Theme                         | top        | Light / Dark / Follow OS                                       | no             |
+| How to use without a key (guide) » | top   | Opens no-api-key-guide.html                                    | no             |
+| Open sample project...        | Intake     | Copies samples/demo-project/ to a folder of your choice        | no             |
+| Proceed                       | Intake     | Saves your text, scaffolds the plan (+recon+validate if ticked)| optional       |
+| Freeze                        | Intake     | Locks the draft into PART-01 v1.0.md after all gates pass      | no             |
+| Run recon                     | Intake     | Hands the recon checklist to the agent                         | optional       |
+| Validate draft                | Intake     | Gap-report on the current draft                                | optional       |
+| Auto-resolve findings         | Intake     | Parses VALIDATION.md and chains fix + re-validate              | optional       |
+| Show validation report        | Intake     | Displays plans/<slug>/VALIDATION.md in the log                 | no             |
+| Copy session instruction      | Sessions   | Puts the next session's instruction on your clipboard          | no             |
+| Status                        | Sessions   | One-line where-am-I                                            | no             |
+| Session report                | Sessions   | Verdict for one session; on OK auto-advances, on CHECK copies the fix hint | no |
+| Plan health                   | Sessions   | Verdict for the whole plan + writes HEALTH.md                  | no             |
+| Refresh                       | Owner pass | Loads questions, owner actions and recon checklist             | no             |
+| What's blocking Freeze?       | Owner pass | Read-only dry-run of the Freeze gates                          | no             |
+| Accept recommendation         | Owner pass | Confirmed one-click accept of the RECOMMEND line               | no             |
+| Save answer -> draft + remove | Owner pass | Saves your typed answer and removes the question               | no             |
+| Archive question (keep log)   | Owner pass | Removes the question without answering; keeps the log          | no             |
+| Run (read-only)               | Owner pass | Runs a whitelisted read-only owner action in the repo          | no             |
+| Copy command                  | Owner pass | Copies the selected owner action's command                     | no             |
+| Mark done                     | Owner pass | Ticks the selected owner action done                           | no             |
 
-| Button | Tab | What it does | Needs API key? |
-|---|---|---|---|
-| Init starter repo | top | Creates PART-00.md, templates/, commands/ in the repo | no |
-| Update command files | top | Refreshes commands/ with the current built-in protocols | no |
-| Reload models | top | Refreshes the OpenRouter model list | no |
-| Agent orders… | top | Edits the standing orders attached to session instructions | no |
-| Run recon | Intake | Hands the recon checklist to the agent | optional |
-| Show validation report | Intake | Displays plans/<slug>/VALIDATION.md in the log | no |
-| Proceed | Intake | Saves your text, scaffolds the plan (+recon+validate if ticked) | optional |
-| Validate draft | Intake | Gap-report on the current draft | optional |
-| Auto-resolve findings | Intake | Parses VALIDATION.md and runs the remediation itself: with a key it dispatches owner-resolve (answers + draft fixes) and re-validation back-to-back; without one it copies ONE ready-made instruction doing both. Also chains automatically after Validate draft when "auto-resolve findings" is ticked | optional |
-| Freeze | Intake | Locks the draft into PART-01.md after checks pass | no |
-| Copy session instruction | Sessions | Puts the next session's instruction on your clipboard | no |
-| Status | Sessions | One-line where-am-I | no |
-| Session report | Sessions | Verdict for one session; on OK auto-advances the session number, on ⚠ CHECK copies the fix hint to the clipboard | no |
-| Plan health | Sessions | Verdict for the whole plan + writes HEALTH.md | no |
-| Refresh | Owner pass | Loads the plan's open questions, owner actions and recon checklist into the tab | no |
-| What's blocking Freeze? | Owner pass | Read-only dry-run: lists what would block Freeze right now | no |
-| Accept recommendation | Owner pass | Confirmed one-click accept of the selected question's RECOMMEND line as your answer | no |
-| Save answer → draft + remove | Owner pass | Saves your typed answer to the draft and removes the question | no |
-| Archive question (keep log) | Owner pass | Removes the question without answering; keeps it in owner-pass.log | no |
-| Run (read-only) | Owner pass | Runs a whitelisted read-only owner action in the repo; confirmed results mark the linked §B line VERIFIED | only whitelisted |
-| Copy command | Owner pass | Copies the selected owner action's command to the clipboard | no |
-| Mark done | Owner pass | Ticks the selected owner action done in OPEN-QUESTIONS.md (guarded against stale index) | no |
 
----
+7. WORKING WITHOUT AN API KEY
+=============================
+The OpenRouter key is entirely optional. Plan Console is built
+agent-agnostic: it hands ready-made instructions to YOUR coding
+agent (Zoo Code, Claude Code, Cursor, Codex, or any other), which
+does the actual work inside your repository. Without a key the app
+is not a "demo mode" — it is the full product.
 
-## 7. What the files in `plans/<slug>/` mean
+The key only changes WHO scaffolds the first draft: the console's
+model call, or your own agent via a pasted instruction. Everything
+else — owner pass, validation, auto-resolve, freeze gates, sessions,
+plan health, themes, the sample project — is identical with or
+without a key. Without a key the console makes no network calls at
+all.
 
-| File | Meaning | Who writes it |
-|---|---|---|
-| SOURCE.md | Your original pasted text, frozen | console |
-| PART-01.draft.md | Editable plan draft | console + you |
-| PART-01 v1.0.md | The frozen official plan (version in the filename) | console (Freeze) |
-| IN-PROGRESS.md | Interruption marker while a session runs | agent |
-| owner-pass.log | Archive of every answered/removed question | console |
-| instructions/ | Backup copies of paste-instructions | console |
-| RECON-CHECKLIST.md | Facts to verify, `[ ]`/`[x]` | agent + you |
-| OPEN-QUESTIONS.md | Questions only you can answer (empty it as you answer) | agent + you |
-| TRIAGE.md | Audit findings sorted fix/later/accept | agent |
-| VALIDATION.md | Latest gap-report | agent |
-| PROGRESS.md | One line per completed session | agent |
-| BLOCKED.md | Why work stopped (rename to BLOCKED-resolved.md when fixed) | agent |
-| HEALTH.md | History of your Plan-health checks | console |
+The companion guide no-api-key-guide.html (top-bar link "How to use
+without a key (guide) »") covers this workflow in depth, step by
+step.
 
----
 
-## 8. Troubleshooting
+8. FILE REFERENCE
+=================
+Repo level (created by Init starter repo)
+-----------------------------------------
+| File / folder       | Meaning                                                | Who writes it |
+|---------------------|--------------------------------------------------------|---------------|
+| PART-00.md          | The rulebook every agent session must follow           | console       |
+| AGENT-ORDERS.md     | Your standing orders, embedded in session instructions | you           |
+| templates/PART-01.md| The blank plan form                                    | console       |
+| commands/           | 7 instruction files the console and agent use          | console       |
 
-| Problem | Fix |
-|---|---|
-| Window doesn't open at all | Python missing or not on PATH. In a terminal run `python plan-console.py` and read the error. On some Linux systems: `sudo apt install python3-tk`. |
-| "Not a plan repo" popup | Wrong repo folder, or starter files missing — click Init starter repo. |
-| Model list is empty | No internet, or OpenRouter unreachable. You can also type a model id by hand. |
-| ERROR: OpenRouter HTTP 401 | Wrong API key — re-paste it in the top bar. |
-| ERROR: OpenRouter HTTP 402 | No credits on your OpenRouter account. |
-| ERROR: OpenRouter HTTP 429 | Rate limited (common on free models) — wait a minute or pick another model. |
-| "reply had no <<<FILE>>> blocks" | The model ignored the output format. The console retries once automatically; if it still fails, run that step in your agent instead (copy-mode). |
-| Freeze refuses | It tells you exactly what's open: unanswered questions or unchecked `[ ]` items. Clear them first. |
-| Session report says "not canonical" | The agent wrote its completion line in the wrong format. The "fix:" hint is already on your clipboard — paste it into your agent, then click Session report again. |
-| Agent can't find files | Make sure the repo folder is open as the workspace in VS Codium, not a parent or subfolder. |
-| App frozen during intake | API calls can take a few minutes on slow models. Closing and restarting the app is always safe — files are only written when a step completes. |
-| Want to reset everything | Delete `plan-console.json` (settings) — plans live in your repo and are untouched. |
+Under plans/<slug>/
+-------------------
+| File               | Meaning                                                 | Who writes it    |
+|--------------------|---------------------------------------------------------|------------------|
+| SOURCE.md          | Your original pasted text, frozen                       | console          |
+| PART-01.draft.md   | Editable plan draft                                     | agent + you      |
+| PART-01 v1.0.md    | The frozen official plan (version in the filename)      | console (Freeze) |
+| RECON-CHECKLIST.md | Facts to verify, [ ]/[x], DEFERRED allowed              | agent + you      |
+| OPEN-QUESTIONS.md  | Questions only you can answer (empty it as you answer)  | agent + you      |
+| TRIAGE.md          | Audit findings sorted fix-now / later / accept          | agent            |
+| VALIDATION.md      | Latest gap-report; "PART-01 READY" unblocks Freeze      | agent            |
+| PROGRESS.md        | One line per completed session                          | agent            |
+| HEALTH.md          | History of your Plan-health checks                      | console          |
+| BLOCKED.md         | Why work stopped (rename to BLOCKED-resolved.md when fixed) | agent        |
+| IN-PROGRESS.md     | Interruption marker while a session runs                | agent            |
+| owner-pass.log     | Archive of every answered/removed question and owner-action event | console|
+| instructions/      | Backup copies of paste-instructions                     | console          |
 
----
+Next to the script
+------------------
+| File                          | Meaning                                                    |
+|-------------------------------|------------------------------------------------------------|
+| plan-console.py               | The application                                            |
+| plan.bat                      | Windows launcher (handles the Microsoft Store python stub) |
+| plan-console.json             | Your settings (see section 9)                              |
+| plan-console.json.corrupt     | Backup of an unreadable settings file                      |
+| UserGuide.html / UserGuide.txt| This guide                                                 |
+| no-api-key-guide.html         | The offline no-key workflow guide                          |
+| LICENSE / NOTICE              | Apache License 2.0 text and notices                        |
+| samples/demo-project/         | The bundled sample repo                                    |
 
-## 9. Cheat sheet (the whole system in 12 lines)
 
-1. Paste brainstorm/audit → type slug → **Proceed**
-2. Read OPEN-QUESTIONS in the log → answer → delete lines
-3. Run owner-only checks → tick `[x]` in RECON-CHECKLIST
-4. **Freeze**
-5. Sessions tab: slug + 1 → **Copy session instruction**
-6. Paste into your agent (repo open as workspace)
-7. Watch it work
-8. **Session report** → verdict
-9. verdict OK → next session number → back to 5
-10. verdict ⚠ → fix hint is on your clipboard → paste → **Session report** again
-11. verdict ✖ BLOCKED → fix cause → rename BLOCKED.md → re-run
-12. Last session = deploy, supervised → **Plan health** → PLAN COMPLETE
+9. SETTINGS & DATA (PRIVACY AND SECURITY)
+=========================================
+plan-console.json (next to the script)
+--------------------------------------
+| Key                      | Meaning                                        |
+|--------------------------|------------------------------------------------|
+| repo                     | Path of the current repo folder                |
+| model                    | Last selected OpenRouter model id              |
+| favorites                | Your model picks (up to 8, shown first)        |
+| use_key                  | Whether the API key field is enabled           |
+| kind                     | Last intake type (plan / brainstorm / audit)   |
+| theme                    | light / dark / system                          |
+| win_w, win_h             | Un-maximized window size on last close         |
+| last_slug                | Slug restored at startup                       |
+| recent_slugs             | Last 10 slugs (dropdown history)               |
+| license_accepted         | true once you clicked "I Agree"                |
+| license_accepted_version | "Apache-2.0" (SPDX id of the accepted license) |
+| license_accepted_date    | ISO date of acceptance                         |
 
----
+Writes are atomic (a temp file is replaced into place), so a crash
+mid-write cannot corrupt the file. If the file is ever undecodable,
+it is backed up as plan-console.json.corrupt and settings restart
+empty — nothing crashes.
 
-## 10. Appearance: themes and window size
+Privacy and security
+--------------------
+- The API key is NEVER written to disk. It lives in memory for the
+  current session only, or comes from the OPENROUTER_API_KEY
+  environment variable. Legacy keys found in old config files are
+  removed on load.
+- Network is used ONLY for the optional OpenRouter model list and
+  the optional intake/auto-resolve model calls. Without a key the
+  console makes no network calls at all. Everything else — plans,
+  files, guides, themes — is fully offline.
+- What leaves your machine is only what you choose to send: the
+  model calls (if you use a key) and whatever you paste into your
+  coding agent.
+- Owner actions run only after your explicit confirmation, and only
+  whitelisted read-only commands (Select-String, Test-Path,
+  Get-Content, git status/diff/log) can be run from inside the app.
+  Every owner-pass event is archived to owner-pass.log.
+- To reset acceptance or all settings, delete the corresponding keys
+  (or the whole file) in plan-console.json — see sections 3.2 and 12.
 
-1. **Theme** (top bar, next to Cancel API call): pick **Light**,
-   **Dark**, or **Follow OS**. *Follow OS* matches your Windows
-   personalization and switches automatically. Your choice is saved in
-   `plan-console.json`.
-2. **Window size**: the window is freely resizable — drag or maximize
-   it (smallest 820 × 600). The size you close it with is remembered
-   for the next start.
-3. **Offline guides**: `UserGuide.html` and `no-api-key-guide.html`
-   live in the app folder and open straight from there (file://). Each
-   guide has its own light/dark toggle and works fully offline —
-   nothing is fetched from the network.
+
+10. TROUBLESHOOTING
+===================
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Window doesn't open at all | Python missing or not on PATH | In a terminal run "python plan-console.py" and read the error. On some Linux systems: "sudo apt install python3-tk". |
+| "Not a plan repo" popup | Wrong repo folder, or starter files missing | Click Init starter repo (it never overwrites existing files). |
+| The license dialog appears at every start | plan-console.json lacks the acceptance keys, or was reset | Click I Agree once. If it keeps returning, check the file is writable next to the script. To reset acceptance deliberately, delete the license_accepted key (or the whole file). |
+| plan-console.json.corrupt appeared | The settings file was undecodable (partial write, manual edit, encoding) | Nothing is lost except settings: the app restarted with defaults. Inspect the .corrupt file, salvage what you need, then delete it. |
+| Model list is empty | No internet, or OpenRouter unreachable | Type a model id by hand, or skip the key entirely (section 7). |
+| ERROR: OpenRouter HTTP 401 | Wrong API key | Re-paste the key in the top bar. |
+| ERROR: OpenRouter HTTP 402 | No credits on your OpenRouter account | Top up, switch to a ":free" model, or use copy-paste mode. |
+| ERROR: OpenRouter HTTP 429 | Rate limited (common on free models) | Wait a minute or pick another model. |
+| "reply had no <<<FILE>>> blocks" | The model ignored the output format | The console retries once automatically; if it still fails, run that step in your agent instead (copy mode). |
+| The agent didn't create the plan files | Wrong workspace, unfinished run, or slug mismatch | Check the agent had your repo folder open as the workspace (not a parent or subfolder). Re-copy the instruction from plans/<slug>/instructions/ and paste it again — the instructions are idempotent. |
+| The agent created files in the wrong place | Agent workspace confusion | Move them into plans/<slug>/ yourself; the console re-reads the folder on Refresh. |
+| Freeze refuses | A gate is open | It names the offender. For the full list click What's blocking Freeze?: open questions, unticked recon [ ] items, unchecked owner actions, or VALIDATION.md not reading exactly PART-01 READY. |
+| Validation keeps coming back not-READY | Gaps in the draft | Click Auto-resolve findings and iterate until the report says PART-01 READY. |
+| Session report says "not canonical" | The agent wrote its completion line in the wrong format | The "fix:" hint is already on your clipboard — paste it into your agent, then click Session report again. |
+| Agent can't find files | Repo folder not open as the workspace | Open the repo folder itself (not a parent or subfolder) as the workspace in your agent. |
+| App frozen during intake | Model calls can take minutes on slow models | Closing and restarting the app is always safe — files are only written when a step completes. Cancel API call aborts a running call. |
+| "Guide not found" popup when clicking the guide link | no-api-key-guide.html is missing from the app folder | Keep no-api-key-guide.html in the same folder as plan-console.py. |
+| Want to reset everything | — | Delete plan-console.json (settings only) — plans live in your repo and are untouched. |
+
+
+11. FAQ
+=======
+Q: Do I need an API key?
+A: No. See section 7 — the copy-paste workflow is the full product.
+
+Q: Which coding agents can I use?
+A: Any capable one: Zoo Code, Claude Code, Cursor, Codex and others.
+   The instructions are plain text with explicit file paths and
+   formats, so nothing is tied to one product.
+
+Q: Is my API key safe?
+A: Yes — it is never written to disk, only kept in memory for the
+   current session (or read from the OPENROUTER_API_KEY environment
+   variable). Legacy stored keys are removed on load.
+
+Q: Where do my plans live?
+A: In your repo, under plans/<slug>/. The app folder holds only
+   settings (plan-console.json) and the guides. Deleting the app
+   never touches your plans.
+
+Q: What happens if I close the app mid-step?
+A: Nothing is corrupted. Files are only written when a step
+   completes, config writes are atomic, and plans live in your repo.
+
+Q: Can I run several plans at once?
+A: Yes — each plan is its own plans/<slug>/ folder. The console
+   works on the slug you type; switch by typing another slug.
+
+Q: Can I use one console for several repos?
+A: Yes. Switch the Repo folder; the dropdown history adapts (recent
+   slugs are filtered to the plans that exist in the current repo).
+
+Q: Why can't I jump ahead to session 3?
+A: Deliberate design — plans die from skipped steps. Sessions must
+   pass in order; the console enforces it.
+
+Q: How do I change a frozen plan?
+A: Edit "PART-01 v1.0.md" and add " | v1.1 frozen <date>" to its
+   first line, then note why in PROGRESS.md. Nothing stops you, but
+   the version trail keeps the change honest.
+
+Q: What does DEFERRED mean on the recon checklist?
+A: A documented decision to skip that item. It counts as settled and
+   does not block Freeze; the reason stays on the record.
+
+Q: Does the console send my code anywhere?
+A: No. Only the optional OpenRouter calls leave the machine (the
+   text you pasted plus short prompts), and only if you use a key.
+   Without a key there are no network calls at all.
+
+Q: Do free OpenRouter models work?
+A: Yes — models ending in ":free" cost nothing. If a free model is
+   rate-limited (HTTP 429), wait or switch models.
+
+Q: How do I reset the license acceptance or all settings?
+A: Delete the license_accepted key (acceptance only) or the whole
+   plan-console.json (everything) while the app is closed.
+
+
+12. ADVANCED USAGE
+==================
+Customizing AGENT-ORDERS.md
+---------------------------
+Agent orders... opens the repo's standing orders. They are embedded
+verbatim into every session instruction, so house rules (test
+policy, branch policy, style rules) are enforced without you
+repeating them. Keep lines short and imperative. The file is yours —
+the app never overwrites it.
+
+Editing command files safely
+----------------------------
+The 7 files in commands/ are plain Markdown instructions. You can
+edit them, but the auto-update check (about 400 ms after start, and
+Update command files) compares content: customized files are never
+overwritten, stale or missing ones are refreshed. If you edit one,
+expect the updater to leave it alone. To adopt a newer built-in
+version, diff your changes back in by hand.
+
+Using different agents
+----------------------
+The console only produces text and reads files. Any agent that can
+read a workspace, follow written instructions, and write files
+works. Point it at the repo, paste the instruction, done. Mixing
+agents across sessions of one plan also works — PROGRESS.md keeps
+the thread.
+
+Multi-repo habits
+-----------------
+plan-console.json is shared by every repo the console points at.
+recent_slugs is filtered against the current repo's plans/, so the
+dropdown only offers slugs that exist where you are. Favorites and
+theme are global. If you share one config across very different
+repos, expect the slug history to be a merged view.
+
+Running the tests
+-----------------
+The project ships a pytest suite (test/). Install pytest once
+("pip install pytest") and run "py -m pytest test/ -q" (Windows) or
+"python3 -m pytest test/ -q" from the app folder. Tests are optional
+for using the app.
+
+Config surgery
+--------------
+plan-console.json is plain JSON. With the app closed you can edit
+any key: point "repo" at another checkout, prune "favorites", clear
+"recent_slugs", or flip "theme". A broken file is not fatal — the
+app moves it to plan-console.json.corrupt and starts fresh. Deleting
+keys restores their defaults on the next save.
+
+
+13. LICENSE & CREDITS
+=====================
+Plan Console 1.0.0
+Paste-to-plan intake + session lifecycle manager
+Copyright © Costel Iordan (costel.iordan@gmail.com)
+
+Licensed under the Apache License, Version 2.0 — see the LICENSE
+file in the project repository, or
+https://www.apache.org/licenses/LICENSE-2.0 (the About dialog and
+the first-run dialog both link to it, and "View License" shows the
+full text offline). See the NOTICE file for attribution details.
+
+LEGAL DISCLAIMER — PROVIDED "AS IS"
+-----------------------------------
+This application is provided by the copyright holder and
+contributors "AS IS", free of charge, and is used entirely at your
+own risk. To the maximum extent permitted by applicable law:
+
+- NO WARRANTIES of any kind, express or implied, are given —
+  including but not limited to warranties of merchantability,
+  fitness for a particular purpose, accuracy, availability,
+  non-infringement, and uninterrupted or error-free operation.
+- The copyright holder and contributors accept NO LIABILITY and NO
+  RESPONSIBILITY whatsoever for any direct, indirect, incidental,
+  special, exemplary or consequential damages — including loss of
+  data, loss of profit, business interruption, or damages caused by
+  AI-generated content executed in your repositories — even if
+  advised of the possibility of such damages.
+- You remain solely responsible for anything you run, deploy or
+  publish with the help of this application, including every
+  instruction you execute and every file an AI agent writes on your
+  behalf. Review before you run.
+- Nothing in this application constitutes legal, financial or
+  professional advice.
+
+On first launch you confirm that you have read and accepted BOTH the
+Apache License 2.0 terms — including its warranty disclaimer
+(sections 7 and 8 of the License) — AND this disclaimer, by ticking
+both agreement checkboxes and clicking "I Agree". If you do not agree
+with one or both, decline or close the window: the application exits
+and nothing is stored.
+
+The bundled sample project and the offline guides are part of the
+same Apache-2.0-licensed work and carry the same disclaimer.

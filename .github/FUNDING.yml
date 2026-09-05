@@ -1,0 +1,19 @@
+# GitHub Funding configuration.
+#
+# IMPORTANT: Every entry below is intentionally commented out so that GitHub
+# does NOT display broken/empty sponsor buttons until real handles exist.
+# When you are ready to enable a platform, uncomment the line and set your
+# own username/handle. GitHub only shows buttons for *uncommented*, non-empty
+# keys.
+#
+# Supported keys include: github, patreon, open_collective, ko_fi,
+# tidelift, community_bridge, liberapay, issuehunt, otechie, lfx_crowdfunding,
+# buy_me_a_coffee, custom (custom takes an array of up to 4 URLs).
+#
+# Format reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+# Buy me a coffee: uncomment and set your username
+# buy_me_a_coffee: your-username
+
+# GitHub Sponsors: uncomment and set your username
+# github: your-username

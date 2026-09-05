@@ -1,5 +1,6 @@
 # secrets / local settings — never commit
 plan-console.json
+plan-console.json.corrupt
 OpenRouterAPIKey.txt
 
 # python
@@ -7,8 +8,21 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# IDE
+# IDE / OS
 .idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# scratch / temp files
+*.tmp
+
+# internal development artifacts (never committed; excluded from rel/)
+audits/
 
 # plans live inside the target repo, not here
 plans/
+
+# release distribution — zip is attached to GitHub Releases, never committed
+/PlanConsoleApp.zip
+rel/
