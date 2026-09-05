@@ -446,6 +446,7 @@ def apply_theme(root, style, name):
                     foreground=t["text-muted"])
     root.configure(bg=t["bg-main"])
     _walk_classic_widgets(root, t)
+    _refresh_comboboxes(root, t)
     return True
 
 
@@ -467,6 +468,45 @@ def _walk_classic_widgets(widget, t):
                             selectbackground=t["bg-accent"],
                             selectforeground=t["text-main"])
         _walk_classic_widgets(child, t)
+
+
+def _iter_all_widgets(widget):
+    """Every descendant, INCLUDING Toplevels (which _walk_classic_widgets
+    deliberately skips): the ttk combobox popdown lives in a Toplevel
+    child of the combobox and needs re-styling on theme changes too."""
+    for child in widget.winfo_children():
+        yield child
+        yield from _iter_all_widgets(child)
+
+
+def _refresh_comboboxes(root, t):
+    """v3.5.2 — theme-repaint fix: restyling via ttk.Style alone does not
+    repaint the readonly ENTRY of an existing ttk.Combobox (on Windows
+    'clam' the Theme dropdown kept showing the previous selection's
+    text/field color after a switch), and root.option_add only reaches
+    popdown listboxes created LATER, so a dropdown opened once kept the
+    old palette forever. Force an entry repaint (identity value re-set,
+    which redraws the entry with the current style) and restyle any
+    already-created popdown listbox directly."""
+    for w in _iter_all_widgets(root):
+        if w.winfo_class() != "TCombobox":
+            continue
+        try:
+            w.set(w.get())            # identity re-set → entry repaints
+        except tk.TclError:
+            pass
+        try:
+            popdown = root.nametowidget(str(w) + ".popdown")
+        except (KeyError, tk.TclError):
+            continue                  # not opened yet — option_add covers it
+        for child in [popdown] + list(popdown.winfo_children()):
+            if isinstance(child, tk.Listbox):
+                try:
+                    child.configure(bg=t["bg-card"], fg=t["text-main"],
+                                    selectbackground=t["bg-accent"],
+                                    selectforeground=t["text-main"])
+                except tk.TclError:
+                    pass
 
 
 def recon_item_state(line):

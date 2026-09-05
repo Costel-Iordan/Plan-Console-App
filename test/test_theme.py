@@ -1,6 +1,10 @@
-"""Theme-system tests for the Plan Console (pure — no Tk, no network,
-no repo access). Covers PART-01 §A session 1: THEMES completeness,
-token hex format validity, and _detect_os_theme fallback behavior.
+"""Theme-system tests for the Plan Console. Covers PART-01 §A session 1:
+THEMES completeness, token hex format validity, _detect_os_theme fallback
+behavior, and (v3.5.2) the theme-change flow on the real widgets —
+display update, persistence, and combobox/popdown restyling. Everything
+except the flow tests is pure (no Tk, no network, no repo access); the
+flow tests build a real (withdrawn) Tk window and skip when no display
+is available.
 
 Run either way:
     py test/test_theme.py
@@ -10,6 +14,8 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 HERE = Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location(
@@ -130,6 +136,82 @@ def test_high_contrast_defaults_to_true_when_windows_registry_unreadable(
     monkeypatch.setattr(pc, "winreg", _BrokenWinreg())
     monkeypatch.setattr(pc.os, "name", "nt")
     assert pc._high_contrast_active() is True
+
+
+# ------------------------------------------- theme-change flow (v3.5.2 fix)
+@pytest.fixture()
+def app_window(tmp_path, monkeypatch):
+    """A real (withdrawn) Plan Console App on a temp config, offline.
+    Skips the test when no Tk display is available."""
+    tk = pytest.importorskip("tkinter")
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no Tk display available")
+    root.withdraw()
+    monkeypatch.setattr(pc, "_high_contrast_active", lambda: False)
+    monkeypatch.setattr(pc, "CFG", tmp_path / "plan-console.json")
+    monkeypatch.setattr(pc.App, "_fetch_models", lambda self: None)
+    app = pc.App(root)
+    root.update()
+    yield app, root
+    root.destroy()
+
+
+def _select(root, cb, label):
+    """Deliver a selection the way the Tk core does after the user picks
+    from the popdown: set the value, then fire <<ComboboxSelected>>."""
+    cb.set(label)
+    cb.event_generate("<<ComboboxSelected>>")
+    root.update()
+
+
+def test_theme_change_updates_display_and_persists(app_window):
+    """Screenshot regression: after picking a theme, the dropdown must
+    DISPLAY the new selection and the choice must reach the config."""
+    app, root = app_window
+    cb = app.theme_cb
+    for label, setting in (("Dark", "dark"), ("Light", "light"),
+                           ("Follow OS", "system")):
+        _select(root, cb, label)
+        assert cb.get() == label, "dropdown must show the new selection"
+        assert app.theme_setting == setting
+        assert app.cfg["theme"] == setting
+    assert pc.CFG.is_file(), "theme changes must be persisted"
+    assert '"theme": "system"' in pc.CFG.read_text(encoding="utf-8")
+
+
+def test_theme_change_restyles_existing_combobox_popdown(app_window):
+    """Screenshot regression: a dropdown opened under one theme kept the
+    old palette after switching (option_add only reaches popdowns created
+    later). _refresh_comboboxes must restyle the existing popdown."""
+    import tkinter as tk
+    app, root = app_window
+    cb = app.theme_cb
+    # create the popdown listbox exactly where ttk creates it
+    popdown = tk.Toplevel(cb, name="popdown")
+    lb = tk.Listbox(popdown)
+    lb.pack()
+    root.update()
+    dark_card, light_card = pc.THEMES["dark"]["bg-card"], \
+        pc.THEMES["light"]["bg-card"]
+    _select(root, cb, "Dark")
+    assert lb.cget("bg") == dark_card, \
+        "existing popdown must follow the theme switch"
+    _select(root, cb, "Light")
+    assert lb.cget("bg") == light_card, \
+        "popdown must restyle back to light"
+    popdown.destroy()
+
+
+def test_theme_change_forces_combobox_repaint_without_clobbering(app_window):
+    """The repaint pass re-sets every combobox value identically — no
+    display value may be lost or changed (model picker included)."""
+    app, root = app_window
+    app.model_cb.set("test/vendor")
+    _select(root, app.theme_cb, "Dark")
+    assert app.model_cb.get() == "test/vendor"
+    assert app.theme_cb.get() == "Dark"
 
 
 if __name__ == "__main__":
