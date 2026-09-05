@@ -1,7 +1,5 @@
 # Plan Console
 
-<!-- TODO: replace "your-username" in the repository URL below once the repo is live -->
-
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
@@ -141,9 +139,7 @@ The suite contains 100 tests, all passing; Tk-dependent tests skip automatically
 
 ## Sponsor this project
 
-<!-- TODO: replace "your-username" with your Buy Me a Coffee username below -->
-
-If Plan Console saves you time, please consider [buying me a coffee](https://www.buymeacoffee.com/your-username). You can also use GitHub's native **Sponsor this project** button once the funding configuration is enabled — see [`.github/FUNDING.yml`](.github/FUNDING.yml).
+If Plan Console saves you time, please consider [buying me a coffee](https://buymeacoffee.com/costeliordan). You can also use GitHub's native **Sponsor this project** button once the funding configuration is enabled — see [`.github/FUNDING.yml`](.github/FUNDING.yml).
 
 ## License
 

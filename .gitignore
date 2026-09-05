@@ -21,7 +21,7 @@ Desktop.ini
 audits/
 
 # plans live inside the target repo, not here
-plans/
+/plans/
 
 # release distribution — zip is attached to GitHub Releases, never committed
 /PlanConsoleApp.zip
