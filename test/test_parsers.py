@@ -694,6 +694,38 @@ def test_is_readonly_command_default_deny():
     assert not pc.is_readonly_command("")
 
 
+def test_is_readonly_command_rejects_shell_separators():
+    # v3.5.1 audit fix — a whitelisted prefix followed by a separator
+    # executes a SECOND, arbitrary command; must be copy-only
+    for bad in ("git status; remove-item x",
+                "select-string x -path y; calc",
+                "git status & del file",
+                "get-content foo | out-file evil.txt",
+                "get-content foo | set-content evil.txt",
+                "git log `n calc",
+                "git status $(calc)",
+                "git diff > evil.txt",
+                "select-string x < input.txt",
+                "git status\nremove-item x",
+                "git diff --output=evil.txt",
+                "git show --out=evil.txt",
+                "get-content foo | foreach { calc }",
+                "git status | tee-object evil.txt",
+                "git log | start-process calc",
+                "git status | invoke-expression x",
+                "git status | iex x"):
+        assert not pc.is_readonly_command(bad), bad
+
+
+def test_is_readonly_command_still_allows_plain_pipes_in_args():
+    # legitimate read-only usage must keep working after the hardening
+    for ok in ("Select-String -Path x -Pattern 'sk-'",
+               "git status --porcelain=v1",
+               "Get-Content plan-console.json -TotalCount 3",
+               "git log --oneline -5"):
+        assert pc.is_readonly_command(ok), ok
+
+
 def test_mark_sb_verified_promotes_matching_line():
     draft = ("A. MISSION\n"
              "B. FACTS\n"

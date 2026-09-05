@@ -48,12 +48,19 @@ API key: see `no-api-key-guide.pdf`.
 ## Tests
 
 ```bash
-py -m pytest test/test_parsers.py -q   # or: py test/test_parsers.py
+py -m pytest test/ -q   # or run either file directly: py test/test_parsers.py
 ```
 
-Pure-parser regression tests: question-block counting, lenient PROGRESS.md
-parsing, recon checkbox rules, DEFERRED tag semantics, and the `<<<FILE>>>`
-path guard. No Tk, no network, no repo access.
+- `test/test_parsers.py` — pure-parser regression tests: question-block
+  counting, lenient `PROGRESS.md` parsing, recon checkbox rules, DEFERRED
+  tag semantics, the `<<<FILE>>>` path guard, slug dropdown scoping,
+  plan-marker scanning, owner-action parsing, and the read-only command
+  whitelist (including shell-separator rejection).
+- `test/test_theme.py` — theme-system tests: `THEMES` completeness and
+  hex validity, guide-palette lockstep, and OS-theme/high-contrast
+  detection fallbacks.
+
+No Tk, no network, no repo access.
 
 ## Layout
 

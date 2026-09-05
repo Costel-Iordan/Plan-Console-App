@@ -335,12 +335,14 @@ def _detect_os_theme():
 
 
 def _high_contrast_active():
-    """True when Windows high-contrast mode is on — or when the check
-    cannot be performed (non-Windows, winreg missing, key unreadable):
-    skipping custom colors is the safe default, never fight the OS
-    (PART-01 §G)."""
+    """True when Windows high-contrast mode is on. v3.5.1 audit fix —
+    non-Windows platforms can no longer be detected as high-contrast
+    (there is no such check to perform), so custom themes now APPLY on
+    macOS/Linux instead of being permanently disabled there; only an
+    unreadable Windows registry still falls back to True (never fight
+    the OS, PART-01 §G)."""
     if winreg is None or os.name != "nt":
-        return True
+        return False
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                             r"Control Panel\Accessibility"
@@ -641,13 +643,29 @@ READONLY_PREFIXES = (
     "select-string", "test-path", "get-content", "get-item", "get-childitem",
     "git status", "git diff", "git log", "git show",
 )
+# v3.5.1 — audit fix: a prefix check alone is bypassable. A whitelisted
+# prefix followed by shell metacharacters executes ARBITRARY second
+# commands ('git status; remove-item x'), pipes into writers
+# ('Get-Content foo | Out-File evil.txt'), or makes git itself write
+# files ('git diff --output=evil.txt'). The Run button therefore only
+# fires when the command is a whitelisted prefix AND contains none of
+# these separators/redirects — anything else falls back to copy-only.
+READONLY_FORBIDDEN_RE = re.compile(
+    r"[;|&`><$\n\r]|\bforeach\b|\bforeach-object\b|\btee-object\b"
+    r"|\bset-content\b|\badd-content\b|\bout-file\b|\bexport-\w+"
+    r"|\bstart-process\b|\binvoke-\w+|\biex\b|\bsc\.exe\b"
+    r"|--output\b|--out\b", re.I)
 
 
 def is_readonly_command(cmd):
-    """True when <cmd> starts with a whitelisted read-only prefix (v3.5).
-    Default-deny: unknown commands are copy-only, never auto-run."""
+    """True when <cmd> starts with a whitelisted read-only prefix (v3.5)
+    AND carries no shell separator, redirection, or file-writing flag
+    (v3.5.1 audit fix). Default-deny: anything else is copy-only, never
+    auto-run."""
     c = cmd.strip().lower()
-    return any(c.startswith(p) for p in READONLY_PREFIXES)
+    if not any(c.startswith(p) for p in READONLY_PREFIXES):
+        return False
+    return not READONLY_FORBIDDEN_RE.search(c)
 
 
 def parse_owner_actions(text):
@@ -1056,11 +1074,12 @@ RETRY_NOTE = ("\n\nYour previous reply had no valid <<<FILE>>> blocks. "
 # v2.6.3 — the one-line description of the NEWEST command-file change,
 # shown in the auto-update dialog. Bump this together with the command
 # files so the dialog text never goes stale.
-COMMAND_UPDATE_NOTE = ("owner-resolve now also applies 'fix in the "
-                       "draft' findings from VALIDATION.md (step 0), "
-                       "and the console's new 'Auto-resolve findings' "
-                       "button chains owner-resolve + re-validate "
-                       "automatically")
+COMMAND_UPDATE_NOTE = ("new-plan/recon/validate-plan now document the "
+                       "v3.5 owner-action format (→ verifies §B and "
+                       "(expect: …) tags) so agents emit actions the "
+                       "Owner pass tab can run and write back; "
+                       "validate-plan also counts unchecked owner "
+                       "actions as findings")
 
 
 def parse_files(text, slug):
@@ -2316,13 +2335,21 @@ class App:
     def _tick_owner_action(self, action):
         """Flip the checkbox of <action> in OPEN-QUESTIONS.md — with the
         same stale-index guard as on_answer_save/on_question_remove: the
-        line must still match what Refresh read, or nothing is written."""
+        line must still exist AND still match what Refresh read, or
+        nothing is written (v3.5.1 audit fix: the bounds check alone
+        let a rewritten file flip the wrong line)."""
         if not self._oq_file or not self._oq_file.is_file():
             messagebox.showerror("Owner actions", "Click Refresh first.")
             return False
         lines = self._oq_file.read_text(encoding="utf-8").splitlines()
         ln = action["lineno"]
-        if not (0 <= ln < len(lines)):
+        # v3.5.1 audit fix — content-aware stale-index guard: the line
+        # must still exist AND still carry the prose Refresh read (the
+        # bullet's own text); a mismatch means the file was rewritten
+        # and the toggle would flip the wrong line.
+        if (not (0 <= ln < len(lines))
+                or not action["prose"]
+                or action["prose"] not in lines[ln]):
             messagebox.showerror(
                 "Owner actions",
                 "OPEN-QUESTIONS.md changed since Refresh — click Refresh.")
@@ -2393,7 +2420,6 @@ class App:
                 "Not on the read-only whitelist — use 'Copy command' and "
                 "run it yourself, then 'Mark done'.")
             return
-        import subprocess
         try:
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", a["command"]],
@@ -2452,10 +2478,9 @@ class App:
             messagebox.showerror("Owner actions",
                                  "PART-01.draft.md not found.")
             return
-        import datetime
         new_text, new_line = mark_sb_verified(
             draft.read_text(encoding="utf-8"), action["verifies"],
-            datetime.date.today().isoformat(), action["command"] or "")
+            date.today().isoformat(), action["command"] or "")
         if new_text is None:
             messagebox.showerror(
                 "Owner actions",
@@ -2713,6 +2738,17 @@ class App:
                                  "Selected line is not a checkbox item.")
             return
         lines = self._rc_file.read_text(encoding="utf-8").splitlines()
+        # v3.5.1 audit fix — content-aware stale-index guard (same rule
+        # as on_answer_save/on_question_remove): the line must still be
+        # what Refresh read, or the toggle would modify the wrong line
+        # after the agent rewrote RECON-CHECKLIST.md.
+        if (not 0 <= lineno < len(lines)
+                or lines[lineno].strip() != line.strip()):
+            messagebox.showerror("Owner pass",
+                                 "RECON-CHECKLIST.md changed since the last "
+                                 "Refresh — click Refresh and re-select "
+                                 "(nothing was written).")
+            return
         lines[lineno] = new
         self._rc_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.on_owner_refresh()
@@ -2737,7 +2773,14 @@ class App:
             path = m.group(1).strip()
             # v2.6.3 — repo-relative ONLY: the old CWD fallback
             # (Path(path).exists()) auto-ticked items from files that
-            # merely shared a name outside the repo
+            # merely shared a name outside the repo.
+            # v3.5.1 audit fix — reject traversal/absolute/drive paths
+            # outright, matching the parse_files guard: `- [ ] EXISTS:
+            # ../../somefile` or `EXISTS: C:/Windows` must never tick.
+            if (".." in path or "\\" in path or path.startswith("/")
+                    or re.match(r"^[A-Za-z]:", path)):
+                remaining += 1
+                continue
             if (repo / path).exists():
                 lines[i] = flip_recon_item(line)
                 verified += 1
@@ -3618,9 +3661,12 @@ class App:
             self.model_cb.set(fav[0])
 
     def _remember_model(self, model):
+        # v3.5.1 audit fix — persist through _save_cfg (single config
+        # writer) instead of writing CFG directly and bypassing its
+        # field normalization.
         fav = [m for m in self.cfg.get("favorites", []) if m != model]
         self.cfg["favorites"] = [model] + fav[:7]
-        CFG.write_text(json.dumps(self.cfg, indent=2), encoding="utf-8")
+        self._save_cfg()
 
     def _filter_models(self, event):
         """Type-to-filter for the model dropdown. Navigation keys pass

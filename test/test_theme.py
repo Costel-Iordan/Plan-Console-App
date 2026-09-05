@@ -29,7 +29,8 @@ def test_both_themes_define_the_same_token_keys():
 
 
 def test_token_names_mirror_the_guide_palette():
-    # lockstep with UserGuide.html :root (PART-01 §G)
+    # lockstep with assets/console.css :root (UserGuide.html links it;
+    # PART-01 §G)
     expected = ("bg-main", "bg-card", "bg-accent", "text-main",
                 "text-muted", "accent-cyan", "accent-green",
                 "accent-orange", "accent-red", "border-color")
@@ -47,7 +48,7 @@ def test_every_token_is_a_valid_hex_color():
 
 
 def test_dark_tokens_match_the_guide_values():
-    # verbatim from UserGuide.html :root (PART-01 §G lockstep)
+    # verbatim from assets/console.css :root (PART-01 §G lockstep)
     assert pc.THEMES["dark"] == {
         "bg-main": "#0f172a", "bg-card": "#1e293b",
         "bg-accent": "#334155", "text-main": "#f8fafc",
@@ -114,9 +115,20 @@ def test_detect_os_theme_light_when_appsuselighttheme_one(monkeypatch):
     assert pc._detect_os_theme() == "light"
 
 
-def test_high_contrast_defaults_to_true_when_undetectable(monkeypatch):
-    # safe default: never fight the OS (PART-01 §G)
+def test_high_contrast_false_on_non_windows(monkeypatch):
+    # v3.5.1 audit fix — non-Windows has no high-contrast check to
+    # perform; custom themes must APPLY there (was: permanently True,
+    # which disabled dark mode on macOS/Linux)
     monkeypatch.setattr(pc, "winreg", None)
+    monkeypatch.setattr(pc.os, "name", "posix")
+    assert pc._high_contrast_active() is False
+
+
+def test_high_contrast_defaults_to_true_when_windows_registry_unreadable(
+        monkeypatch):
+    # safe default on Windows itself: never fight the OS (PART-01 §G)
+    monkeypatch.setattr(pc, "winreg", _BrokenWinreg())
+    monkeypatch.setattr(pc.os, "name", "nt")
     assert pc._high_contrast_active() is True
 
 

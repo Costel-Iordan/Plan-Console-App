@@ -18,8 +18,12 @@ tick it `- [x]`. Promote matching PART-01.draft.md §B lines to
 VERIFIED <today> ONLY where the check passed. Failures stay UNVERIFIED
 with a note.
 
-OWNER-ONLY items: append exact commands/SQL to OPEN-QUESTIONS.md under
-"## Owner actions" — do not stall on them.
+OWNER-ONLY items: append exact commands to OPEN-QUESTIONS.md under
+"## Owner actions" — do not stall on them. Use the owner-action format
+from commands/new-plan.md: `- [ ] <prose>` with the backticked command,
+plus `→ verifies §B "<exact §B line prefix>"` and `(expect: …)` tags
+when the command confirms an UNVERIFIED §B line (the console then
+offers one-click Run + VERIFIED write-back).
 
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:

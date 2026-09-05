@@ -22,3 +22,6 @@ If all pass:
 - Keep the draft as history; create PROGRESS.md with header
   "# PROGRESS — <slug> | PART-01 v1.0 | <date>"
 - Report "FROZEN v1.0 — N sessions mapped, deploy = session N"
+
+Next: commands/session.md <slug> 1 — sessions execute against the
+frozen file, in §A order.
