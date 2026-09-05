@@ -479,6 +479,35 @@ def _iter_all_widgets(widget):
         yield from _iter_all_widgets(child)
 
 
+def _restyle_popdown(root, pop_path, t):
+    """Restyle every Listbox under a combobox popdown (v3.5.3).
+
+    The popdown is created by the ttk/Tcl layer on first open and is NOT
+    registered with Python's widget registry — root.nametowidget raises
+    KeyError for it, which silently disabled the v3.5.2 restyle. The
+    Listbox is also NESTED (<cb>.popdown.f.l, inside the popdown's
+    TFrame), so even a registered widget would have needed a recursive
+    walk. Walk the subtree at the Tcl level instead: winfo children/
+    class see Tcl-created widgets, and the widget command reconfigures
+    them directly."""
+    try:
+        if not root.tk.call("winfo", "exists", pop_path):
+            return                    # not opened yet — option_add covers it
+        stack = [pop_path]
+        while stack:
+            path = stack.pop()
+            if str(root.tk.call("winfo", "class", path)) == "Listbox":
+                for key, val in (("-background", t["bg-card"]),
+                                 ("-foreground", t["text-main"]),
+                                 ("-selectbackground", t["bg-accent"]),
+                                 ("-selectforeground", t["text-main"])):
+                    root.tk.call(path, "configure", key, val)
+            stack.extend(str(c)
+                         for c in root.tk.call("winfo", "children", path))
+    except tk.TclError:
+        pass                          # popdown vanished mid-walk — ignore
+
+
 def _refresh_comboboxes(root, t):
     """v3.5.2 — theme-repaint fix: restyling via ttk.Style alone does not
     repaint the readonly ENTRY of an existing ttk.Combobox (on Windows
@@ -487,7 +516,9 @@ def _refresh_comboboxes(root, t):
     popdown listboxes created LATER, so a dropdown opened once kept the
     old palette forever. Force an entry repaint (identity value re-set,
     which redraws the entry with the current style) and restyle any
-    already-created popdown listbox directly."""
+    already-created popdown listbox (v3.5.3 — via the Tcl-level walk in
+    _restyle_popdown; the Python-registry lookup never saw the real
+    popdowns)."""
     for w in _iter_all_widgets(root):
         if w.winfo_class() != "TCombobox":
             continue
@@ -495,18 +526,7 @@ def _refresh_comboboxes(root, t):
             w.set(w.get())            # identity re-set → entry repaints
         except tk.TclError:
             pass
-        try:
-            popdown = root.nametowidget(str(w) + ".popdown")
-        except (KeyError, tk.TclError):
-            continue                  # not opened yet — option_add covers it
-        for child in [popdown] + list(popdown.winfo_children()):
-            if isinstance(child, tk.Listbox):
-                try:
-                    child.configure(bg=t["bg-card"], fg=t["text-main"],
-                                    selectbackground=t["bg-accent"],
-                                    selectforeground=t["text-main"])
-                except tk.TclError:
-                    pass
+        _restyle_popdown(root, str(w) + ".popdown", t)
 
 
 def recon_item_state(line):

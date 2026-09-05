@@ -181,27 +181,67 @@ def test_theme_change_updates_display_and_persists(app_window):
     assert '"theme": "system"' in pc.CFG.read_text(encoding="utf-8")
 
 
+def _real_popdown_listboxes(root, cb):
+    """Create the combobox's popdown the way ttk does on first open and
+    return the paths of its Listbox widgets. The popdown is created by
+    the Tcl layer and is NOT registered with Python's widget registry —
+    everything here goes through raw tk calls (v3.5.3)."""
+    root.tk.call("ttk::combobox::PopdownWindow", str(cb))
+    out, stack = [], [str(cb) + ".popdown"]
+    while stack:
+        p = stack.pop()
+        if str(root.tk.call("winfo", "class", p)) == "Listbox":
+            out.append(p)
+        stack.extend(str(c)
+                     for c in root.tk.call("winfo", "children", p))
+    return out
+
+
 def test_theme_change_restyles_existing_combobox_popdown(app_window):
-    """Screenshot regression: a dropdown opened under one theme kept the
-    old palette after switching (option_add only reaches popdowns created
-    later). _refresh_comboboxes must restyle the existing popdown."""
-    import tkinter as tk
+    """Screenshot regression (v3.5.3): a dropdown opened under one theme
+    kept the old palette after switching — option_add only reaches
+    popdowns created later, and the v3.5.2 restyle missed the real
+    popdown entirely (Tcl-created, so nametowidget raised KeyError, and
+    the Listbox is NESTED at <cb>.popdown.f.l, not a direct child). The
+    restyle must now find it via the Tcl-level walk."""
     app, root = app_window
     cb = app.theme_cb
-    # create the popdown listbox exactly where ttk creates it
-    popdown = tk.Toplevel(cb, name="popdown")
-    lb = tk.Listbox(popdown)
-    lb.pack()
-    root.update()
-    dark_card, light_card = pc.THEMES["dark"]["bg-card"], \
-        pc.THEMES["light"]["bg-card"]
+    paths = _real_popdown_listboxes(root, cb)
+    assert paths, "real ttk popdown must contain a Listbox"
+    assert any(p.endswith(".popdown.f.l") for p in paths), \
+        "the Listbox is nested inside the popdown's frame — " \
+        "the test must exercise the real structure"
+    dark_card = pc.THEMES["dark"]["bg-card"]
+    light_card = pc.THEMES["light"]["bg-card"]
     _select(root, cb, "Dark")
-    assert lb.cget("bg") == dark_card, \
+    assert all(str(root.tk.call(p, "cget", "-background")) == dark_card
+               for p in paths), \
         "existing popdown must follow the theme switch"
     _select(root, cb, "Light")
-    assert lb.cget("bg") == light_card, \
+    assert all(str(root.tk.call(p, "cget", "-background")) == light_card
+               for p in paths), \
         "popdown must restyle back to light"
-    popdown.destroy()
+
+
+def test_theme_change_restyles_the_three_preopened_dropdowns(app_window):
+    """User-scoped regression: Type (Intake), Slug (Intake) and Theme —
+    the dropdowns opened BEFORE a theme switch — must all restyle their
+    already-created popdowns on every theme change."""
+    app, root = app_window
+    dark_card = pc.THEMES["dark"]["bg-card"]
+    light_card = pc.THEMES["light"]["bg-card"]
+    all_paths = []
+    for cb in (app.kind, app.slug, app.theme_cb):   # opened under LIGHT
+        all_paths += _real_popdown_listboxes(root, cb)
+    assert len(all_paths) >= 3, "each affected dropdown has one Listbox"
+    _select(root, app.theme_cb, "Dark")
+    assert all(str(root.tk.call(p, "cget", "-background")) == dark_card
+               for p in all_paths), \
+        "Type/Slug/Theme popdowns must restyle to dark"
+    _select(root, app.theme_cb, "Light")
+    assert all(str(root.tk.call(p, "cget", "-background")) == light_card
+               for p in all_paths), \
+        "Type/Slug/Theme popdowns must restyle back to light"
 
 
 def test_theme_change_forces_combobox_repaint_without_clobbering(app_window):
