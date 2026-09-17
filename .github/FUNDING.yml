@@ -9,11 +9,16 @@
 # Supported keys include: github, patreon, open_collective, ko_fi,
 # tidelift, community_bridge, liberapay, issuehunt, otechie, lfx_crowdfunding,
 # buy_me_a_coffee, custom (custom takes an array of up to 4 URLs).
+buy_me_a_coffee: costeliordan
+custom: [
+  "https://mc.buymeacoffee.com/links/CyEkePsiAFWMbffaUJFnsefJDkaBJenKfFAdJFRXHUjqEGegflcwyAvRBHYIWKzAFvPKfaeqbFfaDZFMCXGgvqb/3779507?link=costeliordan"
+]
+
 #
 # Format reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
 
 # Buy me a coffee: uncomment and set your username
-buy_me_a_coffee: costeliordan
+# buy_me_a_coffee: costeliordan
 
 # GitHub Sponsors: uncomment and set your username
-# github: your-username
+# github: Costel-Iordan
