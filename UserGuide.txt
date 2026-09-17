@@ -9,7 +9,7 @@
 |   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝          |
 |_______________________________________________|
 
-PLAN CONSOLE 1.0.0 — USER GUIDE
+PLAN CONSOLE 1.1.0 — USER GUIDE
 Paste-to-plan intake + session lifecycle manager
 
 Copyright © Costel Iordan (costel.iordan@gmail.com)
@@ -185,7 +185,7 @@ Python from python.org (Windows/macOS) or your package manager
 3.1 The splash screen
 ---------------------
 At launch a small borderless splash window appears for a moment,
-showing the app name (Plan Console), the version (1.0.0), the tagline
+showing the app name (Plan Console), the version (1.1.0), the tagline
 ("Paste-to-plan intake + session lifecycle manager"), the copyright
 line, and the Apache 2.0 licensing note. It disappears by itself when
 the main window is ready. If anything goes wrong with the splash, the
@@ -227,7 +227,7 @@ touched by this.
 
 3.3 Window tour (text layout map)
 ---------------------------------
-The window title reads "Plan Console 1.0.0". The layout, top to
+The window title reads "Plan Console 1.1.0". The layout, top to
 bottom:
 
   TOP BAR (always visible)
@@ -642,6 +642,18 @@ plan). Run it the same way but stay and watch: the instruction makes
 the agent run its checks before AND after deploying, and stop
 immediately if a post-deploy check fails.
 
+Split-deploy sessions (v3.6, optional): a plan's §A may mark a deploy
+session with split, pre+post, pre-post, or pre/post in the deploy? cell.
+This splits the session into TWO legs — Na (pre-deploy) and Nb
+(post-deploy) — each with its own canonical PROGRESS line (SESSION 6a /
+SESSION 6b). Plan health renders two rows ([DEPLOY-PRE] / [DEPLOY-POST])
+and shows a DEPLOY WINDOW verdict when leg a is done but leg b awaits
+the owner's deploy: the owner runs the deploy (e.g. Coolify) and the
+agent has nothing to run until the deploy completes. The Copy-session-
+instruction leg selector (full / a / b) produces per-leg instruction
+files. Unmarked plans are byte-for-byte unchanged — no marker means no
+legs, no selector, no new behavior.
+
 6.10 Plan health and Status
 ---------------------------
 Plan health — click it any time for one line per session: what's
@@ -652,6 +664,11 @@ each plan keeps its own history of checks. Status is the quicker
 one-line "where am I". When all sessions pass, health tells you to
 append "PLAN COMPLETE <date>" to PROGRESS.md — paste that hint into
 your agent or add the line yourself. The plan is done.
+
+For split-deploy sessions, Plan health shows a DEPLOY WINDOW verdict when
+leg a is done and leg b has not run: the owner runs the deploy now, then
+copies the leg b (post-deploy) instruction. The agent has nothing to run
+during the deploy window.
 
 6.11 Agent orders (standing orders)
 -----------------------------------
@@ -962,7 +979,7 @@ keys restores their defaults on the next save.
 
 13. LICENSE & CREDITS
 =====================
-Plan Console 1.0.0
+Plan Console 1.1.0
 Paste-to-plan intake + session lifecycle manager
 Copyright © Costel Iordan (costel.iordan@gmail.com)
 

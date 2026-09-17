@@ -125,6 +125,54 @@ v3.4 — the slug field looks editable:
     and editability are visible; ↑/↓ still open and walk the list.
   * slug_feedback() is a pure function so the UX copy and states are
     unit-testable without Tk.
+v3.4.1 — §A gates split across wrapped session-map rows are no longer
+  truncated: fold_map_rows appends a continuation line AFTER the
+  parent row's last cell, so a gates column wrapped onto the next
+  physical line ('| g1, g2, g4, | no' + '| g5 |') left the trailing
+  ids past cells[2] and session_row_gates returned the truncated set
+  (Plan health then flagged real gates as "reported but not in §A").
+  The table-row branch now unions the remaining cells' gate ids when
+  the gates cell yields any — prose cells contribute none, and a
+  deploy cell describing the same gates ('deploy gate = g1-g4')
+  unions to the same set. Verified against every frozen and draft
+  PART-01 in the workspace: only genuinely wrapped rows changed.
+v3.4.2 — Plan-health verdict no longer re-runs finished deploys from
+  zero: the DEPLOY branch previously tested FIRST, so any ⚠/✖/◔ row on
+  the last session — or on any deploy-flagged session — got "NEXT =
+  session N = DEPLOY (supervise … pre-deploy sweep)" even when that
+  session had already run and its deploy had already happened (the
+  g7-style gates that wrap an owner-supervised deploy left the record
+  drifted, and the verdict then demanded a fresh deploy from zero;
+  BLOCKED deploy sessions were equally mislabeled). Session state now
+  outranks the DEPLOY framing: BLOCKED → resolve-first, ◔ RUNNING →
+  resume, ⚠ recorded → "finish its legs (deploy + post-deploy gates,
+  §G) or normalize its PROGRESS line" — the DEPLOY verdict now appears
+  only for genuinely NOT-RUN next sessions (the designed path, kept
+  bit-identical). Verified headlessly against the audit-followups S3
+  case that reported "agent finished, console says DEPLOY": the ⚠
+  PASS-with-extra-gates row now yields the finish-its-legs wording,
+  and after the canonical corrective PROGRESS line the plan reports
+  ALL SESSIONS PASS.
+
+v3.6 — pre/post-deploy split for deploy sessions (OPT-IN):
+  * A plan's §A may mark a deploy? cell with split / pre+post /
+    pre-post / pre/post (case-insensitive, combinable with yes).
+    Marked sessions become TWO legs — Na (pre-deploy) and Nb
+    (post-deploy) — each with its own canonical PROGRESS line
+    (SESSION 6a / SESSION 6b; '6A' accepted, normalized to 'a').
+  * Plan health renders two rows ([DEPLOY-PRE]/[DEPLOY-POST]) and the
+    new DEPLOY WINDOW verdict: leg a OK + leg b not run → the owner
+    runs Coolify NOW and the agent has nothing to run. Gates are
+    enforced as the UNION of both legs once leg b has run; while leg b
+    is pending a miss defers to it (leg a can be cleanly OK).
+  * Copy-session-instruction: Leg selector (full/a/b, enabled only for
+    split rows), per-leg instruction files (session-6a.txt /
+    session-6b.txt); the 6b copy asks the owner to confirm the Coolify
+    deploy completed and appends one HEALTH.md audit line.
+  * commands/session.md gains the binding SPLIT-DEPLOY PROTOCOL;
+    commands/new-plan.md documents the §A split tokens.
+  * Unmarked plans are byte-for-byte unchanged (regression-gated every
+    session): no marker → no legs, no selector, no new behavior.
 
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
@@ -528,14 +576,19 @@ def slug_feedback(slug, exists):
 
 # v2.1 — block-aware question parsing (owner pass + freeze + status)
 Q_LINE_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")
-# v2.6.2 — anchored: a comment line counts as the START of an owner-
-# actions/commands/SQL section only when the section keyword OPENS the
-# comment ("## Owner actions", "# Commands:"). A comment that merely
-# MENTIONS these words (e.g. OPEN-QUESTIONS.md header prose "Commands/
-# SQL/owner actions live only under...") must not poison the rest of
-# the file — the unanchored variant silently hid every question block
-# after it (freeze skipped the questions gate entirely).
-OWNER_SECTION_RE = re.compile(r"^#+\s*(?:owner\s+actions|commands?|sql)\b", re.I)
+# v3.5.2 — section-heading-only: a comment line counts as the START of
+# an owner-actions/commands/SQL section only when it is a ## (or deeper)
+# heading whose text OPENS with the keyword. A single-# line is always
+# prose (the format spec: real sections are "## Owner actions") — the
+# old `^#+` variant let "# owner actions already executable by the agent
+# were executed and ticked." (OPEN-QUESTIONS.md recon note) open the
+# skipped section and silently hid all question blocks after it. After
+# the keyword only a separator continuation may follow (: — - or a
+# parenthetical like "## Owner actions (commands/SQL for OWNER-ONLY
+# items)"), so a ## heading that merely MENTIONS the words later in the
+# sentence still does not match.
+OWNER_SECTION_RE = re.compile(
+    r"^#{2,}\s*(?:owner\s+actions|commands?|sql)\b(?:\s*[:—(-].*)?$", re.I)
 # v2.6.1 — recon checkbox lines are recognized only at line start
 # (optional bullet), so prose that merely MENTIONS `- [ ]` (e.g. the
 # RECON-CHECKLIST.md header explaining the format) is never counted.
@@ -1023,7 +1076,11 @@ def parse_owner_actions(text):
     pos = text.find("## Owner actions")
     if pos == -1:
         return actions
-    lineno0 = text[:pos].count("\n") + 1
+    # 0-based line index of the heading (v3.5.2 fix: was +1, i.e. 1-based,
+    # which made _tick_owner_action's stale-index guard read one line PAST
+    # the bullet and reject every Mark Done with "changed since Refresh";
+    # parse_questions already emits 0-based linenos — stay consistent).
+    lineno0 = text[:pos].count("\n")
     cur = None
     fence = False
     for off, line in enumerate(text[pos:].splitlines()):
@@ -1128,8 +1185,8 @@ def mark_sb_verified(draft_text, prefix, date, command=""):
 #     are parsed anyway and marked non-canonical, so drift stays
 #     visible in the health output instead of invisible.
 # ----------------------------------------------------------------------------
-PROG_SESSION_RE = re.compile(r"\bSESSION\s*[:#.]?\s*(\d+)\b", re.I)
-PROG_SESSION_START_RE = re.compile(r"^\s*[-*•>✓»#]*\s*SESSION\s*[:#.]?\s*(\d+)",
+PROG_SESSION_RE = re.compile(r"\bSESSION\s*[:#.]?\s*(\d+)\s*([ab])?\b", re.I)
+PROG_SESSION_START_RE = re.compile(r"^\s*[-*•>✓»#]*\s*SESSION\s*[:#.]?\s*(\d+)\s*([ab])?",
                                    re.I)
 PROG_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 PROG_P00_RE = re.compile(r"\bP\s*00\s*v[\w.]+", re.I)
@@ -1146,7 +1203,7 @@ PROG_ALL_RE = re.compile(r"^[\s(\[{]*(?:all(?:\s+gates?)?(?:\s+passed)?)"
 PROG_NONE_RE = re.compile(r"^(?:none|n/?a|-{1,2}|no gates|0|\[\]|"
                           r"\(\s*none\s*\)|not applicable|empty)$", re.I)
 PROG_CANON_RE = re.compile(
-    r"^SESSION\s+(\d+)\s+\|\s+(\d{4}-\d{2}-\d{2})\s+\|\s+gates:\s*"
+    r"^SESSION\s+(\d+)(?i:([ab]))?\s+\|\s+(\d{4}-\d{2}-\d{2})\s+\|\s+gates:\s*"
     r"(g\d+(?:\s*,\s*g\d+)*)?\s*\|\s+status:\s+"
     r"(PASS|PARTIAL|FAIL|BLOCKED)(?:\s+[—-]\s*[^|]*)?\s*\|\s+P00\s+v[\w.]+\s*$")
 PROG_CONT_RE = re.compile(r"\b(?:gates?|status)\b\s*[:=]?|\bP\s*00\b", re.I)
@@ -1260,8 +1317,9 @@ def _guess_gates_field(text):
 def parse_progress_record(text):
     """Leniently parse ONE PROGRESS.md record (a single line, or
     several folded lines) into a dict — or None when no 'SESSION <n>'
-    token is present. Keys: n · date · gates (normalized gN ids) ·
-    gates_all (True for 'all' — expand via session_row_gates) ·
+    token is present. Keys: n · leg ('' | 'a' | 'b' — v3.6 split legs,
+    lowercase; '6A' normalizes to 'a') · date · gates (normalized gN
+    ids) · gates_all (True for 'all' — expand via session_row_gates) ·
     status · note (the status reason) · p00 · canonical (exactly the
     PART-00 shape) · raw."""
     ms = PROG_SESSION_RE.search(text)
@@ -1291,6 +1349,7 @@ def parse_progress_record(text):
     gates, gates_all = parse_gates_field(gates_raw)
     one_line = "\n" not in text.strip()
     return {"n": int(ms.group(1)),
+            "leg": (ms.group(2) or "").lower(),
             "date": dm.group(1) if dm else "",
             "gates": gates, "gates_all": gates_all,
             "status": status, "note": note,
@@ -1337,15 +1396,55 @@ def read_progress(path):
 
 
 def latest_sessions(records):
-    """({n: record}, duplicated_ns) — the LAST record per session
-    number wins (agents occasionally append a corrective second line);
-    duplicated_ns lists sessions recorded more than once."""
+    """({(n, leg): record}, duplicated_keys) — the LAST record per
+    (session, leg) wins (agents occasionally append a corrective second
+    line); duplicated_keys lists the (n, leg) keys recorded more than
+    once. leg is '' for non-split sessions (v3.6 split legs Na/Nb)."""
     out, dups = {}, []
     for rec in records:
-        if rec["n"] in out:
-            dups.append(rec["n"])
-        out[rec["n"]] = rec
+        key = (rec["n"], rec["leg"])
+        if key in out:
+            dups.append(key)
+        out[key] = rec
     return out, sorted(set(dups))
+
+
+def _pick_leg(records, n, leg):
+    """Preferred record for (n, leg) — the LAST record with real
+    content (gates or status parsed) over prose addenda like 'Session
+    3 addendum: …'; None when absent (v2.5 prefer-real-content rule,
+    leg-aware since v3.6)."""
+    rec = None
+    for r in records or []:
+        if r["n"] == n and r["leg"] == leg:
+            if r["gates"] or r["gates_all"] or r["status"] != "UNKNOWN":
+                rec = r
+            elif rec is None:
+                rec = r
+    return rec
+
+
+def _leg_label(n, leg):
+    """'session 6' or 'leg 6a' — verdict/status wording (v3.6)."""
+    return ("leg %d%s" % (n, leg)) if leg else ("session %d" % n)
+
+
+def fold_map_rows(lines):
+    """PART-01 §A session-map rows wrapped across physical lines are
+    folded back into single logical rows: a continuation line starts
+    with an optional-space '|' and an EMPTY first cell, so its text
+    belongs to the previous row's cell — the leading '|' is replaced
+    by a space and the rest (including mid-line cell separators such
+    as '| g1 | no' on the last wrap) is appended to the previous line.
+    Single-line rows and non-map lines pass through unchanged."""
+    folded = []
+    for ln in lines:
+        if (folded and ln.strip().startswith("|")
+                and ln.split("|", 1)[0].strip() == ""):
+            folded[-1] += " " + ln.split("|", 1)[1]
+        else:
+            folded.append(ln)
+    return folded
 
 
 def session_row_gates(plan_text, n):
@@ -1353,8 +1452,14 @@ def session_row_gates(plan_text, n):
     section (falls back to the whole file when no section headings are
     found), handling template table rows ('3 | scope | g1: pytest
     green, g2: lint | no') and loose rows ('3. scope — gates g1, g2 —
-    deploy: no'). [] when the session or its gates are not defined —
-    used by Plan health to compute 'missing' gates."""
+    deploy: no'). Rows wrapped across physical lines (scope continues
+    on lines starting with '|') are folded first; the fold appends the
+    continuation AFTER the parent row's last cell, so a gates column
+    split across lines ('g1, g2, g4,' + 'g5') yields ids past
+    cells[2] — those are unioned in, so a wrapped gates cell is never
+    truncated. [] when the session or
+    its gates are not defined — used by Plan health to compute
+    'missing' gates."""
     lines = plan_text.splitlines()
     start = None
     for i, ln in enumerate(lines):
@@ -1370,12 +1475,25 @@ def session_row_gates(plan_text, n):
                 end = j
                 break
         sec = lines[start:end]
+    sec = fold_map_rows(sec)
     want = str(n)
     for line in sec:
         cells = [c.strip() for c in line.split("|")]
         if len(cells) >= 3 and cells[0].rstrip(".):") == want:
             ids, _ = parse_gates_field(cells[2])
             if ids:
+                # v3.4.1 — wrapped gates cells: the fold appends a
+                # continuation line AFTER the parent row's last cell,
+                # so the rest of a gates column split across physical
+                # lines ('| g1, g2, g4, | no' + '| g5 |') lands past
+                # cells[2] — union the remaining cells' ids instead of
+                # returning the truncated set. Prose cells contribute
+                # no ids; a deploy cell describing the same gates
+                # ('deploy gate = g1-g4') unions to the same set.
+                for cell in cells[3:]:
+                    more, _ = parse_gates_field(cell)
+                    if more:
+                        ids = sorted(set(ids) | set(more), key=_gnum)
                 return ids
             ids, _ = parse_gates_field(" ".join(cells))
             if ids:
@@ -1811,6 +1929,11 @@ TYPE=plan (a ready-made, already-structured plan):
   the §A session map table with gN gate ids and a deploy column (last
   session = deploy, owner-supervised unless §G overrides). If it has
   none: propose a session map from its work items, marked PROPOSED.
+  The deploy? cell may also carry a SPLIT token — split / pre+post /
+  pre-post / pre/post (case-insensitive, combinable with yes) —
+  marking that session as two legs (Na pre-deploy agent work, Nb
+  post-deploy verification) around the owner's Coolify deploy; keep
+  ONE gates column listing all gates of both legs.
 - RECON-CHECKLIST.md — every claim the plan depends on (versions,
   paths, env vars, dependencies, commands): `- [ ]` items; use the
   `EXISTS: <repo-relative path>` form for pure file/dir existence
@@ -2042,7 +2165,9 @@ frozen file, in §A order.
 description: Execute a numbered session of a plan
 argument-hint: <slug> <session-number>
 ---
-Arguments: $ARGUMENTS → SLUG N
+Arguments: $ARGUMENTS → SLUG N (for a SPLIT deploy session the console
+passes the leg as a suffix: SLUG Na / SLUG Nb — see the SPLIT-DEPLOY
+PROTOCOL below)
 
 Load: PART-00.md → the frozen plan in plans/SLUG/ ("PART-01 v1.0.md",
 or whichever "PART-01 v*.md" exists; a legacy PART-01.md with a freeze
@@ -2053,6 +2178,8 @@ needs it.
 Guards (stop if any fail):
 - the frozen PART-01 file exists (see naming above)
 - PROGRESS.md shows sessions 1..N-1 complete
+- for a leg argument (Na/Nb): sessions 1..N-1 complete AND, for leg b,
+  leg a shows status: PASS (the Coolify deploy happens BETWEEN the legs)
 - N exists in the §A session map
 
 IN-PROGRESS HANDSHAKE (interruption safety — binding):
@@ -2082,6 +2209,28 @@ failed post-deploy gate. EXCEPTION: if PART-01 §G explicitly assigns
 deploys to the agent (e.g. authenticated Supabase CLI in the agent's
 environment), the agent may execute them itself — still with gates
 before and after, and ordering constraints from §G.
+
+SPLIT-DEPLOY PROTOCOL (the §A deploy? cell says split / pre+post /
+pre-post / pre/post — binding):
+- The deploy session has TWO legs with SEPARATE canonical lines:
+  SESSION Na — pre-deploy work (every §A gate you can pass BEFORE any
+  deploy). End leg a: append its canonical line, then STOP.
+  SESSION Nb — post-deploy verification against the DEPLOYED build,
+  run ONLY after the owner has executed the Coolify deploy (the console
+  gates the Nb instruction copy on the owner's confirmation and logs it
+  to HEALTH.md).
+- The agent NEVER deploys. The §G agent-deploy exception does NOT
+  extend to Coolify — panel access is owner-only.
+- Leg a never does leg b's work; leg b never re-runs pre-deploy work.
+- Gates: list ONLY the gates that passed in THAT leg; the union of both
+  legs must cover the §A declared set. A leg re-run appends a
+  corrective line (last wins per leg).
+- Between the legs is the DEPLOY WINDOW: the agent has NOTHING to run.
+Canonical examples (split deploy session 6, g7 = post-deploy smoke):
+  SESSION 6a | 2026-09-16 | gates: g1, g2 | status: PASS | P00 v1.1
+  SESSION 6b | 2026-09-18 | gates: g7 | status: PASS | P00 v1.1
+- Prose: mention legs inside a record's note, never as a record start
+  ('SESSION 6a addendum…' would open a spurious record).
 
 BLOCKED PROTOCOL (restated from PART-00 — binding):
 - A failed verification gets ONE fix attempt. If the second attempt
@@ -2967,20 +3116,55 @@ class App:
         ttk.Label(top, text="Slug").grid(row=0, column=0)
         self.sslug = self._slug_field(top, 0, 1)
         ttk.Label(top, text="Session #").grid(row=0, column=2)
-        self.snum = ttk.Spinbox(top, from_=1, to=99, width=5)
+        self.snum = ttk.Spinbox(top, from_=1, to=99, width=5,
+                                command=self._leg_sync)
         self.snum.set("1"); self.snum.grid(row=0, column=3, padx=4)
+        self.snum.bind("<KeyRelease>", lambda e: self._leg_sync())
+        ttk.Label(top, text="Leg").grid(row=0, column=4)
+        # v3.6 — leg selector for split (pre/post) deploy sessions;
+        # 'full' is the disabled placeholder for non-split rows
+        self.leg_var = tk.StringVar(value="full")
+        self.leg = ttk.Combobox(top, textvariable=self.leg_var,
+                                values=("full", "a", "b"), width=6,
+                                state="disabled")
+        self.leg.grid(row=0, column=5, padx=4)
         self.btn_copy = ttk.Button(top, text="Copy session instruction",
                                    command=self.on_copy_instr)
-        self.btn_copy.grid(row=0, column=4, padx=6)
+        self.btn_copy.grid(row=0, column=6, padx=6)
         self.btn_status = ttk.Button(top, text="Status", command=self.on_status)
-        self.btn_status.grid(row=0, column=5, padx=4)
+        self.btn_status.grid(row=0, column=7, padx=4)
         self.btn_report = ttk.Button(top, text="Session report",
                                      command=self.on_report)
-        self.btn_report.grid(row=0, column=6, padx=4)
+        self.btn_report.grid(row=0, column=8, padx=4)
         self.btn_health = ttk.Button(top, text="Plan health",
                                      command=self.on_health)
-        self.btn_health.grid(row=0, column=7, padx=4)
+        self.btn_health.grid(row=0, column=9, padx=4)
         self._mklog(f, "sessions", 22)
+        # v3.6 — keep the Leg selector in step with slug edits too
+        self.slug_var.trace_add("write", lambda *a: self._leg_sync())
+
+    def _leg_sync(self):
+        """v3.6 — enable the Leg selector only when the entered session
+        is a split (pre/post) row; non-split rows keep the disabled
+        'full' placeholder (auto-resets on session-number/slug change).
+        Fail-safe: any lookup problem just leaves it disabled."""
+        try:
+            self.leg_var.set("full")
+            self.leg.configure(state="disabled")
+            repo = self.repo_path()
+            if repo is None:
+                return
+            slug = self.slug_var.get().strip()
+            n = int(self.snum.get())
+            row = self._session_map(repo / "plans" / slug).get(n)
+            if row and row[3]:
+                self.leg.configure(state="readonly")
+        except Exception:
+            try:
+                self.leg_var.set("full")
+                self.leg.configure(state="disabled")
+            except Exception:
+                pass
 
     # ---------------------------------------------------------- owner pass
     def _owner_tab(self, f):
@@ -3118,18 +3302,20 @@ class App:
         return None
 
     def _in_progress(self, pdir):
-        """v2.2 — (path, session_number) of an interrupted session per
-        commands/session.md, or (None, None). The marker file lives at
-        plans/<slug>/IN-PROGRESS.md while the agent works."""
+        """v2.2 — (path, session_number, leg) of an interrupted session
+        per commands/session.md, or (None, None, ""). The marker file
+        lives at plans/<slug>/IN-PROGRESS.md while the agent works.
+        v3.6 — the marker may carry the split leg ('session 6a')."""
         f = pdir / "IN-PROGRESS.md"
         if not f.is_file():
-            return None, None
+            return None, None, ""
         try:
             body = f.read_text(encoding="utf-8")
         except Exception:
-            return f, None       # undecodable marker → unreadable, not a crash
-        m = re.search(r"(?i)session\s+(\d+)", body)
-        return f, (int(m.group(1)) if m else None)
+            return f, None, ""   # undecodable marker → unreadable, not a crash
+        m = re.search(r"(?i)session\s+(\d+)\s*([ab])?\b", body)
+        return (f, (int(m.group(1)) if m else None),
+                ((m.group(2) or "").lower() if m else ""))
 
     def on_owner_refresh(self):
         got = self._owner_paths()
@@ -5076,7 +5262,7 @@ class App:
                  "for session 1." % slug)
 
     # ------------------------------------------------------------ sessions
-    def _session_guards(self):
+    def _session_guards(self, leg=""):
         repo = self._preflight()
         if repo is None: return None
         # v3.2 — one shared slug across all tabs
@@ -5130,7 +5316,43 @@ class App:
             messagebox.showerror("Sequence", "PROGRESS.md doesn't show session(s) "
                                  "%s as complete — run sessions in order." % missing)
             return None
-        return repo, slug, n
+        # v3.6 §C6 — leg sequencing for split deploy sessions: leg b
+        # additionally requires leg a PASS; leg a requires leg b NOT
+        # present (it cannot legitimately exist before the deploy).
+        if leg:
+            row = self._session_map(pdir).get(n)
+            if not (row and row[3]):
+                messagebox.showerror(
+                    "Leg", "Session %d is not a split (pre/post) session — "
+                    "leave the leg selector at 'full'." % n)
+                return None
+            recs = read_progress(prog) if prog.is_file() else []
+            if leg == "a":
+                if any(r["n"] == n and r["leg"] == "b" for r in recs):
+                    messagebox.showerror(
+                        "Sequence",
+                        "Session %db (post-deploy) already has a PROGRESS "
+                        "entry but %da does not — that ordering cannot be "
+                        "legitimate. Fix PROGRESS.md (agent-owned) before "
+                        "copying the %da instruction." % (n, n, n))
+                    return None
+            else:
+                a = _pick_leg(recs, n, "a")
+                if a is None:
+                    messagebox.showerror(
+                        "Sequence",
+                        "Session %da (pre-deploy leg) has no PROGRESS entry "
+                        "— run leg a first. The Coolify deploy happens only "
+                        "BETWEEN the legs (owner-executed)." % n)
+                    return None
+                if a["status"] != "PASS":
+                    messagebox.showerror(
+                        "Sequence",
+                        "Session %da is not PASS (status: %s) — resolve leg "
+                        "a before copying the %db (post-deploy) instruction."
+                        % (n, a["status"], n))
+                    return None
+        return repo, slug, n, leg
 
     def _instruction(self, repo, cmd_file, args):
         return ("Working directory: %s\n\n"
@@ -5138,11 +5360,34 @@ class App:
                 "as written,\nwith arguments: %s" % (repo, cmd_file, args))
 
     def on_copy_instr(self):
-        g = self._session_guards()
+        leg_sel = (self.leg_var.get().strip().lower()
+                   if hasattr(self, "leg_var") else "full")
+        leg = "" if leg_sel in ("", "full") else leg_sel
+        g = self._session_guards(leg)
         if g is None: return
-        repo, slug, n = g
+        repo, slug, n, leg = g
         row = self._session_map(repo / "plans" / slug).get(n)
         deploy = bool(row and row[2])
+        split = bool(row and row[3])
+        if split and not leg:
+            messagebox.showerror(
+                "Leg", "Session %d is a SPLIT (pre/post) deploy session — "
+                "select leg a (pre-deploy) or leg b (post-deploy) in the "
+                "Leg selector before copying." % n)
+            return
+        if leg == "b":
+            # v3.6 §C4 — the owner must confirm the Coolify deploy is
+            # DONE before leg b runs: leg b verifies the DEPLOYED build.
+            if not messagebox.askyesno(
+                    "Deploy window",
+                    "Confirm before copying the %db (post-deploy) "
+                    "instruction:\n\nthe Coolify deploy has COMPLETED on "
+                    "the owner's panel.\n\nLeg b verifies the DEPLOYED "
+                    "build against post-deploy gates. Confirm now?" % n):
+                self.say("sessions", "6b copy cancelled — deploy "
+                         "confirmation not given; leg b waits until the "
+                         "owner's Coolify deploy has completed.")
+                return
         # v2.3 — standing orders (AGENT-ORDERS.md) prepended ahead of the
         # session block, per the orders' own placement rule ("after global
         # configuration, before every session block"). The separator maps
@@ -5150,7 +5395,7 @@ class App:
         # plan system: scope and gates come from PART-01 §A via
         # commands/session.md.
         orders = self._agent_orders(repo)
-        body = self._instruction(repo, "session.md", "%s %d" % (slug, n))
+        body = self._instruction(repo, "session.md", "%s %d%s" % (slug, n, leg))
         if orders:
             text = (orders
                     + "\n\n===== SESSION BLOCK (the session spec that "
@@ -5161,11 +5406,19 @@ class App:
         else:
             text = body
         self._show_instruction(
-            "Session %d instruction — %s" % (n, slug),
+            ("Leg %d%s instruction — %s" % (n, leg, slug)) if leg
+            else ("Session %d instruction — %s" % (n, slug)),
             text,
-            repo / "plans" / slug / "instructions" / ("session-%d.txt" % n))
+            repo / "plans" / slug / "instructions" /
+            ("session-%d%s.txt" % (n, leg)))
         self.say("sessions", "instruction copied — paste into your agent with %s "
                  "open as the workspace folder." % repo)
+        if leg == "b":
+            # v3.6 §C4/§F — one console-appended audit line per
+            # owner-confirmed 6b copy (no credentials in HEALTH.md)
+            self._log_deploy_window(repo / "plans" / slug, slug, n)
+            self.say("sessions", "DEPLOY WINDOW: owner confirmed the Coolify "
+                     "deploy completed — audit line appended to HEALTH.md.")
         if orders:
             src = ("per-repo AGENT-ORDERS.md (wins for this repo)"
                    if (repo / AGENT_ORDERS_NAME).is_file()
@@ -5180,9 +5433,10 @@ class App:
                      "session block only.")
         # v2.2 — resume awareness: a live IN-PROGRESS marker means partial
         # work exists; the instruction's handshake reconciles it
-        ip_f, ip_n, ip_sum = self._ip_summary(repo / "plans" / slug)
+        ip_f, ip_n, ip_leg, ip_sum = self._ip_summary(repo / "plans" / slug)
         if ip_f is not None:
-            who = ("session %d (%s)" % (ip_n, ip_sum)
+            who = ("%s %d%s (%s)" % ("leg" if ip_leg else "session", ip_n,
+                                     ip_leg or "", ip_sum)
                    if ip_n is not None else (ip_sum or "unreadable marker"))
             self.say("sessions", "◔ IN-PROGRESS.md exists — %s. The handshake "
                      "in the copied instruction makes the agent reconcile "
@@ -5193,7 +5447,14 @@ class App:
         self.say("sessions", "BLOCKED protocol: if a gate fails twice, the agent "
                  "writes BLOCKED.md and stops. You fix the cause, rename "
                  "BLOCKED.md → BLOCKED-resolved.md, and re-run the session.")
-        if deploy:
+        if deploy and split:
+            self.say("sessions", "⚠ SPLIT DEPLOY session (per §A): leg %da = "
+                     "pre-deploy work — end it after its canonical line and "
+                     "STOP; the agent NEVER deploys (Coolify is owner-only; "
+                     "§G does not extend to it). Leg %db verifies the "
+                     "DEPLOYED build after the owner confirms the deploy in "
+                     "the console." % (n, n))
+        elif deploy:
             # v2.0 — §G can legitimately assign deploys to the agent
             self.say("sessions", "⚠ DEPLOY session (per §A): supervise it — "
                      "unless PART-01 §G explicitly assigns deploys to the "
@@ -5202,24 +5463,42 @@ class App:
                      "post-deploy gate.")
         self.say("sessions", "When the agent finishes, click 'Session report'.")
 
+    def _log_deploy_window(self, pdir, slug, n):
+        """v3.6 §C4/§F — one HEALTH.md audit line per owner-confirmed
+        6b (post-deploy) instruction copy. HEALTH.md stays
+        console-appended only; no credentials are recorded."""
+        f = pdir / "HEALTH.md"
+        try:
+            header = ("# HEALTH — %s | audit trail of Plan-health runs "
+                      "(console-appended; agent never edits)\n\n" % slug) \
+                if not f.exists() else ""
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            with f.open("a", encoding="utf-8") as fh:
+                fh.write(header + "- %s — DEPLOY WINDOW: owner confirmed the "
+                         "Coolify deploy completed; session %db (post-deploy) "
+                         "instruction copied\n" % (stamp, n))
+        except Exception:
+            pass
+
     def _ip_summary(self, pdir):
-        """v2.2 — (path, session_number, one-line summary) from the
+        """v2.2 — (path, session_number, leg, one-line summary) from the
         IN-PROGRESS.md marker (commands/session.md handshake), or
-        (None, None, ""). Summary = 'started <date>' plus the last
-        'stopped …' line if the agent halted without finishing."""
-        f, n = self._in_progress(pdir)
+        (None, None, "", ""). Summary = 'started <date>' plus the last
+        'stopped …' line if the agent halted without finishing.
+        v3.6 — leg is '' for non-split markers ('session 6a' → 'a')."""
+        f, n, leg = self._in_progress(pdir)
         if f is None:
-            return None, None, ""
+            return None, None, "", ""
         try:
             body = f.read_text(encoding="utf-8")
         except Exception:
-            return f, n, "(marker unreadable)"
+            return f, n, "", "(marker unreadable)"
         m = re.search(r"(?i)started\s+(\d{4}-\d{2}-\d{2})", body)
         summary = "started %s" % (m.group(1) if m else "?")
         for line in body.splitlines():
             if re.match(r"(?i)^\s*stopped\b", line):
                 summary += " — " + line.strip()[:60]
-        return f, n, summary
+        return f, n, leg, summary
 
     def on_status(self):
         repo = self._preflight()
@@ -5248,21 +5527,44 @@ class App:
         oq = pdir / "OPEN-QUESTIONS.md"
         q = self._pending_questions(oq) if oq.is_file() else 0
         # v2.2 — interrupted-session state from the IN-PROGRESS marker
-        ip_f, ip_n, ip_sum = self._ip_summary(pdir)
+        ip_f, ip_n, ip_leg, ip_sum = self._ip_summary(pdir)
         if ip_f is None:
             inprog = "no"
         elif ip_n is None:
             inprog = "marker present (session number unreadable — see IN-PROGRESS.md)"
         else:
-            inprog = ("session %d (%s) — re-run its session instruction; "
-                      "it resumes" % (ip_n, ip_sum or "?"))
+            inprog = ("%s %d%s (%s) — re-run its session instruction; "
+                      "it resumes" % ("leg" if ip_leg else "session", ip_n,
+                                      ip_leg or "", ip_sum or "?"))
         # v2.4 — the Status line teaches the resolution convention
         blocked = ("YES — resolve, then rename BLOCKED.md → "
                    "BLOCKED-resolved.md"
                    if (pdir / "BLOCKED.md").is_file() else "no")
+        # v3.6 — leg-aware next pointer (which leg is next / DEPLOY WINDOW)
+        nxt = "n/a (not frozen)"
+        if frozen:
+            rows = self._session_map(pdir)
+            recs = read_progress(prog) if prog.is_file() else []
+            done = {(r["n"], r["leg"]) for r in recs}
+            nxt = "all sessions recorded"
+            for n in sorted(rows):
+                if rows[n][3]:
+                    if (n, "a") not in done:
+                        nxt = "leg %da (pre-deploy)" % n
+                        break
+                    if (n, "b") not in done:
+                        a = _pick_leg(recs, n, "a")
+                        nxt = ("DEPLOY WINDOW — owner runs Coolify NOW, then "
+                               "leg %db (post-deploy)" % n
+                               if a is not None and a["status"] == "PASS"
+                               else "leg %da (pre-deploy) — not PASS yet" % n)
+                        break
+                elif (n, "") not in done:
+                    nxt = "session %d" % n
+                    break
         self.say("sessions", "STATUS — %s | stage: %s | in progress: %s | last "
-                 "progress: %s | open questions: %d | blocked: %s"
-                 % (slug, stage, inprog, tail, q, blocked))
+                 "progress: %s | open questions: %d | blocked: %s | next: %s"
+                 % (slug, stage, inprog, tail, q, blocked, nxt))
 
     # --------------------------------------------- shared session analysis
     def _session_map(self, pdir):
@@ -5270,16 +5572,26 @@ class App:
         part01 = self._frozen_file(pdir)   # v2.0 — any frozen name
         if part01 is None:
             return rows
-        for line in part01.read_text(encoding="utf-8").splitlines():
+        for line in fold_map_rows(
+                part01.read_text(encoding="utf-8").splitlines()):
             cells = [c.strip() for c in line.split("|") if c.strip()]
             if len(cells) >= 3 and cells[0].isdigit():
                 d = cells[3].lower() if len(cells) >= 4 else ""
                 deploy = d.startswith(("y", "d")) or "deploy" in d or "supervis" in d
-                rows[int(cells[0])] = (cells[1], cells[2], deploy)
+                # v3.6 — opt-in split marker (§C1): split / pre+post /
+                # pre-post / pre/post in the deploy? cell (case-insensitive,
+                # combinable with yes) splits session N into legs Na (pre-
+                # deploy) / Nb (post-deploy). A split cell is always also a
+                # deploy session. No marker → split=False → byte-identical.
+                split = any(t in d for t in
+                            ("split", "pre+post", "pre-post", "pre/post"))
+                if split:
+                    deploy = True
+                rows[int(cells[0])] = (cells[1], cells[2], deploy, split)
         return rows
 
     def _session_state(self, pdir, n, rows=None, records=None,
-                       part01_text=None):
+                       part01_text=None, leg=""):
         """v2.5 — PROGRESS.md is read through the lenient reader
         (module-level read_progress): agent format drift ('Gates:',
         'gates =', ids with descriptions, 'all', bare numbers, records
@@ -5290,10 +5602,14 @@ class App:
         file, PART-01 §F).
         Optional pre-parsed inputs (rows = §A session map, records =
         read_progress list, part01_text = frozen plan text) let Plan
-        health parse each file ONCE instead of once per session."""
+        health parse each file ONCE instead of once per session.
+        v3.6 — leg ('' | 'a' | 'b'): split sessions look records up per
+        leg, compute gate notes against the UNION of both legs (§C3),
+        and return the extra keys 'leg' and 'split'."""
         if rows is None:
             rows = self._session_map(pdir)
         row = rows.get(n)
+        split = bool(row and row[3])     # v3.6 — 4-tuple (…, deploy, split)
         declared_raw = row[1] if row else ""
         part01 = self._frozen_file(pdir)
         if part01_text is None:
@@ -5306,17 +5622,9 @@ class App:
         prog = pdir / "PROGRESS.md"
         if records is None and prog.is_file():
             records = read_progress(prog)      # v2.5 — lenient reader
-        if records:
-            for r in records:
-                if r["n"] == n:
-                    # v2.5 — prefer the LAST record with real content
-                    # (gates or status parsed) over prose addenda like
-                    # 'Session 3 addendum: …'; fall back to the last.
-                    if (r["gates"] or r["gates_all"]
-                            or r["status"] != "UNKNOWN"):
-                        rec = r
-                    elif rec is None:
-                        rec = r
+        # v2.5/v3.6 — prefer the LAST record with real content (gates
+        # or status parsed) over prose addenda; leg-aware via _pick_leg
+        rec = _pick_leg(records, n, leg)
         if rec is None:
             notes.append("no PROGRESS entry — session unfinished or not run")
         else:
@@ -5337,7 +5645,48 @@ class App:
                 if rec["note"]:
                     status = "%s — %s" % (rec["status"], rec["note"])
         word = status.split()[0].upper() if status else ""
-        if declared and gates:
+        if split:
+            # v3.6 §C3 — UNION RULE: gates(Na) ∪ gates(Nb) must cover
+            # the §A declared set; notes are computed against the union,
+            # never per leg. While the other leg has not run yet, a miss
+            # is DEFERRED to it (the remaining gates may be post-deploy
+            # ones) — that is what keeps a finished leg a at OK and the
+            # DEPLOY WINDOW state reachable.
+            other = _pick_leg(records, n, "b" if leg == "a" else "a")
+
+            def _eff(r):
+                if r is None:
+                    return set()
+                if r["gates_all"] and declared:
+                    return {g.lower() for g in declared}
+                return {g.lower() for g in r["gates"]}
+            union = _eff(rec) | _eff(other)
+            if rec is not None and declared:
+                dset = {g.lower() for g in declared}
+                if other is not None:
+                    # both legs recorded → the union is final: enforce
+                    # §A coverage against it (§C3)
+                    if union:
+                        miss = [g for g in declared
+                                if g.lower() not in union]
+                        extra = sorted(union - dset)
+                        if miss: notes.append("declared gate(s) not reported: "
+                                              + ", ".join(miss))
+                        if extra: notes.append("reported but not in §A: "
+                                               + ", ".join(extra))
+                    else:
+                        notes.append("declared gate(s) not reported: "
+                                     + ", ".join(declared))
+                else:
+                    # other leg still pending → its gates may complete
+                    # the union, so a miss is DEFERRED to it (that is
+                    # what keeps a finished leg a at OK and the
+                    # DEPLOY WINDOW state reachable, §C4); only
+                    # unauthorized ids are flagged now
+                    extra = sorted(_eff(rec) - dset)
+                    if extra: notes.append("reported but not in §A: "
+                                           + ", ".join(extra))
+        elif declared and gates:
             pset = {g.lower() for g in gates}
             miss = [g for g in declared if g.lower() not in pset]
             extra = sorted(pset - {g.lower() for g in declared})
@@ -5349,22 +5698,32 @@ class App:
             notes.append("session row not found in §A map (or gates lack gN ids)")
         if word and word != "PASS":
             notes.append("status " + status)
-        return {"n": n, "declared": declared, "declared_raw": declared_raw,
+        return {"n": n, "leg": leg, "split": split,
+                "declared": declared, "declared_raw": declared_raw,
                 "deploy": row[2] if row else False, "raw": raw, "gates": gates,
                 "status": status, "word": word, "when": when, "notes": notes,
                 "lenient": lenient,
                 "blocked": (pdir / "BLOCKED.md").is_file()}
 
     def _verdict(self, st):
+        leg = st.get("leg", "")
         if st["blocked"] or st["word"] == "BLOCKED":
             return "✖ BLOCKED — resolve, rename BLOCKED.md → BLOCKED-resolved.md, re-run"
         if not st["raw"]:
+            if leg:
+                return ("✖ INCOMPLETE — no PROGRESS entry for leg %d%s (%s)"
+                        % (st["n"], leg,
+                           "pre-deploy" if leg == "a" else "post-deploy"))
             return "✖ INCOMPLETE — no PROGRESS entry for session %d" % st["n"]
         if not st["notes"] and st["word"] == "PASS":
             # v2.5 — recovered-but-drifted lines are still OK; the tag
             # keeps the drift visible without nagging
             tag = (" (PROGRESS line non-canonical — gates parsed "
                    "leniently)") if st["lenient"] else ""
+            if leg:
+                return ("OK — leg %d%s (%s) complete%s"
+                        % (st["n"], leg,
+                           "pre-deploy" if leg == "a" else "post-deploy", tag))
             return "OK — session %d complete%s" % (st["n"], tag)
         return "⚠ CHECK — " + "; ".join(st["notes"])
 
@@ -5413,7 +5772,9 @@ class App:
         out = ["===== SESSION REPORT — %s / session %d =====" % (slug, n)]
         out.append("progress line : %s" % (st["raw"] or "— none found —"))
         # v2.2 — interrupted? the marker (if any) explains the gap
-        ip_f, ip_n, ip_sum = self._ip_summary(pdir)
+        # (v3.6 — _ip_summary also returns the marker leg; the report
+        # goes leg-aware with the Sessions-tab leg selector in S3)
+        ip_f, ip_n, _ip_leg, ip_sum = self._ip_summary(pdir)
         if ip_f is not None and (ip_n is None or ip_n == n):
             out.append("in progress   : YES (%s) — interrupted; re-run the "
                        "session instruction to resume" % (ip_sum or "?"))
@@ -5465,76 +5826,122 @@ class App:
         out = ["===== PLAN HEALTH — %s | %s | %d sessions ====="
                % (slug, part01_text.splitlines()[0].strip(), N)]
         # v2.2 — interrupted-session marker (commands/session.md handshake)
-        ip_f, ip_n, ip_sum = self._ip_summary(pdir)
+        ip_f, ip_n, ip_leg, ip_sum = self._ip_summary(pdir)
         passed = next_n = 0
-        next_mark = ""
+        next_leg = next_mark = ""
         drifted = []                     # v2.5 — non-canonical records
+        a_ok = {}                        # v3.6 — split sessions with leg a OK
+        total = N + sum(1 for r in rows.values() if r[3])   # legs render as rows
         for n in range(1, N + 1):
-            st = self._session_state(pdir, n, rows=rows, records=records,
-                                     part01_text=part01_text)
-            if st["lenient"]:
-                drifted.append(n)
-            if st["word"] == "BLOCKED":
-                mark, detail = "✖ BLOCKED", st["status"][:45]
-            elif not st["raw"]:
-                if ip_n == n:
-                    # v2.2 — marker says this session started but never
-                    # appended a PROGRESS line → interrupted, resumable
-                    mark = "◔ RUNNING"
-                    detail = ip_sum[:45] if ip_sum else "IN-PROGRESS.md"
-                else:
-                    mark, detail = "— not run", "declared: " + (st["declared_raw"][:38] or "?")
-            elif st["word"] == "PASS" and not st["notes"]:
-                mark = "OK"
-                detail = ",".join(st["gates"]) or "gates n/a"
+            # v3.6 — split sessions render TWO rows (Na pre / Nb post)
+            split = bool(rows[n][3])
+            legs = ((("a", "[DEPLOY-PRE]"), ("b", "[DEPLOY-POST]")) if split
+                    else (("", "[DEPLOY]"),))
+            for leg, deploy_tag in legs:
+                st = self._session_state(pdir, n, rows=rows, records=records,
+                                         part01_text=part01_text, leg=leg)
                 if st["lenient"]:
-                    # v2.5 — gates counted from a drifting line:
-                    # reported AND flagged, never silently dropped
-                    detail += " — ⚠ non-canonical line"
-                passed += 1
-            else:
-                mark = "⚠ " + (st["word"] or "CHECK")
-                g = ",".join(st["gates"])
-                # v2.5 — gates show on ⚠ rows too (that was the bug:
-                # any drift made the whole gates column vanish)
-                detail = ((g + " | ") if g else "") + (st["notes"][0][:45] if st["notes"] else "")
-            out.append(" %2d  %-10s %-10s %s%s" % (n, mark, st["when"] or "----------",
-                        detail, "  [DEPLOY]" if st["deploy"] else ""))
-            if not next_n and mark != "OK":
-                next_n, next_mark = n, mark
+                    drifted.append(n)
+                if st["word"] == "BLOCKED":
+                    mark, detail = "✖ BLOCKED", st["status"][:45]
+                elif not st["raw"]:
+                    if ip_n == n and ip_leg == leg:
+                        # v2.2 — marker says this leg started but never
+                        # appended a PROGRESS line → interrupted, resumable
+                        mark = "◔ RUNNING"
+                        detail = ip_sum[:45] if ip_sum else "IN-PROGRESS.md"
+                    else:
+                        mark, detail = ("— not run",
+                                        "declared: " + (st["declared_raw"][:38] or "?"))
+                elif st["word"] == "PASS" and not st["notes"]:
+                    mark = "OK"
+                    detail = ",".join(st["gates"]) or "gates n/a"
+                    if st["lenient"]:
+                        # v2.5 — gates counted from a drifting line:
+                        # reported AND flagged, never silently dropped
+                        detail += " — ⚠ non-canonical line"
+                    passed += 1
+                    if leg == "a":
+                        a_ok[n] = True
+                else:
+                    mark = "⚠ " + (st["word"] or "CHECK")
+                    g = ",".join(st["gates"])
+                    # v2.5 — gates show on ⚠ rows too (that was the bug:
+                    # any drift made the whole gates column vanish)
+                    detail = ((g + " | ") if g else "") + (st["notes"][0][:45] if st["notes"] else "")
+                out.append(" %2s  %-10s %-10s %s%s" % (
+                    "%d%s" % (n, leg), mark, st["when"] or "----------",
+                    detail, ("  " + deploy_tag) if st["deploy"] else ""))
+                if not next_n and mark != "OK":
+                    next_n, next_leg, next_mark = n, leg, mark
         dirty = self._git_dirty(repo)
         out.append("blocked: %s | worktree: %s | passed: %d/%d"
                    % ("YES" if (pdir / "BLOCKED.md").is_file() else "no",
                       "not a git repo" if dirty is None else
                       "clean" if not dirty else "%d modified paths" % len(dirty),
-                      passed, N))
+                      passed, total))
         if next_n == 0:
             out.append("VERDICT: ALL SESSIONS PASS — close out: append "
                        "'PLAN COMPLETE %s' to PROGRESS.md" % date.today())
-        elif next_n == N or rows.get(next_n, ("", "", False))[2]:
+        elif next_mark.startswith("✖"):
+            # v3.4.2 — session state outranks the DEPLOY framing: a
+            # BLOCKED row that is also deploy-flagged (or last) is
+            # BLOCKED first — resolve it, don't "pre-deploy sweep".
+            out.append("VERDICT: NEXT = %s — blocked: resolve BLOCKED.md, "
+                       "rename to BLOCKED-resolved.md, re-run"
+                       % _leg_label(next_n, next_leg))
+        elif next_mark.startswith("◔"):
+            # v2.2 — interrupted session: resume, don't restart blindly
+            # (v3.4.2 — also outranks the DEPLOY framing)
+            out.append("VERDICT: NEXT = RESUME %s — re-run its session "
+                       "instruction; the agent reconciles partial work per "
+                       "IN-PROGRESS.md (git diff, keep-or-revert)"
+                       % _leg_label(next_n, next_leg))
+        elif next_mark != "— not run":
+            # v3.4.2 — a RECORDED session with a ⚠ row (drifted line,
+            # extra/missing gates, non-PASS word) needs its record
+            # normalized or its remaining legs finished — even when it
+            # is the deploy session, which by then has usually ALREADY
+            # run (g7-style gates wrap the owner-supervised deploy,
+            # §G). Framing it as a fresh "supervise the deploy"
+            # re-ran finished deploys from zero.
+            if rows.get(next_n, ("", "", False, False))[2]:
+                out.append("VERDICT: NEXT = %s — ⚠ entry above needs "
+                           "fixing: finish its legs (deploy + post-deploy "
+                           "gates, §G) or normalize its PROGRESS line"
+                           % _leg_label(next_n, next_leg))
+            else:
+                out.append("VERDICT: NEXT = %s — ⚠ entry above needs fixing "
+                           "(re-run session or normalize its PROGRESS line)"
+                           % _leg_label(next_n, next_leg))
+        elif next_leg == "b" and a_ok.get(next_n):
+            # v3.6 §C4 — DEPLOY WINDOW: leg a is done, leg b awaits the
+            # owner's Coolify deploy. The agent has NOTHING to run; the
+            # 6b copy asks for the owner's deploy confirmation (S3,
+            # logged to HEALTH.md).
+            out.append("VERDICT: NEXT = DEPLOY WINDOW — leg %da is done; "
+                       "owner runs Coolify NOW (the agent has nothing to "
+                       "run). After the deploy completes, copy instruction "
+                       "%db (post-deploy leg)" % (next_n, next_n))
+        elif ((next_n == N or rows.get(next_n, ("", "", False, False))[2])
+              and not rows.get(next_n, ("", "", False, False))[3]):
+            # v3.4.2 — reached only for genuinely NOT-RUN rows now: the
+            # next session IS the deploy (§A flag, or the legacy
+            # next_n == N heuristic for undetected deploy cells).
+            # v3.6 — split rows are excluded here: their not-run framing
+            # is per leg above (DEPLOY WINDOW / plain leg pointer).
             out.append("VERDICT: NEXT = session %d = DEPLOY (supervise — unless "
                        "§G assigns deploys to the agent) — pre-deploy sweep: "
                        "clear every ⚠ / ✖ / ◔ line above first" % next_n)
-        elif next_mark.startswith("✖"):
-            out.append("VERDICT: NEXT = session %d — blocked: resolve BLOCKED.md, "
-                       "rename to BLOCKED-resolved.md, re-run" % next_n)
-        elif next_mark.startswith("◔"):
-            # v2.2 — interrupted session: resume, don't restart blindly
-            out.append("VERDICT: NEXT = RESUME session %d — re-run its session "
-                       "instruction; the agent reconciles partial work per "
-                       "IN-PROGRESS.md (git diff, keep-or-revert)" % next_n)
-        elif next_mark != "— not run":
-            out.append("VERDICT: NEXT = session %d — ⚠ entry above needs fixing "
-                       "(re-run session or normalize its PROGRESS line)" % next_n)
         else:
-            out.append("VERDICT: NEXT = session %d" % next_n)
+            out.append("VERDICT: NEXT = %s" % _leg_label(next_n, next_leg))
         # v2.2 — marker sanity notes (unparsable / outside map / stale)
         if ip_f is not None:
             if ip_n is None or not (1 <= ip_n <= N):
                 out.append("note: IN-PROGRESS.md present (session %s) but "
                            "unparsable or outside the session map — inspect "
                            "it manually" % (ip_n if ip_n is not None else "?"))
-            elif self._session_state(pdir, ip_n, rows=rows,
+            elif self._session_state(pdir, ip_n, rows=rows, leg=ip_leg,
                                      records=records,
                                      part01_text=part01_text)["raw"]:
                 out.append("note: stale IN-PROGRESS.md — session %d already "
@@ -5547,12 +5954,16 @@ class App:
             out.append("note: non-canonical PROGRESS line(s) — session(s) %s: "
                        "gates counted anyway; have the agent append a "
                        "canonical corrective line when convenient"
-                       % ", ".join(str(x) for x in drifted))
+                       % ", ".join(str(x) for x in sorted(set(drifted))))
         _, dups = latest_sessions(records)
         if dups:
+            # v3.6 — dups are (n, leg) keys; empty legs render as plain
+            # session numbers (byte-identical to the pre-split output)
             out.append("note: session(s) %s recorded more than once — the "
                        "LAST PROGRESS line wins (expected after a BLOCKED "
-                       "re-run)" % ", ".join(str(x) for x in dups))
+                       "re-run)" % ", ".join(
+                           str(n) if leg == "" else "%d%s" % (n, leg)
+                           for (n, leg) in dups))
         return out
 
     def _log_health(self, pdir, slug, lines):

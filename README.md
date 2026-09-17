@@ -9,7 +9,7 @@
 
 It is built for **solo developers and small teams driving AI coding agents**. You stay the owner of the work: answer open questions, tick reconnaissance items, gate the freeze, run copy-paste sessions with standing orders, and track progress and health. The result is that ad-hoc AI-coding chaos becomes a disciplined **plan → owner pass → freeze → session** lifecycle with hard gates, machine-parseable progress records, and a complete audit trail (`HEALTH.md`) — all in a zero-dependency, offline desktop application.
 
-> **What's new in 1.0.0:** the first public release — a single-file, stdlib-only Tkinter app with the complete intake → owner pass → freeze → session lifecycle, bundled sample project, and a 100-test regression suite.
+> **What's new in 1.1.0:** split-deploy sessions (v3.6) — a deploy session marked `split` / `pre+post` / `pre-post` / `pre/post` in §A becomes two legs (Na pre-deploy, Nb post-deploy) with a DEPLOY WINDOW verdict; Plan health fixes for wrapped session-map row gates (v3.4.1) and finished-deploy verdicts (v3.4.2); owner-section regex hardening (v3.5.2).
 
 <p align="center">
   <img src="docs/images/screenshot.png" alt="PlanConsoleApp console view showing plan intake, owner pass, and session tabs for managing an active plan" width="800" />
@@ -139,7 +139,7 @@ The suite contains 100 tests, all passing; Tk-dependent tests skip automatically
 
 ## Sponsor this project
 
-If Plan Console saves you time, please consider [buying me a coffee](https://buymeacoffee.com/costeliordan). You can also use GitHub's native **Sponsor this project** button once the funding configuration is enabled — see [`.github/FUNDING.yml`](.github/FUNDING.yml).
+If Plan Console saves you time, please consider starring the repo or using GitHub's native **Sponsor this project** button — see [`.github/FUNDING.yml`](.github/FUNDING.yml).
 
 ## License
 
@@ -154,4 +154,4 @@ Copyright © Costel Iordan (costel.iordan@gmail.com)
 
 ## Support
 
-If **Plan Console** has saved you time or prevented AI agent drift, please consider [buying me a coffee](https://buymeacoffee.com/costeliordan) to support continuous compatibility updates!
+If **Plan Console** has saved you time or prevented AI agent drift, please star the repo or use GitHub's **Sponsor this project** button to support continuous compatibility updates!

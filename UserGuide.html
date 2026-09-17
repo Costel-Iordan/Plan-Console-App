@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Plan Console — User Guide (1.0.0)</title>
+    <title>Plan Console — User Guide (1.1.0)</title>
     <link rel="stylesheet" href="assets/console.css">
     <script src="assets/theme.js" defer></script>
 </head>
@@ -33,7 +33,7 @@
         </div>
         <span class="pill">User Guide</span>
         <h1>Plan Console — User Guide</h1>
-        <p class="text-muted text-lg">Plan Console 1.0.0 — paste-to-plan intake + session lifecycle manager.
+        <p class="text-muted text-lg">Plan Console 1.1.0 — paste-to-plan intake + session lifecycle manager.
         Everything you need to install, understand and drive the app, from first launch to
         <code>PLAN COMPLETE</code>.</p>
         <p class="text-muted">Copyright © Costel Iordan (costel.iordan@gmail.com). Licensed under the
@@ -198,7 +198,7 @@ python -c "import tkinter"          (should print nothing = OK)</pre>
 
     <h3>3.1 The splash screen</h3>
     <p>At launch a small borderless splash window appears for a moment, showing the app name
-    (<strong>Plan Console</strong>), the version (<strong>1.0.0</strong>), the tagline
+    (<strong>Plan Console</strong>), the version (<strong>1.1.0</strong>), the tagline
     (<em>"Paste-to-plan intake + session lifecycle manager"</em>), the copyright line, and the
     Apache 2.0 licensing note. It disappears by itself when the main window is ready. If anything
     goes wrong with the splash, the app still starts normally.</p>
@@ -229,7 +229,7 @@ python -c "import tkinter"          (should print nothing = OK)</pre>
     again. Your plans in the repo are never touched by this.</p>
 
     <h3>3.3 Window tour (text layout map)</h3>
-    <p>The window title reads <strong>"Plan Console 1.0.0"</strong>. The layout, top to bottom:</p>
+    <p>The window title reads <strong>"Plan Console 1.1.0"</strong>. The layout, top to bottom:</p>
     <pre class="terminal-code">TOP BAR (always visible)
   Row 1: Repo folder field + Browse... button
          | Init starter repo | Update command files
@@ -593,6 +593,17 @@ LOG (bottom)
     <p>The last session is the <strong>deploy session</strong> (marked <code>[DEPLOY]</code> in the
     plan). Run it the same way but stay and watch: the instruction makes the agent run its checks
     before AND after deploying, and stop immediately if a post-deploy check fails.</p>
+    <p><strong>Split-deploy sessions (v3.6, optional):</strong> a plan's §A may mark a deploy
+    session with <code>split</code>, <code>pre+post</code>, <code>pre-post</code>, or
+    <code>pre/post</code> in the deploy? cell. This splits the session into <strong>two legs</strong>
+    — Na (pre-deploy) and Nb (post-deploy) — each with its own canonical PROGRESS line
+    (<code>SESSION 6a</code> / <code>SESSION 6b</code>). Plan health renders two rows
+    (<code>[DEPLOY-PRE]</code> / <code>[DEPLOY-POST]</code>) and shows a <strong>DEPLOY WINDOW</strong>
+    verdict when leg a is done but leg b awaits the owner's deploy: the owner runs the deploy
+    (e.g. Coolify) and the agent has nothing to run until the deploy completes. The
+    Copy-session-instruction leg selector (full / a / b) produces per-leg instruction files.
+    Unmarked plans are byte-for-byte unchanged — no marker means no legs, no selector, no new
+    behavior.</p>
 
     <h3>6.10 Plan health and Status</h3>
     <p><strong>Plan health</strong> — click it any time for one line per session: what's done,
@@ -602,6 +613,9 @@ LOG (bottom)
     <strong>Status</strong> is the quicker one-line "where am I". When all sessions pass, health
     tells you to append <code>"PLAN COMPLETE &lt;date&gt;"</code> to <code>PROGRESS.md</code> —
     paste that hint into your agent or add the line yourself. The plan is done.</p>
+    <p>For split-deploy sessions, Plan health shows a <strong>DEPLOY WINDOW</strong> verdict when
+    leg a is done and leg b has not run: the owner runs the deploy now, then copies the leg b
+    (post-deploy) instruction. The agent has nothing to run during the deploy window.</p>
 
     <h3>6.11 Agent orders (standing orders)</h3>
     <p><strong>Agent orders…</strong> (top bar) opens <code>AGENT-ORDERS.md</code> from the repo
@@ -924,7 +938,7 @@ LOG (bottom)
     <hr>
 
     <h2 id="license">13. License & credits</h2>
-    <p><strong>Plan Console 1.0.0</strong><br>
+    <p><strong>Plan Console 1.1.0</strong><br>
     Paste-to-plan intake + session lifecycle manager<br>
     Copyright © Costel Iordan (costel.iordan@gmail.com)</p>
     <p>Licensed under the <strong>Apache License, Version 2.0</strong> — see the
@@ -966,7 +980,7 @@ LOG (bottom)
     <hr>
 
     <footer>
-        <p class="text-muted mb-1"><strong>Plan Console</strong> 1.0.0 — offline user guide.</p>
+        <p class="text-muted mb-1"><strong>Plan Console</strong> 1.1.0 — offline user guide.</p>
         <p class="text-muted mb-1">Copyright © Costel Iordan (costel.iordan@gmail.com)</p>
         <p class="text-muted mb-0">Licensed under the Apache License, Version 2.0. You may obtain a
         copy of the License at
