@@ -28,6 +28,7 @@ Run either way:
 import importlib.util
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -159,16 +160,31 @@ def test_high_contrast_defaults_to_true_when_windows_registry_unreadable(
 @pytest.fixture()
 def app_window(tmp_path, monkeypatch):
     """A real (withdrawn) Plan Console App on a temp config, offline.
-    Skips the test when no Tk display is available."""
+    Skips the test only when Tk genuinely cannot initialise."""
     tk = pytest.importorskip("tkinter")
-    try:
-        root = tk.Tk()
-    except tk.TclError:
-        pytest.skip("no Tk display available")
+    # Retry before skipping: a bare `except TclError: skip` turns a
+    # TRANSIENT Tk() failure into a silent skip, and this fixture builds
+    # and destroys a full App repeatedly in one process. Same fix and same
+    # reason as test_freeze_gates.app_window. A genuinely absent display
+    # still skips on the first attempt.
+    root = None
+    for attempt in range(3):
+        try:
+            root = tk.Tk()
+            break
+        except tk.TclError:
+            if attempt == 2:
+                pytest.skip("no Tk display available")
+            time.sleep(0.2)
     root.withdraw()
     monkeypatch.setattr(pc, "_high_contrast_active", lambda: False)
     monkeypatch.setattr(pc, "CFG", tmp_path / "plan-console.json")
     monkeypatch.setattr(pc.App, "_fetch_models", lambda self: None)
+    # safety: with CFG patched, repo_path() defaults to cwd — a scheduled
+    # _auto_command_check must never offer to overwrite the REAL repo's
+    # commands/ during a test run (no-op it for the fixture's lifetime)
+    monkeypatch.setattr(pc.App, "_auto_command_check",
+                        lambda self, repo=None: None)
     app = pc.App(root)
     root.update()
     yield app, root

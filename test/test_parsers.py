@@ -140,6 +140,65 @@ def test_canonical_record():
     assert rec["canonical"]
 
 
+def test_canonical_record_with_reason():
+    # v3.7 — the worked examples in commands/session.md carry the reason
+    # between the status word and the P00 tag; that shape is canonical
+    line = ("SESSION 4 | 2025-06-02 | gates: g4 | status: PARTIAL — "
+            "g5 needs an owner API key; steps in BLOCKED.md | P00 v1.1")
+    rec = pc.parse_progress_record(line)
+    assert rec["canonical"] and rec["status"] == "PARTIAL"
+    assert rec["gates"] == ["g4"]
+
+
+def test_canonical_record_prefixed_gate_ids():
+    # v3.7 — §A may spell ids with a short prefix ('sg1'); copying them
+    # verbatim into the PROGRESS line is canonical, not drift
+    line = ("SESSION 1 | 2026-09-16 | gates: sg1, sg2, sg4, sg6 | "
+            "status: PASS | P00 v1.1")
+    rec = pc.parse_progress_record(line)
+    assert rec["canonical"]
+    assert rec["gates"] == ["sg1", "sg2", "sg4", "sg6"]
+
+
+def test_prefixed_gate_ids_extracted_from_session_map():
+    # the same ids must round-trip from the §A session map, so declared
+    # and reported sets match in Plan health
+    plan = ("# x\n"
+            "A. SESSIONS\n"
+            "  # | scope | gates | deploy?\n"
+            "  1 | do it | sg1: tsc, sg2: lint | no\n"
+            "B. next\n")
+    assert pc.session_row_gates(plan, 1) == ["sg1", "sg2"]
+
+
+def test_prefixed_gate_ids_reject_prose():
+    # the prefixed form allows no separator: prose like 'tag 2' or
+    # 'big 100' in a gates field is never an id
+    assert pc.parse_gates_field("tag 2") == ([], False)
+    assert pc.parse_gates_field("big 100") == ([], False)
+
+
+def test_reason_after_p00_is_not_canonical():
+    # observed real drift (public-view-signature-photos S2): the reason
+    # must sit between the status word and '| P00', never after it
+    line = ("SESSION 2 | 2026-09-12 | gates: g2 | status: PASS | "
+            "P00 v1.1 — owner-verified live")
+    rec = pc.parse_progress_record(line)
+    assert rec["gates"] == ["g2"] and not rec["canonical"]
+
+
+def test_wrapped_template_copy_is_not_canonical(tmp_path):
+    # observed real drift: agents copying PART-00's old two-line template
+    # verbatim produced a folded record — parses, but never canonical
+    p = _write_progress(tmp_path,
+                        "SESSION 3 | 2025-06-01 | gates: g1, g2 |\n"
+                        "status: PASS | P00 v1.1\n")
+    recs = pc.read_progress(p)
+    assert len(recs) == 1
+    assert recs[0]["gates"] == ["g1", "g2"]
+    assert not recs[0]["canonical"]
+
+
 def test_drifted_record_still_parses_and_flags():
     line = "Session #2 — Gates: passed g1,g2 — status BLOCK (no p00)"
     rec = pc.parse_progress_record(line)
@@ -182,11 +241,25 @@ def test_read_progress_skips_comments(tmp_path):
 
 
 def test_latest_sessions_last_wins():
-    recs = [{"n": 1, "status": "FAIL"}, {"n": 1, "status": "PASS"},
-            {"n": 2, "status": "PASS"}]
+    recs = [{"n": 1, "leg": "", "status": "FAIL"},
+            {"n": 1, "leg": "", "status": "PASS"},
+            {"n": 2, "leg": "", "status": "PASS"}]
     out, dups = pc.latest_sessions(recs)
-    assert out[1]["status"] == "PASS"
-    assert dups == [1]
+    assert out[(1, "")]["status"] == "PASS"
+    assert out[(2, "")]["status"] == "PASS"
+    assert dups == [(1, "")]
+
+
+def test_latest_sessions_legs_are_separate_keys():
+    # v3.6 — legs Na/Nb have independent records: a corrective 6b line
+    # does not duplicate 6a, and the LAST 6b line wins
+    recs = [{"n": 6, "leg": "a", "status": "PASS"},
+            {"n": 6, "leg": "b", "status": "PASS"},
+            {"n": 6, "leg": "b", "status": "PARTIAL"}]
+    out, dups = pc.latest_sessions(recs)
+    assert out[(6, "a")]["status"] == "PASS"
+    assert out[(6, "b")]["status"] == "PARTIAL"
+    assert dups == [(6, "b")]
 
 
 # ------------------------------------------------------ session_row_gates
@@ -265,10 +338,17 @@ def test_owner_section_mention_in_comment_does_not_poison_file():
 
 
 def test_owner_section_header_still_suppresses_questions():
-    # the anchored match must still treat real section headers as excluded
-    for header in ("## Owner actions\n", "# Commands:\n", "# sql\n"):
+    # v3.5.2 — the anchored match treats real ## (or deeper) section
+    # headers as excluded; a single-# line is ALWAYS prose (the format
+    # spec: real sections are "## Owner actions")
+    for header in ("## Owner actions\n", "## Commands:\n", "## sql\n"):
         text = header + "1. run the migration?\n"
         assert pc.parse_questions(text) == [], header
+    # the old ^#+ variant let a single-# prose note open the skipped
+    # section and hid every question block after it — regression guard:
+    # a single-# "header" suppresses nothing
+    text = "# Commands:\n1. run the migration?\n"
+    assert pc.parse_questions(text) == [(1, "1. run the migration?")]
 
 
 def test_mention_comment_does_not_swallow_following_questions_after_header():
@@ -669,8 +749,12 @@ def test_parse_owner_actions_finds_section_bullets():
         "Select-String -Path plan-console.json -Pattern 'sk-'"
     assert acts[0]["expect"] == "no matches"
     assert acts[0]["verifies"] == "plan-console.json contains no API key"
-    # multi-line bullet: continuation lines joined, lineno = bullet line
-    assert acts[0]["lineno"] == 8
+    # multi-line bullet: continuation lines joined; lineno is 0-BASED
+    # (v3.5.2 — consistent with parse_questions; the first bullet sits
+    # on 1-based line 8 of OA_BODY)
+    assert acts[0]["lineno"] == 7
+    assert acts[1]["lineno"] == 10
+    assert acts[2]["lineno"] == 11
 
 
 def test_parse_owner_actions_checked_and_commandless():
@@ -961,22 +1045,36 @@ def test_context_pack_respects_max_bytes(tmp_path):
 
 
 # ------------------------------------------------------------------- R-09
+SAMPLE_REPO = HERE.parent / "samples" / "demo-project" / "plans" / "demo-recipe-cli"
+
+
 def test_starter_files_byte_identity():
     # R-09: every embedded STARTER_FILES entry is byte-identical to the
     # on-disk repo file AND to the test/ fixture copy. The app's own
     # write path (Path.write_text) translates \n to os.linesep, so the
     # comparison normalizes CRLF -> LF on both sides — any other byte
     # difference (edit, drift, encoding) still fails.
+    #
+    # The demo project is checked too, and that is not redundancy: the
+    # drift this test was written for lived in exactly the gap it left.
+    # 27371e6 added GATE SANITY to commands/session.md on disk but never
+    # to the embedded copy, and the demo project had been regenerated from
+    # that stale copy — so embedded and sample agreed with each other and
+    # both disagreed with the repo. Two of three checks would have passed.
     for key, embedded in pc.STARTER_FILES.items():
         want = embedded.encode("utf-8").replace(b"\r\n", b"\n")
         disk = HERE.parent / key
         fixture = HERE / key
+        sample = SAMPLE_REPO / key
         assert disk.is_file(), "R-09: %s missing from repo root" % key
         assert fixture.is_file(), "R-09: %s missing from test/ fixtures" % key
+        assert sample.is_file(), "R-09: %s missing from the demo project" % key
         assert want == disk.read_bytes().replace(b"\r\n", b"\n"), \
             "R-09: embedded %s != on-disk bytes" % key
         assert want == fixture.read_bytes().replace(b"\r\n", b"\n"), \
             "R-09: embedded %s != test/ fixture bytes" % key
+        assert want == sample.read_bytes().replace(b"\r\n", b"\n"), \
+            "R-09: embedded %s != samples/demo-project bytes" % key
 
 
 def main():
