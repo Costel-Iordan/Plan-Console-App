@@ -174,6 +174,55 @@ v3.6 — pre/post-deploy split for deploy sessions (OPT-IN):
   * Unmarked plans are byte-for-byte unchanged (regression-gated every
     session): no marker → no legs, no selector, no new behavior.
 
+v3.7 — canonical PROGRESS line, drift-proofed (root cause: the line was
+  only ever given as an abstract template — dual-use '|', no worked
+  example containing the optional reason, PART-00's template wrapped
+  across two physical lines, and "ids in gN form" contradicting "ids
+  come from §A" whenever §A spells them differently):
+  * commands/session.md Close section is now SELF-CONTAINED and
+    authoritative: copy-the-shape template with '/' for the status
+    enum, TWO worked examples that include the reason, and the rules
+    that fix the observed drifts (reason between the status word and
+    '| P00', never after it; one physical line; ids exactly as in §A;
+    version from your PART-00 header, not the example's). Existing
+    repos: "Update command files" once.
+  * PART-00 v1.2 — SESSION MECHANICS template on ONE physical line
+    (the old two-line wrap taught verbatim-copying agents to append
+    folded records) with the same '/' enum. New repos only — existing
+    repos keep their PART-00 by design; the session.md update carries
+    the fix to them.
+  * Parser: §A-spelled prefixed gate ids ('sg1') now extract leniently
+    AND count as canonical (PROG_CANON_RE / PROG_GATE_TOKEN_RE) —
+    plans like plan-signature whose §A uses sg-ids were permanently
+    flagged non-canonical and their gates invisible. Prefixed form
+    allows no separator, so prose like 'tag 2' still never matches;
+    all previous lenient forms (G1, g-1, g_1, 'g 2') unchanged.
+  * Verified against the real drift corpus (public-view-signature-
+    photos S2 reason-after-P00, plan-template-builder S7 missing
+    gates, resume-studio-audit S7 tool-name gates, plan-signature
+    sg-ids): previously-flagged canonical shapes now canonical; drift
+    still parses leniently and stays flagged.
+
+v1.2.0 — UI/UX audit batch 1 (show state instead of asking for it):
+  * Plan strip (one line under the top bar): live per-slug plan state —
+    stage, gate counts, blocked/IN-PROGRESS marker, next session — and
+    one click-through action link that jumps to the tab that resolves
+    it. Refreshed on a 3 s poll plus slug/repo edits and after Freeze
+    (plan_snapshot() is a module-level pure function, unit-tested).
+  * Freeze gates in ONE dialog: on_freeze now computes every gate up
+    front (freeze_gate_report()) and shows a ✓/✗ checklist with a
+    jump-to-tab button, instead of one error dialog per failed gate;
+    "What's blocking Freeze?" (dry run) shows the same checklist. The
+    Freeze flow also gains the v3.5 owner-actions gate the dry run
+    already enforced — the two now agree by construction.
+  * "Next session →" (Sessions tab, first button): prefills the first
+    not-done session/leg from PROGRESS.md (next_pending_session(),
+    shared with Status) and copies its instruction in one click.
+  * Busy split (R-11 refinement): Status / Session report / Show
+    validation report / Freeze check / Copy command stay LIVE while an
+    API chain runs — only chain-starting or file-mutating buttons are
+    disabled (BUSY_DISABLE / BUSY_KEEP_LIVE).
+
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
     "Use API key" (and have a key stored); otherwise the console copies
@@ -213,7 +262,7 @@ Settings are stored in plan-console.json next to this script.
 # every generated copyright string in the app derives from these constants.
 # ---------------------------------------------------------------------------
 APP_NAME = "Plan Console"
-APP_VERSION = "1.0.0"          # public release
+APP_VERSION = "1.2.0"          # public release
 COPYRIGHT_HOLDER = "Costel Iordan"
 COPYRIGHT_EMAIL = "costel.iordan@gmail.com"
 COPYRIGHT_LINE = f"Copyright © {COPYRIGHT_HOLDER} ({COPYRIGHT_EMAIL})"
@@ -1195,7 +1244,11 @@ PROG_GATES_LABEL_STRICT_RE = re.compile(r"\bgates?\b\s*[:=]", re.I)
 PROG_STATUS_LBL_VAL_RE = re.compile(r"\bstatus\b\s*[:=]?\s*"
                                      r"(PASS|PARTIAL|FAIL|BLOCK)\w*", re.I)
 PROG_STATUS_VAL_RE = re.compile(r"\b(PASS|PARTIAL|FAIL|BLOCKED|BLOCK)\b", re.I)
-PROG_GATE_TOKEN_RE = re.compile(r"\bg[-_ ]?(\d+)\b", re.I)
+# gate id: the classic g[-_ ]N forms, plus §A spellings with a short
+# prefix ('sg1') — the prefixed form allows NO separator, so prose
+# like 'tag 2' can never match; ids keep their §A spelling
+PROG_GATE_TOKEN_RE = re.compile(
+    r"\b(?:([A-Za-z]{1,3})g(\d+)|g([A-Za-z])?[-_ ]?(\d+))\b", re.I)
 PROG_GATE_RANGE_RE = re.compile(r"\bg[-_]?(\d+)\s*[-–~]\s*g?[-_]?\s*(\d+)\b",
                                 re.I)
 PROG_ALL_RE = re.compile(r"^[\s(\[{]*(?:all(?:\s+gates?)?(?:\s+passed)?)"
@@ -1204,7 +1257,8 @@ PROG_NONE_RE = re.compile(r"^(?:none|n/?a|-{1,2}|no gates|0|\[\]|"
                           r"\(\s*none\s*\)|not applicable|empty)$", re.I)
 PROG_CANON_RE = re.compile(
     r"^SESSION\s+(\d+)(?i:([ab]))?\s+\|\s+(\d{4}-\d{2}-\d{2})\s+\|\s+gates:\s*"
-    r"(g\d+(?:\s*,\s*g\d+)*)?\s*\|\s+status:\s+"
+    r"([A-Za-z]{0,3}g[A-Za-z]?\d+(?:\s*,\s*[A-Za-z]{0,3}g[A-Za-z]?\d+)*)?"
+    r"\s*\|\s+status:\s+"
     r"(PASS|PARTIAL|FAIL|BLOCKED)(?:\s+[—-]\s*[^|]*)?\s*\|\s+P00\s+v[\w.]+\s*$")
 PROG_CONT_RE = re.compile(r"\b(?:gates?|status)\b\s*[:=]?|\bP\s*00\b", re.I)
 PROG_SECTION_RE = re.compile(r"^\s*#*\s*[A-G][.)]\s")
@@ -1213,15 +1267,16 @@ PROG_HANG_END = (":", "|", ",", ";", "—", "-")
 
 
 def _gnum(g):
-    return int(g[1:])
+    return int(re.sub(r"^[A-Za-z]+", "", g[1:]) or 0)
 
 
 def parse_gates_field(raw):
     """(ids, all_flag) — normalized 'gN' ids from any gates text.
 
     Tolerates what agents actually emit: separators , ; whitespace | /;
-    case/prefix variants G1 g1 g-1 g_1; ids carrying their §A
-    descriptions ('g1: pytest green', 'g2 (parity)'); bracketed lists;
+    case/prefix variants G1 g1 g-1 g_1 sg1 (§A spellings with a short
+    prefix are kept verbatim); ids carrying their §A descriptions
+    ('g1: pytest green', 'g2 (parity)'); bracketed lists;
     ranges g1-g3 (expanded); 'all' → all_flag=True (caller expands
     against the §A session row); 'none' '-' 'n/a' → ([], False); bare
     number lists ('1, 2') accepted only when no g-prefixed id appears
@@ -1244,7 +1299,11 @@ def parse_gates_field(raw):
 
     s = PROG_GATE_RANGE_RE.sub(_expand, s)
     for m in PROG_GATE_TOKEN_RE.finditer(s):
-        ids.add("g" + m.group(1))
+        if m.group(1) is not None:    # §A-prefixed id ('sg1') — keep spelling
+            ids.add((m.group(1) + "g" + m.group(2)).lower())
+        else:
+            letter = (m.group(3) or "").upper()
+            ids.add("g" + letter + m.group(4))
     if ids:
         return sorted(ids, key=_gnum), False
     bare = s.replace(" and ", " ").replace(",", " ").replace(";", " ")
@@ -1507,6 +1566,312 @@ def session_row_gates(plan_text, n):
     return []
 
 
+# ---- v1.2.0 UI/UX batch 1: pure plan-state helpers ------------------------
+# These read the plan directory only (no Tk, no network) so the plan
+# strip, the Freeze gate checklist and the "Next session" prefill share
+# ONE source of truth with Status — and are unit-testable like the other
+# parsers. They never write.
+
+def find_frozen_file(pdir):
+    """Highest-versioned 'PART-01 v*.md' (or legacy frozen PART-01.md)
+    in the plan dir, or None. Extracted from App._frozen_file (v2.0
+    locator) so module-level helpers can see frozen state too."""
+    if not pdir.is_dir():
+        return None
+
+    def _vkey(p):
+        # numeric version sort — lexicographic would rank v1.10 < v1.2
+        m = re.search(r"v(\d+)\.(\d+)", p.name)
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+    vers = sorted(pdir.glob("PART-01 v*.md"), key=_vkey)
+    if vers:
+        return vers[-1]
+    legacy = pdir / "PART-01.md"
+    if legacy.is_file():
+        head = "\n".join(legacy.read_text(encoding="utf-8")
+                         .splitlines()[:3]).lower()
+        if "frozen" in head:
+            return legacy
+    return None
+
+
+def session_map_rows(pdir):
+    """§A session map {n: (title, gates, deploy, split)} of the frozen
+    plan, or {} when not frozen. Extracted from App._session_map — same
+    fold handling (fold_map_rows) and split-deploy markers (v3.6)."""
+    rows = {}
+    part01 = find_frozen_file(pdir)
+    if part01 is None:
+        return rows
+    for line in fold_map_rows(
+            part01.read_text(encoding="utf-8").splitlines()):
+        cells = [c.strip() for c in line.split("|") if c.strip()]
+        if len(cells) >= 3 and cells[0].isdigit():
+            d = cells[3].lower() if len(cells) >= 4 else ""
+            deploy = d.startswith(("y", "d")) or "deploy" in d or "supervis" in d
+            # v3.6 — opt-in split marker (§C1): split / pre+post /
+            # pre-post / pre/post in the deploy? cell (case-insensitive,
+            # combinable with yes) splits session N into legs Na (pre-
+            # deploy) / Nb (post-deploy). A split cell is always also a
+            # deploy session. No marker → split=False → byte-identical.
+            split = any(t in d for t in
+                        ("split", "pre+post", "pre-post", "pre/post"))
+            if split:
+                deploy = True
+            rows[int(cells[0])] = (cells[1], cells[2], deploy, split)
+    return rows
+
+
+def session_row_deferred(row):
+    """True when a §A session-map row is OWNER-DEFERRED (never to be run).
+
+    A plan may keep a row whose slot and gate id must stay on the map so
+    nothing renumbers, while stating in the same row that the session is NOT
+    executed in this plan. plan-template-designer-final row 7 is exactly that:
+    scope 'DEFERRED ... NOT EXECUTED IN THIS PLAN', gate 'g8 (DEFERRED — not
+    run)', and §A's dependency order skips it (0 → … → 6 → 8 → 9).
+
+    Two shipped behaviours treated such a row as merely 'not done yet', which
+    made the plan unrunnable rather than merely deferred:
+      * the session-run guard required EVERY integer in 1..N-1 to have a
+        PROGRESS record, so row 7 could never be satisfied and every later
+        session was blocked — and it is unsatisfiable by design: the only
+        canonical 'done' status is PASS, so satisfying it would mean asserting a
+        gate result for work that was never done, which §A and §G both forbid;
+      * next_pending_session offered it as the next unit of work, so the console
+        advised the very session the plan prohibits.
+
+    Plan Health ALREADY parsed and displayed the marker (it renders
+    '(DEFERRED — not run)' in the declared column), so the text was available;
+    only the sequencing logic ignored it. Deferral is read from the SCOPE and
+    GATES cells, never from a PROGRESS record, precisely because no such record
+    may exist. Case-insensitive; a marker anywhere in either cell counts, so a
+    plan may phrase it as it likes.
+    """
+    if not row:
+        return False
+    # row = (scope, gates, deploy, split); deploy/split are booleans, so
+    # coerce - never concatenate the raw tuple members.
+    return "defer" in (str(row[0] or "") + " " + str(row[1] or "")).lower()
+
+
+def next_pending_session(pdir, rows=None, records=None):
+    """First not-done (session, leg) of a frozen plan — the 'next:'
+    logic of on_status, extracted so the plan strip and the
+    'Next session →' prefill say exactly what Status says.
+
+    Returns None when the plan is not frozen, else a dict:
+      n        int or None (None = every session recorded)
+      leg      '' | 'a' | 'b' — the leg to run next ('' for plain rows)
+      label    human wording, identical to the Status 'next:' value
+      copyable True when 'Next session →' may prefill + copy: False for
+               the leg-a-not-PASS deploy state (nothing to copy yet) and
+               for n=None (nothing left)."""
+    if find_frozen_file(pdir) is None:
+        return None
+    rows = session_map_rows(pdir) if rows is None else rows
+    prog = pdir / "PROGRESS.md"
+    recs = read_progress(prog) if prog.is_file() else (records or [])
+    done = {(r["n"], r["leg"]) for r in recs}
+    for n in sorted(rows):
+        # Owner-deferred rows are skipped, not offered: their gate id stays on
+        # the map so nothing renumbers, but no session may claim it, so no
+        # PROGRESS record will ever exist for them (see
+        # session_row_deferred). Offering one is what made this console tell the
+        # owner to run a session the frozen plan prohibits.
+        if session_row_deferred(rows[n]):
+            continue
+        if rows[n][3]:                       # split (pre/post) row
+            if (n, "a") not in done:
+                return {"n": n, "leg": "a",
+                        "label": "leg %da (pre-deploy)" % n, "copyable": True}
+            if (n, "b") not in done:
+                a = _pick_leg(recs, n, "a")
+                ok_a = a is not None and a["status"] == "PASS"
+                return {"n": n, "leg": "b",
+                        "label": ("DEPLOY WINDOW — owner runs Coolify NOW, "
+                                  "then leg %db (post-deploy)" % n)
+                                 if ok_a else
+                                 "leg %da (pre-deploy) — not PASS yet" % n,
+                        "copyable": ok_a}
+        elif (n, "") not in done:
+            return {"n": n, "leg": "", "label": "session %d" % n,
+                    "copyable": True}
+    return {"n": None, "leg": "", "label": "all sessions recorded",
+            "copyable": False}
+
+
+def freeze_gate_report(pdir):
+    """Every Freeze gate at once, in on_freeze order (v1.2.0). Returns a
+    list of {id, label, ok, detail} — ok=False items are what blocks
+    Freeze. Read-only: the already-frozen branch of on_freeze keeps its
+    own PROGRESS.md self-heal, so this function never mutates.
+    Gate ids: draft · frozen · questions · owner_actions · parked ·
+    recon · validation. The owner-actions gate (v3.5) is enforced here
+    for the real Freeze too — previously only the dry run checked it."""
+    gates = []
+
+    def _add(gid, label, ok, detail):
+        gates.append({"id": gid, "label": label, "ok": bool(ok),
+                      "detail": detail})
+
+    draft = pdir / "PART-01.draft.md"
+    _add("draft", "Draft", draft.is_file(),
+         "PART-01.draft.md found" if draft.is_file()
+         else "PART-01.draft.md not found — run intake first")
+    frozen = find_frozen_file(pdir)
+    _add("frozen", "Not already frozen", frozen is None,
+         "already frozen (%s)" % frozen.name if frozen else "no frozen plan yet")
+
+    oq_text = ""
+    oq = pdir / "OPEN-QUESTIONS.md"
+    if oq.is_file():
+        try:
+            oq_text = oq.read_text(encoding="utf-8")
+        except OSError:
+            oq_text = ""
+    qs = parse_questions(oq_text) if oq_text else []
+    if qs:
+        previews = []
+        for lineno, _hdr in qs[:3]:
+            blk = [l.strip() for l in
+                   question_block(oq_text, lineno).strip().splitlines()]
+            qline = next((l for l in blk
+                          if re.match(r"QUESTION\s*:", l, re.I)),
+                         blk[0] if blk else "")
+            previews.append(qline[:80])
+        detail = ("%d open question(s) — answer them in the Owner pass tab"
+                  % len(qs))
+        detail += " First: " + " | ".join(previews)
+    elif oq_text:
+        detail = "0 open questions"
+    else:
+        detail = "no OPEN-QUESTIONS.md"
+    _add("questions", "Open questions", not qs, detail)
+
+    noa = count_open_owner_actions(oq_text) if oq_text else 0
+    _add("owner_actions", "Owner actions", not noa,
+         ("%d unchecked owner action(s) — run/copy them in the Owner pass "
+          "tab or mark them done" % noa) if noa
+         else "no unchecked owner actions")
+
+    na = 0
+    if draft.is_file():
+        try:
+            na = count_owner_answers(draft.read_text(encoding="utf-8"))
+        except OSError:
+            na = 0
+    _add("parked", "Owner answers integrated", not na,
+         ("%d owner answer(s) parked in ## OWNER ANSWERS — run 'Agent: "
+          "finish owner pass' to integrate them, then re-validate" % na)
+         if na else "no parked answers")
+
+    n = 0
+    rc = pdir / "RECON-CHECKLIST.md"
+    if rc.is_file():
+        try:
+            n = count_open_recon(rc.read_text(encoding="utf-8"))
+        except OSError:
+            n = 0
+    _add("recon", "Recon checklist", not n,
+         ("%d unchecked item(s) — tick them in the Owner pass tab or mark "
+          "the line DEFERRED" % n) if n else "no unchecked recon items")
+
+    val = pdir / "VALIDATION.md"
+    if not val.is_file():
+        _add("validation", "Validation report", False,
+             "VALIDATION.md not found — click 'Validate draft' first "
+             "(paste the copied instruction to your agent)")
+    else:
+        try:
+            vbody = val.read_text(encoding="utf-8").strip()
+        except OSError:
+            vbody = ""
+        _add("validation", "Validation report", vbody == "PART-01 READY",
+             "PART-01 READY" if vbody == "PART-01 READY"
+             else "not 'PART-01 READY' — resolve the findings, re-validate")
+    return gates
+
+
+def plan_snapshot(pdir):
+    """Live plan state for the plan strip (v1.2.0) — one dict, read-only.
+    Keys: exists · stage ('empty'|'draft'|'frozen') · frozen_name ·
+    questions · owner_actions · parked · recon · validation
+    ('none'|'ready'|'not-ready') · blocked · in_progress (None or
+    (session, leg)) · next (next_pending_session() dict or None) ·
+    gates (freeze_gate_report() when a draft exists, else [])."""
+    pdir = Path(pdir)
+    snap = {"exists": pdir.is_dir(), "stage": "empty", "frozen_name": None,
+            "questions": 0, "owner_actions": 0, "parked": 0, "recon": 0,
+            "validation": "none", "blocked": False, "in_progress": None,
+            "next": None, "gates": []}
+    if not snap["exists"]:
+        return snap
+    frozen = find_frozen_file(pdir)
+    oq = pdir / "OPEN-QUESTIONS.md"
+    oq_text = ""
+    if oq.is_file():
+        try:
+            oq_text = oq.read_text(encoding="utf-8")
+        except OSError:
+            oq_text = ""
+    if frozen is not None:
+        snap["stage"] = "frozen"
+        snap["frozen_name"] = frozen.name
+    elif (pdir / "PART-01.draft.md").is_file():
+        snap["stage"] = "draft"
+    snap["questions"] = len(parse_questions(oq_text)) if oq_text else 0
+    snap["owner_actions"] = (count_open_owner_actions(oq_text)
+                             if oq_text else 0)
+    draft = pdir / "PART-01.draft.md"
+    if draft.is_file():
+        try:
+            snap["parked"] = count_owner_answers(
+                draft.read_text(encoding="utf-8"))
+        except OSError:
+            snap["parked"] = 0
+    rc = pdir / "RECON-CHECKLIST.md"
+    if rc.is_file():
+        try:
+            snap["recon"] = count_open_recon(rc.read_text(encoding="utf-8"))
+        except OSError:
+            snap["recon"] = 0
+    val = pdir / "VALIDATION.md"
+    if val.is_file():
+        try:
+            snap["validation"] = ("ready" if
+                                  val.read_text(encoding="utf-8").strip()
+                                  == "PART-01 READY" else "not-ready")
+        except OSError:
+            snap["validation"] = "not-ready"
+    snap["blocked"] = (pdir / "BLOCKED.md").is_file()
+    _f, _n, leg = in_progress_marker(pdir)
+    if _f is not None:
+        snap["in_progress"] = (_n, leg)
+    snap["next"] = (next_pending_session(pdir)
+                    if snap["stage"] == "frozen" else None)
+    if snap["stage"] == "draft":
+        snap["gates"] = freeze_gate_report(pdir)
+    return snap
+
+
+def in_progress_marker(pdir):
+    """(path, session_number, leg) of an interrupted-session marker, or
+    (None, None, ''). Extracted from App._in_progress (v2.2/v3.6) for
+    the module-level snapshot; the method delegates."""
+    f = pdir / "IN-PROGRESS.md"
+    if not f.is_file():
+        return None, None, ""
+    try:
+        body = f.read_text(encoding="utf-8")
+    except Exception:
+        return f, None, ""   # undecodable marker → unreadable, not a crash
+    m = re.search(r"(?i)session\s+(\d+)\s*([ab])?\b", body)
+    return (f, (int(m.group(1)) if m else None),
+            ((m.group(2) or "").lower() if m else ""))
+
+
 # ---- audit 2026-09-05 session-4 hardening helpers (R-07/R-08/R-12/R-16)
 
 _GIT_EXE = None
@@ -1763,7 +2128,7 @@ configuration governs everything not restated here.
 # ----------------------------------------------------------------------------
 STARTER_FILES = {
 "PART-00.md": """PART 00 — SESSION PROTOCOL (universal; loaded every session)
-Version 1.1 — Owner-only edits, version bump required. PROGRESS.md records
+Version 1.2 — Owner-only edits, version bump required. PROGRESS.md records
 the version executed. This file contains PROCESS rules only. All project
 facts live in the plan's frozen PART-01 file (e.g. "PART-01 v1.0.md").
 
@@ -1772,9 +2137,10 @@ SESSION MECHANICS
 - Only session(s) named in PART-01 §A may deploy or touch production.
 - Never modify/rename/delete assets in PART-01 §A "legacy inventory"
   unless this session is explicitly scoped to do so.
-- End every session: append ONE line to PROGRESS.md, canonical form:
-  SESSION <n> | <YYYY-MM-DD> | gates: <passed gN ids, comma-separated> |
-  status: PASS|PARTIAL|FAIL|BLOCKED[ — one-line reason] | P00 v<version>
+- End every session: append ONE line to PROGRESS.md, canonical form —
+  five pipe-separated fields on ONE physical line (never wrap it);
+  gate ids exactly as spelled in PART-01 §A:
+  SESSION <n> | <YYYY-MM-DD> | gates: <passed gate ids> | status: <PASS/PARTIAL/FAIL/BLOCKED> — <reason> | P00 v<version>
 - A failed verification gets ONE fix attempt. Second failure →
   BLOCKED.md (exact repro + what you tried) and STOP.
 - Never resolve ambiguity by guessing. BLOCKED.md is a correct outcome.
@@ -2251,34 +2617,27 @@ BLOCKED PROTOCOL (restated from PART-00 — binding):
   while the file exists and clears it on the rename; the file
   BLOCKED-resolved.md triggers nothing.
 
-Close by appending exactly ONE canonical PROGRESS.md line (format per
-PART-00 SESSION MECHANICS):
-SESSION N | YYYY-MM-DD | gates: <passed gN ids> | status: PASS|PARTIAL|FAIL|BLOCKED — reason | P00 v<version>
-Worked example (fill in your values):
-SESSION 3 | 2025-06-01 | gates: g1, g2 | status: PASS | P00 v1.1
-The Plan Console reads this line to report gates in Plan health, so
-keep it strictly canonical: ONE physical line; lowercase 'gates:' and
-'status:' labels with colons; gate ids in gN form ('g1, g2') — never
-bare numbers, never 'all'; list ONLY the gates that passed (a PARTIAL
-line lists the passed subset; the reason field explains the rest). The
-console parses leniently and flags non-canonical lines, but canonical
-is what reports cleanly. Gate IDs come from PART-01 §A session N.
-
-GATE SANITY (every session): a gate that silently does nothing is WORSE
-than a gate that fails, because it is reported as green. Before reporting
-any gate green, confirm it actually ran IN THIS REPO:
-  * typecheck - it compiled a file set, not zero files. Confirm with the
-    compiler's --listFilesOnly (or equivalent) and check the file count is
-    non-trivial. Printing help text and exiting 0/1 is NOT a pass.
-  * tests - the runner reported a test count, and it is not 0.
-If a gate command behaves unexpectedly (prints usage/help, reports a
-missing script, or resolves against a different tree than you expect),
-find out what it actually resolved against - its working directory and
-whether a package.json / node_modules exists ABOVE the repo root - before
-trusting its result. Re-run gates with absolute paths when in doubt.
-Record the invocation that worked in the session notes so the next
-session does not rediscover it.
-
+Close by appending exactly ONE canonical PROGRESS.md line. Copy the
+shape EXACTLY — five pipe-separated fields on ONE physical line:
+SESSION <N> | <YYYY-MM-DD> | gates: <ids> | status: <PASS/PARTIAL/FAIL/BLOCKED> — <reason> | P00 v<version>
+Worked examples (same shape, real values — keep the field order):
+SESSION 3 | 2025-06-01 | gates: g1, g2 | status: PASS — 42/42 tests green; parity verified | P00 v1.1
+SESSION 4 | 2025-06-02 | gates: g4 | status: PARTIAL — g5 needs an owner API key; steps in BLOCKED.md | P00 v1.1
+This line is how the Plan Console reports gates in Plan health:
+- ONE physical line — never wrap it, however long the reason.
+- The reason sits BETWEEN the status word and the final '| P00'
+  field, after an em dash — never after P00, never its own field.
+- Lowercase 'gates:' and 'status:' labels with colons.
+- Gate ids EXACTLY as spelled in PART-01 §A session N — never bare
+  numbers, never 'all'.
+- List ONLY the gates that passed (a PARTIAL line lists the passed
+  subset; the reason explains the rest).
+- Drop ' — <reason>' only when nothing needs saying (the line then
+  ends '... | status: PASS | P00 v<version>').
+- The version is the 'Version' line of YOUR PART-00.md — never copy
+  the example's.
+The console parses leniently and flags non-canonical lines, but
+canonical is what reports cleanly.
 Execute per PART-00. Stop after gates pass and the PROGRESS line is
 appended.
 
@@ -2307,6 +2666,31 @@ No fixes, no rewrites.
 # bound. The OLDEST event is dropped first; every producer call site
 # stays a plain fire-and-forget self.q.put(...).
 DRAIN_MAXSIZE = 1000
+# R-11 split (v1.2.0) — buttons disabled while a chain runs vs buttons
+# that stay live. DISABLE: starts a chain or mutates plan/repo files
+# (incl. HEALTH.md / instruction files) — parallel or interleaved writes
+# are impossible. KEEP_LIVE: read-only tools (log/clipboard only), so the
+# owner can inspect state while an API call is in flight.
+BUSY_DISABLE = ("btn_proceed", "btn_freeze", "btn_recon", "btn_validate",
+                "btn_auto", "btn_sample", "btn_copy", "btn_next",
+                "btn_health", "btn_init_repo", "btn_update_cmds",
+                "btn_own_refresh", "btn_answer_save", "btn_recommend",
+                "btn_question_remove", "btn_tick_toggle",
+                "btn_verify_exists", "btn_oa_run", "btn_oa_done",
+                "btn_owner_resolve")
+BUSY_KEEP_LIVE = ("btn_status", "btn_report", "btn_showval",
+                  "btn_freeze_dry", "btn_oa_copy")
+# v1.2.0 — gate id → (notebook index, jump-button text) for the Freeze
+# gate checklist: one click from a failing gate to the tab that fixes it.
+_GATE_JUMP_TABS = {
+    "draft": (0, "Go to Intake →"),
+    "questions": (2, "Open Owner pass →"),
+    "owner_actions": (2, "Open Owner pass →"),
+    "parked": (2, "Open Owner pass →"),
+    "recon": (2, "Open Owner pass →"),
+    "validation": (0, "Go to Intake (Validate) →"),
+    "frozen": (1, "Go to Sessions →"),
+}
 # R-02 — secret deny-list (owner-confirmed 2026-09-05, PART-01 §E): a file
 # whose NAME matches one of these globs is never inlined into a context
 # pack; dotfiles are refused separately in _context_pack.
@@ -2496,6 +2880,138 @@ def _fit_dialog_to_screen(dlg, max_w, max_h, margin=32):
         dlg.after(250, _nudge)                # fallback if Map already fired
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# v3.8 — item detail modal.
+#
+# The recon and owner-action rows are TRUNCATED to a single line each (108 /
+# 100 chars) because a tk.Listbox cannot word-wrap. An earlier hover-tooltip
+# was removed: an overrideredirect Toplevel competes with the Listbox for
+# pointer events and can be torn down by its own <Leave>, which made one pane
+# look broken and the other fine. A modal is the right primitive here — it is
+# focus-modal, its text is selectable and copyable, it scrolls, and it never
+# races the pane behind it. Opened by DOUBLE-click on a row, so single-click
+# keeps its existing job (selection, which Tick/untick and Mark done rely on).
+# ---------------------------------------------------------------------------
+_MONO = "TkFixedFont"
+
+
+def _demarkdown(text):
+    """Light markdown cleanup for a plain read-only Text pane: drop `**bold**`
+    markers and `backtick` fences but keep every character of real content.
+    The file on disk stays the source of truth — this is presentation only."""
+    s = str(text)
+    s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)
+    s = re.sub(r"`([^`]*)`", r"\1", s)
+    return s
+
+
+def _wrap_para(text, width=88):
+    """Greedy whitespace wrap that preserves explicit newlines. The Text pane
+    wraps too, but pre-wrapping keeps the reading measure sane in a wide
+    dialog instead of running one 600-char line across it."""
+    out = []
+    for para in str(text).split("\n"):
+        if not para.strip():
+            out.append("")
+            continue
+        line = ""
+        for word in para.split():
+            if not line:
+                line = word
+            elif len(line) + 1 + len(word) <= width:
+                line += " " + word
+            else:
+                out.append(line)
+                line = word
+        if line:
+            out.append(line)
+    return "\n".join(out)
+
+
+def item_detail_dialog(parent, tokens, title, subtitle, sections,
+                       footer_hint=None):
+    """Screen-centred, focus-modal item detail window.
+
+    `sections` is a list of (heading, body, style) where style is "text" or
+    "mono". The body is READ-ONLY but selectable, so a command can be copied
+    straight out of it. Centring uses the same workarea-aware helper as the
+    license viewer, so it stays clear of the taskbar on small screens.
+    """
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    dlg.transient(parent)
+    _fit_dialog_to_screen(dlg, 940, 700)
+    if tokens:
+        try:
+            dlg.configure(bg=tokens["bg-main"])
+        except tk.TclError:
+            pass
+
+    frm = ttk.Frame(dlg, padding=14)
+    frm.pack(fill="both", expand=True)
+    frm.columnconfigure(0, weight=1)
+    frm.rowconfigure(2, weight=1)
+
+    ttk.Label(frm, text=title, font=("TkDefaultFont", 12, "bold"),
+              justify="left").grid(row=0, column=0, sticky="w")
+    if subtitle:
+        ttk.Label(frm, text=subtitle, justify="left",
+                  wraplength=880).grid(row=1, column=0, sticky="w",
+                                       pady=(2, 10))
+
+    body = scrolledtext.ScrolledText(frm, wrap="word", height=22, width=96,
+                                    relief="flat", borderwidth=0)
+    body.grid(row=2, column=0, sticky="nsew")
+    _theme_text_widget(body, tokens)
+    try:
+        body.tag_configure("head", font=("TkDefaultFont", 9, "bold"),
+                           spacing3=4,
+                           foreground=(tokens["accent-cyan"] if tokens
+                                       else "#0369a1"))
+        body.tag_configure("mono", font=_MONO)
+        body.tag_configure("gap", spacing3=12)
+    except tk.TclError:
+        pass
+    body.configure(state="normal")
+    for head, text, style in sections:
+        if not text:
+            continue
+        if head:
+            body.insert("end", head + "\n", "head")
+        if style == "mono":
+            # code is never re-wrapped: a broken SQL statement is a bug
+            body.insert("end", str(text) + "\n", "mono")
+        else:
+            body.insert("end", _wrap_para(text, 88) + "\n", "text")
+        body.insert("end", "\n", "gap")
+    body.configure(state="disabled")
+    body.tag_add("sel", "1.0", "end")   # select all, so Copy gives it all
+
+    bar = ttk.Frame(frm)
+    bar.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+    if footer_hint:
+        ttk.Label(bar, text=footer_hint, justify="left",
+                  wraplength=600).pack(side="left")
+    btn = ttk.Button(bar, text="Close")
+    btn.pack(side="right")
+    btn.focus_set()
+
+    def _close():
+        try:
+            dlg.grab_release()
+        except tk.TclError:
+            pass
+        dlg.destroy()
+
+    btn.configure(command=_close)
+    dlg.bind("<Escape>", lambda e: _close())
+    try:
+        dlg.grab_set()
+    except tk.TclError:
+        pass
+    return dlg
 
 
 def open_license_viewer(parent, title, tokens=None):
@@ -2746,6 +3262,7 @@ class App:
                 pass          # other platforms: best-effort, normal size
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._topbar()
+        self._plan_strip()          # v1.2.0 — live plan-state line
         self._tabs()
         # v3.4 — one shared slug var: typing in any tab refreshes the
         # helper lines of ALL three slug fields, not just the edited one
@@ -2757,6 +3274,10 @@ class App:
         root.after(100, self._drain)
         # v2.2 — started repos: offer new command-file protocols at startup
         root.after(400, self._auto_command_check)
+        # v1.2.0 — plan strip: first render now, then a 3 s poll so
+        # agent-written changes surface without any user action
+        self._strip_refresh()
+        root.after(3000, self._strip_tick)
 
     @staticmethod
     def _load_cfg():
@@ -2906,6 +3427,7 @@ class App:
         applied = apply_theme(self.root, self.style, self._theme_effective)
         self._tokens = THEMES[self._theme_effective] if applied else None
         self._tint_labels()
+        self._strip_refresh()   # v1.2.0 — strip colors follow the theme
 
     def _tint_labels(self):
         """Re-color the token-driven labels (hints, link, full-question
@@ -3058,6 +3580,156 @@ class App:
         self._intake_tab(f1); self._session_tab(f2); self._owner_tab(f3)
         nb.add(f1, text="Intake"); nb.add(f2, text="Sessions")
         nb.add(f3, text="Owner pass")
+        self.nb = nb   # v1.2.0 — tab jumps from the plan strip / gate dialog
+
+    # ------------------------------------------------------------ plan strip
+    def _plan_strip(self):
+        """v1.2.0 — one always-visible line between the top bar and the
+        tabs: the active slug's live plan state (stage, gate counts,
+        blocked / IN-PROGRESS marker, next session) plus a click-through
+        action link for the next thing to do. Shows state instead of
+        making the owner click Status; refreshed on a 3 s poll and on
+        slug/repo edits, so agent-written changes (PROGRESS.md,
+        VALIDATION.md, …) appear without any user action."""
+        strip = ttk.Frame(self.root)
+        strip.pack(fill="x", padx=10, pady=(4, 0))
+        self.strip_slug = ttk.Label(strip, text="Plan: —")
+        self.strip_slug.pack(side="left")
+        self.strip_state = ttk.Label(strip, text="")
+        self.strip_state.pack(side="left", padx=(8, 0))
+        self.strip_next = ttk.Label(strip, text="")
+        self.strip_next.pack(side="left", padx=(8, 0))
+        self.strip_action = ttk.Label(strip, text="", cursor="hand2",
+                                      takefocus=True)
+        self.strip_action.pack(side="right")
+        self.strip_action.bind("<Button-1>", self._strip_action_go)
+        self.strip_action.bind("<Return>", self._strip_action_go)
+        self._strip_job = None
+        self._strip_action_kind = None   # None | "copy" | "tab"
+        self._strip_action_tab = 0
+
+    def _strip_tick(self):
+        """Poll: re-read the plan dir so agent-side changes surface
+        without any user action (PROGRESS.md is agent-owned, PART-01
+        §F). Reschedules unconditionally — one bad read never kills the
+        strip (same discipline as _drain's `finally`)."""
+        self._strip_refresh()
+        self._strip_job = self.root.after(3000, self._strip_tick)
+
+    def _strip_refresh(self):
+        """Recompute the strip from the current repo+slug. Failure-safe:
+        an I/O hiccup (e.g. a file locked while the agent writes it)
+        keeps the last shown state; the poll retries in 3 s."""
+        try:
+            self._strip_render()
+        except Exception:
+            pass
+
+    def _strip_fg(self, label, key):
+        t = self._tokens
+        if t:
+            label.configure(foreground=t[key])
+
+    def _strip_render(self):
+        slug = self.slug_var.get().strip()
+        self._strip_action_kind = None
+        self.strip_action.configure(text="")
+        self.strip_next.configure(text="")
+        if not slug or not SLUG_RE.match(slug):
+            self.strip_slug.configure(text="Plan: —")
+            self.strip_state.configure(
+                text="type a slug above — live plan state appears here")
+            self._strip_fg(self.strip_state, "text-muted")
+            return
+        self.strip_slug.configure(text="Plan: %s" % slug)
+        pdir = self.repo_path() / "plans" / slug
+        if not pdir.is_dir():
+            self.strip_state.configure(
+                text="no plan yet — paste a plan on the Intake tab and "
+                     "click Proceed")
+            self._strip_fg(self.strip_state, "text-muted")
+            return
+        snap = plan_snapshot(pdir)
+        if snap["stage"] == "empty":
+            self.strip_state.configure(
+                text="plans/%s is empty — run Intake first" % slug)
+            self._strip_fg(self.strip_state, "text-muted")
+            return
+        if snap["stage"] == "draft":
+            fails = [g for g in snap["gates"]
+                     if not g["ok"] and g["id"] not in ("draft", "frozen")]
+            self.strip_state.configure(
+                text="draft · %d question(s) · %d owner action(s) · "
+                     "%d parked · %d recon · validation %s"
+                     % (snap["questions"], snap["owner_actions"],
+                        snap["parked"], snap["recon"],
+                        "✓" if snap["validation"] == "ready" else "✗"))
+            if fails:
+                self._strip_fg(self.strip_state, "accent-orange")
+                _idx, text = _GATE_JUMP_TABS.get(fails[0]["id"],
+                                                 (0, "Go to Intake →"))
+                self.strip_action.configure(text=text)
+                self._strip_action_kind, self._strip_action_tab = "tab", _idx
+                self._strip_fg(self.strip_action, "accent-cyan")
+            else:
+                self._strip_fg(self.strip_state, "accent-green")
+                self.strip_action.configure(text="Ready to Freeze ✓")
+                self._strip_action_kind, self._strip_action_tab = "tab", 0
+                self._strip_fg(self.strip_action, "accent-green")
+            return
+        # frozen
+        if snap["blocked"]:
+            self.strip_state.configure(
+                text="frozen (%s) · BLOCKED — resolve, rename BLOCKED.md → "
+                     "BLOCKED-resolved.md, re-run" % snap["frozen_name"])
+            self._strip_fg(self.strip_state, "accent-red")
+            self.strip_action.configure(text="Go to Sessions →")
+            self._strip_action_kind, self._strip_action_tab = "tab", 1
+            self._strip_fg(self.strip_action, "accent-cyan")
+            return
+        if snap["in_progress"] is not None:
+            n, leg = snap["in_progress"]
+            detail = ("◔ in progress — marker present (session number "
+                      "unreadable)" if n is None
+                      else "◔ in progress — session %d%s" % (n, leg))
+            self.strip_state.configure(
+                text="frozen (%s) · %s" % (snap["frozen_name"], detail))
+            self._strip_fg(self.strip_state, "accent-orange")
+            self.strip_action.configure(text="Resume — copy instruction →")
+            self._strip_action_kind = "copy"
+            self._strip_fg(self.strip_action, "accent-cyan")
+            return
+        nxt = snap["next"]
+        if nxt is None or nxt["n"] is None:
+            self.strip_state.configure(
+                text="frozen (%s)" % snap["frozen_name"])
+            self.strip_next.configure(text="next: all sessions recorded ✓")
+            self._strip_fg(self.strip_next, "accent-green")
+            return
+        self.strip_state.configure(text="frozen (%s)" % snap["frozen_name"])
+        self.strip_next.configure(text="next: %s" % nxt["label"])
+        if nxt["copyable"]:
+            self._strip_fg(self.strip_next, "accent-cyan")
+            what = ("leg %d%s" % (nxt["n"], nxt["leg"])) if nxt["leg"] \
+                else ("session %d" % nxt["n"])
+            self.strip_action.configure(text="Copy %s →" % what)
+            self._strip_action_kind = "copy"
+            self._strip_fg(self.strip_action, "accent-cyan")
+        else:
+            self._strip_fg(self.strip_next, "accent-orange")
+            self.strip_action.configure(text="Session report →")
+            self._strip_action_kind, self._strip_action_tab = "tab", 1
+            self._strip_fg(self.strip_action, "accent-cyan")
+
+    def _strip_action_go(self, _e=None):
+        """The strip's action link: either jump to the tab that resolves
+        the current state, or prefill+copy the next session (single code
+        path — on_next_session recomputes before copying)."""
+        if self._strip_action_kind == "copy":
+            self._goto_tab(1)
+            self.on_next_session()
+        elif self._strip_action_kind == "tab":
+            self._goto_tab(self._strip_action_tab)
 
     def _mklog(self, parent, name, height):
         st = ttk.Label(parent, text="idle", style="Pill.TLabel")
@@ -3144,17 +3816,23 @@ class App:
                                 values=("full", "a", "b"), width=6,
                                 state="disabled")
         self.leg.grid(row=0, column=5, padx=4)
+        # v1.2.0 — the daily loop's first button: prefill the first
+        # not-done session/leg (from PROGRESS.md, same logic as Status)
+        # and copy its instruction in one click
+        self.btn_next = ttk.Button(top, text="Next session →",
+                                   command=self.on_next_session)
+        self.btn_next.grid(row=0, column=6, padx=6)
         self.btn_copy = ttk.Button(top, text="Copy session instruction",
                                    command=self.on_copy_instr)
-        self.btn_copy.grid(row=0, column=6, padx=6)
+        self.btn_copy.grid(row=0, column=7, padx=6)
         self.btn_status = ttk.Button(top, text="Status", command=self.on_status)
-        self.btn_status.grid(row=0, column=7, padx=4)
+        self.btn_status.grid(row=0, column=8, padx=4)
         self.btn_report = ttk.Button(top, text="Session report",
                                      command=self.on_report)
-        self.btn_report.grid(row=0, column=8, padx=4)
+        self.btn_report.grid(row=0, column=9, padx=4)
         self.btn_health = ttk.Button(top, text="Plan health",
                                      command=self.on_health)
-        self.btn_health.grid(row=0, column=9, padx=4)
+        self.btn_health.grid(row=0, column=10, padx=4)
         self._mklog(f, "sessions", 22)
         # v3.6 — keep the Leg selector in step with slug edits too
         self.slug_var.trace_add("write", lambda *a: self._leg_sync())
@@ -3195,17 +3873,51 @@ class App:
                                          command=self.on_freeze_dry_run)
         self.btn_freeze_dry.grid(row=0, column=3, padx=4)
         self.owner_status = ttk.Label(top, text="enter slug and click Refresh",
-                                      style="Pill.TLabel")
-        self.owner_status.grid(row=0, column=4, padx=10)
-        # v2.0 — flow hint so the next step is always visible
+                                      style="Pill.TLabel", justify="left",
+                                      anchor="w", wraplength=360)
+        self.owner_status.grid(row=0, column=4, padx=10, sticky="w")
+        # v3.8 - the status line is the longest string in this tab (four
+        # counters plus a next-action hint) and shares row 0 with the slug
+        # field, Refresh and the Freeze button. A ttk.Label cannot shrink
+        # below its requested width, so in a narrow window the tail was drawn
+        # past the frame edge and clipped - the owner lost the "next:"
+        # instruction, which is the whole point of the line. Keep a
+        # wraplength in sync with the width left over after the other three
+        # widgets so it folds instead of clipping. The >8px guard stops the
+        # <Configure> -> configure -> <Configure> feedback loop.
+        def _fit_owner_status(event=None):
+            try:
+                others = (top.winfo_reqwidth()
+                          - self.owner_status.winfo_reqwidth())
+                avail = max(240, top.winfo_width() - others - 28)
+                cur = self.owner_status.cget("wraplength")
+                if not isinstance(cur, int) or abs(cur - avail) > 8:
+                    self.owner_status.configure(wraplength=avail)
+            except Exception:
+                pass
+        top.bind("<Configure>", _fit_owner_status)
+        # v2.0 - flow hint so the next step is always visible
         self._flow_hint = ttk.Label(
             f, text="Flow: Refresh → answer every question (saved to "
                     "PART-01.draft.md ## OWNER ANSWERS) → 'Agent: finish "
                     "owner pass' → paste to agent → Refresh → tick recon → "
                     "Validate → Freeze. Nothing you answer or remove is "
                     "ever lost (owner-pass.log + .bak).",
-            wraplength=780, justify="left")
+            wraplength=760, justify="left")
         self._flow_hint.pack(anchor="w", padx=10, pady=(2, 0))
+        # v3.8 - same clipping class as owner_status: a FIXED wraplength
+        # (780) is itself a lower bound on the requested width, so this hint
+        # was cut off on any window narrower than ~800px. Track the tab width
+        # instead, with the same >8px change guard.
+        def _fit_flow_hint(event=None):
+            try:
+                avail = max(240, f.winfo_width() - 24)
+                cur = self._flow_hint.cget("wraplength")
+                if not isinstance(cur, int) or abs(cur - avail) > 8:
+                    self._flow_hint.configure(wraplength=avail)
+            except Exception:
+                pass
+        f.bind("<Configure>", _fit_flow_hint)
         body = ttk.Frame(f); body.pack(fill="both", expand=True, padx=10, pady=6)
         # left: open questions
         lq = ttk.Labelframe(body, text="Open questions — select, type answer below")
@@ -3251,6 +3963,12 @@ class App:
         rc.pack(side="left", fill="both", expand=True, padx=(5, 0))
         self.rc_list = tk.Listbox(rc, height=10)
         self.rc_list.pack(fill="both", expand=True, padx=6, pady=6)
+        # v3.8 — DOUBLE-click opens the item detail modal. Single-click is
+        # left alone on purpose: it is what selects the row, and both
+        # "Tick/untick selected" and "Verify EXISTS items" act on that
+        # selection, so opening a modal on every click would interrupt the
+        # one workflow those buttons exist to serve.
+        self.rc_list.bind("<Double-Button-1>", self._on_rc_double_click)
         barr = ttk.Frame(rc); barr.pack(fill="x", padx=6, pady=6)
         self.btn_tick_toggle = ttk.Button(barr, text="Tick/untick selected",
                                           command=self.on_tick_toggle)
@@ -3264,6 +3982,7 @@ class App:
         oa.pack(side="left", fill="both", expand=True, padx=(5, 0))
         self.oa_list = tk.Listbox(oa, height=10)
         self.oa_list.pack(fill="both", expand=True, padx=6, pady=6)
+        self.oa_list.bind("<Double-Button-1>", self._on_oa_double_click)
         baro = ttk.Frame(oa); baro.pack(fill="x", padx=6, pady=6)
         self.btn_oa_run = ttk.Button(baro, text="Run (read-only)",
                                      command=self.on_owner_action_run)
@@ -3300,38 +4019,16 @@ class App:
 
     # v2.0 — frozen-plan locator: "PART-01 v*.md" or legacy PART-01.md
     def _frozen_file(self, pdir):
-        if not pdir.is_dir():
-            return None
-        def _vkey(p):
-            # numeric version sort — lexicographic would rank v1.10 < v1.2
-            m = re.search(r"v(\d+)\.(\d+)", p.name)
-            return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-        vers = sorted(pdir.glob("PART-01 v*.md"), key=_vkey)
-        if vers:
-            return vers[-1]
-        legacy = pdir / "PART-01.md"
-        if legacy.is_file():
-            head = "\n".join(legacy.read_text(encoding="utf-8")
-                             .splitlines()[:3]).lower()
-            if "frozen" in head:
-                return legacy
-        return None
+        return find_frozen_file(pdir)
 
     def _in_progress(self, pdir):
         """v2.2 — (path, session_number, leg) of an interrupted session
         per commands/session.md, or (None, None, ""). The marker file
         lives at plans/<slug>/IN-PROGRESS.md while the agent works.
-        v3.6 — the marker may carry the split leg ('session 6a')."""
-        f = pdir / "IN-PROGRESS.md"
-        if not f.is_file():
-            return None, None, ""
-        try:
-            body = f.read_text(encoding="utf-8")
-        except Exception:
-            return f, None, ""   # undecodable marker → unreadable, not a crash
-        m = re.search(r"(?i)session\s+(\d+)\s*([ab])?\b", body)
-        return (f, (int(m.group(1)) if m else None),
-                ((m.group(2) or "").lower() if m else ""))
+        v3.6 — the marker may carry the split leg ('session 6a').
+        v1.2.0 — body extracted to in_progress_marker() (module-level,
+        shared with plan_snapshot)."""
+        return in_progress_marker(pdir)
 
     def on_owner_refresh(self):
         got = self._owner_paths()
@@ -3789,6 +4486,131 @@ class App:
         else:
             self._set_q_full("")
 
+    # ------------------------------------------- v3.8 item detail modal
+    def _open_item_dialog(self, title, sections, footer_hint):
+        """Open (or replace) the single item detail dialog.
+
+        A tk.Listbox reports a double-click as TWO Button-1 events, so a
+        plain click binding would stack two modals on a double-click. One
+        slot, replaced rather than stacked, keeps a double-click behaving as
+        "reopen the item I am already reading"."""
+        old = getattr(self, "_item_dlg", None)
+        if old is not None:
+            try:
+                if old.winfo_exists():
+                    old.destroy()
+            except tk.TclError:
+                pass
+        self._item_dlg = item_detail_dialog(
+            self.root, getattr(self, "_tokens", None), title, "", sections,
+            footer_hint=footer_hint)
+        return self._item_dlg
+
+    def _on_rc_double_click(self, event):
+        """Double-click in the recon list -> detail modal for that row. The
+        row is also selected, so Tick/untick selected and Verify EXISTS items
+        act on the item the owner just read."""
+        index = self.rc_list.nearest(event.y)
+        if index < 0 or index >= self.rc_list.size():
+            return
+        try:
+            self.rc_list.selection_clear(0, "end")
+            self.rc_list.selection_set(index)
+            self.rc_list.activate(index)
+        except tk.TclError:
+            pass
+        self._show_recon_item(index)
+
+    def _on_oa_double_click(self, event):
+        """Double-click in the owner-actions list -> detail modal for that row.
+        Also selects it, which is what "Mark done" and "Run (read-only)" act
+        on."""
+        index = self.oa_list.nearest(event.y)
+        if index < 0 or index >= self.oa_list.size():
+            return
+        try:
+            self.oa_list.selection_clear(0, "end")
+            self.oa_list.selection_set(index)
+            self.oa_list.activate(index)
+        except tk.TclError:
+            pass
+        self._show_owner_item(index)
+
+    def _show_recon_item(self, index):
+        """Open the detail modal for recon row `index`.
+
+        The row itself is a single truncated line (a Listbox cannot wrap), so
+        this shows the WHOLE checklist item with its state and provenance,
+        laid out for reading rather than for grepping."""
+        try:
+            items = getattr(self, "_rc_items", ())
+            if not (0 <= index < len(items)):
+                return
+            lineno, line = items[index]
+        except Exception:
+            return
+        state = recon_item_state(line)
+        if state is None:
+            return
+        done = state == "done"
+        label = _demarkdown(str(line).strip().lstrip("- ").strip())
+        sections = [
+            ("STATE",
+             "PASSED — ticked in RECON-CHECKLIST.md" if done
+             else "OPEN — not yet ticked", "text"),
+            ("SOURCE", "plans/%s/RECON-CHECKLIST.md, line %d"
+             % (self._get_slug("owner"), lineno + 1), "text"),
+        ]
+        if is_deferred(line):
+            sections.append(
+                ("NOTE", "Marked DEFERRED, so it counts as resolved for the "
+                 "Freeze gate even while unticked.", "text"))
+        sections.append(("ITEM", label, "text"))
+        self._open_item_dialog(
+            "Recon checklist item", sections,
+            footer_hint="Double-click a row to reopen; "
+                        "Tick/untick selected still applies to this row.")
+
+    def _show_owner_item(self, index):
+        """Open the detail modal for owner-action row `index`: what it does,
+        the exact command, which §B line it confirms and the expected result —
+        the command is the part the 100-char row truncation hides."""
+        try:
+            items = getattr(self, "_oa_items", ())
+            if not (0 <= index < len(items)):
+                return
+            a = items[index]
+        except Exception:
+            return
+        cmd = a.get("command")
+        ro = bool(cmd) and is_readonly_command(cmd)
+        sections = [
+            ("STATE", "DONE — ticked in OPEN-QUESTIONS.md" if a["checked"]
+             else "OUTSTANDING — owner action still to run", "text"),
+            ("SOURCE", "plans/%s/OPEN-QUESTIONS.md, line %d"
+             % (self._get_slug("owner"), a["lineno"] + 1), "text"),
+            ("WHAT IT DOES", _demarkdown(a.get("prose") or ""), "text"),
+        ]
+        if cmd:
+            sections.append((
+                "COMMAND  (safe to run here — read-only)" if ro else
+                "COMMAND  (run in the Supabase dashboard SQL editor)",
+                cmd, "mono"))
+        if a.get("verifies"):
+            # shown verbatim: the tag already carries the §B line's own
+            # "UNVERIFIED ..." prefix, so do not add a second one
+            sections.append(
+                ("CONFIRMS THIS §B LINE",
+                 str(a["verifies"]).strip(), "text"))
+        if a.get("expect"):
+            sections.append(
+                ("EXPECTED RESULT", str(a["expect"]).strip(), "mono"))
+        hint = ("Read-only: the Owner-pass tab can run it for you with "
+                "Run (read-only)." if ro else
+                "Copy-only: this one needs the Supabase dashboard, so run it "
+                "there and paste the result back.")
+        self._open_item_dialog("Owner action", sections, hint)
+
     def _q_label(self, lineno):
         """One-line label for the question list: the QUESTION: line of a
         v2.1 block when present, else the (legacy) header line itself.
@@ -4037,6 +4859,7 @@ class App:
                 repo = self.repo_path()
                 if repo.is_dir() and not (repo / "plans" / slug).is_dir():
                     self.slug_var.set("")
+        self._strip_refresh()   # v1.2.0 — the strip follows the repo too
 
     def repo_path(self):
         return Path(self.repo.get().strip()).expanduser().resolve()
@@ -4111,11 +4934,13 @@ class App:
 
     def _on_slug_var_changed(self, *_):
         """v3.4 — write-trace on the shared slug var: all three helper
-        lines stay in sync no matter which tab the user types in."""
+        lines stay in sync no matter which tab the user types in.
+        v1.2.0 — the plan strip follows the slug too."""
         for cb in (getattr(self, "slug", None), getattr(self, "sslug", None),
                    getattr(self, "oslug", None)):
             if cb is not None:
                 self._slug_feedback(cb)
+        self._strip_refresh()
 
     def _slug_values(self):
         """v3.2 — dropdown values: recent slugs first, then every
@@ -4244,24 +5069,21 @@ class App:
                     else:
                         self._n_busy = max(0, self._n_busy - 1)
                     busy_now = self._n_busy > 0
-                    # R-11 — full busy-disable set: every button that can
-                    # start a chain or mutate plan/repo files, so parallel
-                    # chains (and interleaved writes) are impossible.
-                    for name in ("btn_proceed", "btn_freeze", "btn_recon",
-                                 "btn_validate", "btn_auto", "btn_showval",
-                                 "btn_sample",
-                                 "btn_copy", "btn_status", "btn_report",
-                                 "btn_health", "btn_init_repo",
-                                 "btn_update_cmds", "btn_own_refresh",
-                                 "btn_freeze_dry", "btn_answer_save",
-                                 "btn_recommend", "btn_question_remove",
-                                 "btn_tick_toggle", "btn_verify_exists",
-                                 "btn_oa_run", "btn_oa_copy", "btn_oa_done",
-                                 "btn_owner_resolve"):
+                    # R-11 (v1.2.0 split) — BUSY_DISABLE: every button that
+                    # can start a chain or mutate plan/repo files, so
+                    # parallel chains (and interleaved writes) are
+                    # impossible. BUSY_KEEP_LIVE: read-only tools stay
+                    # usable while a chain runs — inspecting state is
+                    # exactly what the owner needs mid-chain.
+                    for name in BUSY_DISABLE:
                         b = getattr(self, name, None)
                         if b:
                             b.configure(state="disabled" if busy_now
                                         else "normal")
+                    for name in BUSY_KEEP_LIVE:
+                        b = getattr(self, name, None)
+                        if b:
+                            b.configure(state="normal")
                     # R-11 — Cancel is the inverse: enabled only while a
                     # chain is actually running, disabled when idle.
                     cb = getattr(self, "btn_cancel", None)
@@ -5093,74 +5915,86 @@ class App:
         return "\n\n".join(picked) if picked else "(no matching files found)"
 
     # -------------------------------------------------------------- freeze
-    def _freeze_blockers(self, pdir):
-        """v2.6 — P1: the on_freeze() gate checks, read-only. Returns the
-        list of things that would block Freeze right now (empty = clear).
-        Mutates nothing — the real Freeze keeps its own flow, including
-        the already-frozen self-heal."""
-        out = []
-        if not (pdir / "PART-01.draft.md").is_file():
-            out.append("PART-01.draft.md not found — run intake first")
-        frozen = self._frozen_file(pdir)
-        if frozen:
-            out.append("already frozen (%s)" % frozen.name)
-        oq = pdir / "OPEN-QUESTIONS.md"
-        if oq.is_file():
-            oq_text = oq.read_text(encoding="utf-8")
-            qs = parse_questions(oq_text)
-            if qs:
-                out.append("%d open question(s) in OPEN-QUESTIONS.md — "
-                           "answer them in the Owner pass tab" % len(qs))
-            # v3.5 — unchecked owner actions block Freeze: commands only
-            # the owner may run must not be silently skipped
-            noa = count_open_owner_actions(oq_text)
-            if noa:
-                out.append("%d unchecked owner action(s) under '## Owner "
-                           "actions' — run/copy them in the Owner pass "
-                           "tab or mark them done" % noa)
-        draft = pdir / "PART-01.draft.md"
-        if draft.is_file():
-            # v2.7 — owner-resolve gate: answers parked in ## OWNER
-            # ANSWERS are not yet part of the plan body
-            na = count_owner_answers(draft.read_text(encoding="utf-8"))
-            if na:
-                out.append("%d owner answer(s) parked in ## OWNER ANSWERS "
-                           "— run 'Agent: finish owner pass' "
-                           "(owner-resolve) to integrate them, then "
-                           "re-validate" % na)
-        rc = pdir / "RECON-CHECKLIST.md"
-        if rc.is_file():
-            # v2.0 — owner-marked DEFERRED items no longer block Freeze;
-            # v2.6.1 — anchored checkbox matching (prose mentioning `- [ ]`
-            # in the header is not an item)
-            n = count_open_recon(rc.read_text(encoding="utf-8"))
-            if n:
-                out.append("%d unchecked item(s) in RECON-CHECKLIST.md — "
-                           "tick them in the Owner pass tab or mark the "
-                           "line DEFERRED" % n)
-        val = pdir / "VALIDATION.md"
-        if not val.is_file():
-            out.append("VALIDATION.md not found — click 'Validate draft' "
-                       "first (paste the copied instruction to your agent)")
-        elif val.read_text(encoding="utf-8").strip() != "PART-01 READY":
-            out.append("VALIDATION.md is not 'PART-01 READY' — resolve the "
-                       "findings, re-validate")
-        return out
-
     def on_freeze_dry_run(self):
-        """v2.6 — P1: print what would block Freeze right now; owner no
-        longer has to guess or switch tabs."""
+        """v2.6 — P1: show what would block Freeze right now; owner no
+        longer has to guess or switch tabs. v1.2.0 — the SAME ✓/✗
+        checklist dialog the real Freeze shows on failure (both read
+        freeze_gate_report, so they can never disagree), plus the usual
+        log summary."""
         got = self._owner_paths()
         if got is None: return
-        _slug, pdir = got
-        blockers = self._freeze_blockers(pdir)
-        if not blockers:
+        slug, pdir = got
+        gates = freeze_gate_report(pdir)
+        self._freeze_gates_dialog(slug, gates, "Freeze check", verb="Freeze")
+        nfail = sum(1 for g in gates if not g["ok"])
+        if not nfail:
             self.say("owner", "freeze dry-run: nothing blocking — Freeze "
                      "is unblocked.")
-            return
-        self.say("owner", "freeze dry-run — %d blocker(s):" % len(blockers))
-        for b in blockers:
-            self.say("owner", "  - " + b)
+        else:
+            self.say("owner", "freeze dry-run — %d of %d gate(s) fail:"
+                     % (nfail, len(gates)))
+            for g in gates:
+                if not g["ok"]:
+                    self.say("owner", "  ✗ %s — %s" % (g["label"], g["detail"]))
+
+    def _freeze_gates_dialog(self, slug, gates, title, verb=None):
+        """v1.2.0 — the ✓/✗ Freeze-gate checklist in ONE dialog: every
+        gate with its state and remedy, plus a jump-to-tab button for
+        the first failing gate. Non-modal, themed like the popups.
+        `title` names the dialog/window; `verb` names the action in the
+        header (both 'Freeze' for the real gate check, 'Freeze check'
+        for the dry run)."""
+        verb = verb or title
+        win = tk.Toplevel(self.root)
+        win.title("%s gates — %s" % (title, slug))
+        t = self._tokens
+        if t:
+            win.configure(bg=t["bg-main"])
+        frm = ttk.Frame(win, padding=14)
+        frm.pack(fill="both", expand=True)
+        nfail = sum(1 for g in gates if not g["ok"])
+        if nfail:
+            header = ("%d of %d gates pass — resolve the ✗ items, then "
+                      "%s again." % (len(gates) - nfail, len(gates), verb))
+        else:
+            header = "All %d gates pass — %s is unblocked." % (len(gates),
+                                                               title)
+        ttk.Label(frm, text=header, font=("", 10, "bold"),
+                  wraplength=540, justify="left")\
+            .pack(anchor="w", pady=(0, 8))
+        for g in gates:
+            row = ttk.Frame(frm)
+            row.pack(anchor="w", fill="x", pady=1)
+            glyph_kw = ({"foreground": t["accent-green" if g["ok"]
+                                              else "accent-red"]} if t else {})
+            tk.Label(row, text="✓" if g["ok"] else "✗", **glyph_kw)\
+                .pack(side="left")
+            ttk.Label(row, text="%s — %s" % (g["label"], g["detail"]),
+                      wraplength=520, justify="left")\
+                .pack(side="left", padx=(4, 0))
+        bar = ttk.Frame(frm); bar.pack(fill="x", pady=(12, 0))
+        first_fail = next((g for g in gates if not g["ok"]), None)
+        if first_fail:
+            tab_idx, btn_text = _GATE_JUMP_TABS.get(
+                first_fail["id"], (None, None))
+            if btn_text is not None:
+                ttk.Button(bar, text=btn_text,
+                           command=lambda: (self._goto_tab(tab_idx),
+                                            win.destroy()))\
+                    .pack(side="left")
+        ttk.Button(bar, text="Close", command=win.destroy).pack(side="right")
+        win.transient(self.root)
+        win.lift()
+
+    def _goto_tab(self, index):
+        """v1.2.0 — switch the notebook to a tab by index (0 Intake,
+        1 Sessions, 2 Owner pass); no-op when the tab bar is absent."""
+        nb = getattr(self, "nb", None)
+        if nb is not None:
+            try:
+                nb.select(index)
+            except tk.TclError:
+                pass
 
     def _pending_questions(self, f):
         # v2.1 — block-aware parser: one count per question block,
@@ -5203,64 +6037,16 @@ class App:
             messagebox.showerror("Freeze", "plans/%s is already frozen (%s).%s"
                                  % (slug, frozen_existing.name, healed))
             return
-        oq = pdir / "OPEN-QUESTIONS.md"
-        if oq.is_file():
-            oq_text = oq.read_text(encoding="utf-8")
-            qs = parse_questions(oq_text)
-            if qs:
-                # v2.1 — show the QUESTION line (the decision), not the
-                # PROBLEM header; full blocks live in the Owner pass tab
-                shown = []
-                for lineno, _hdr in qs[:6]:
-                    blk = [l.strip() for l in
-                           question_block(oq_text, lineno).strip().splitlines()]
-                    qline = next((l for l in blk
-                                  if re.match(r"QUESTION\s*:", l, re.I)),
-                                 blk[0] if blk else "")
-                    shown.append(qline[:90])
-                messagebox.showerror("Freeze",
-                    "OPEN-QUESTIONS.md still has %d open question(s):\n\n%s\n\n"
-                    "Answer them in the Owner pass tab (answering removes the "
-                    "whole PROBLEM/QUESTION/RECOMMEND block; loose prose/SQL "
-                    "lines do not count as questions)."
-                    % (len(qs), "\n".join(shown)))
-                return
-        # v2.7 — owner-resolve gate (matches _freeze_blockers): answers
-        # parked in ## OWNER ANSWERS are a TEMPORARY inbox — they must
-        # be integrated into §A–§G before the plan is frozen
-        na = count_owner_answers(draft.read_text(encoding="utf-8"))
-        if na:
-            messagebox.showerror("Freeze",
-                "PART-01.draft.md still parks %d owner answer(s) in "
-                "## OWNER ANSWERS (a TEMPORARY inbox — they are not yet "
-                "part of the plan body).\n\nClick 'Agent: finish owner "
-                "pass' so they are integrated into §A–§G, then "
-                "re-validate and Freeze." % na)
-            return
-        rc = pdir / "RECON-CHECKLIST.md"
-        if rc.is_file():
-            # v2.0 — owner-marked DEFERRED items no longer block Freeze;
-            # v2.6.1 — anchored checkbox matching (prose mentioning `- [ ]`
-            # in the header is not an item)
-            n = count_open_recon(rc.read_text(encoding="utf-8"))
-            if n:
-                messagebox.showerror("Freeze", "RECON-CHECKLIST.md has %d unchecked "
-                                     "item(s) — tick them in the Owner pass tab "
-                                     "or mark the line DEFERRED." % n)
-                return
-        # v2.0 — validation gate (matches commands/freeze-plan.md preconditions)
-        val = pdir / "VALIDATION.md"
-        if not val.is_file():
-            messagebox.showerror("Freeze", "VALIDATION.md not found — click "
-                                 "'Validate draft' first (paste the copied "
-                                 "instruction to your agent), then Freeze.")
-            return
-        vbody = val.read_text(encoding="utf-8").strip()
-        if vbody != "PART-01 READY":
-            messagebox.showerror("Freeze",
-                                 "VALIDATION.md is not 'PART-01 READY':\n\n%s\n\n"
-                                 "Resolve the findings, re-validate, then "
-                                 "Freeze." % vbody[:500])
+        # v1.2.0 — ALL gates at once: one ✓/✗ checklist dialog instead of
+        # one error per failed gate (no more click-Freeze → fix → click-
+        # Freeze discovery loop). freeze_gate_report is also the dry
+        # run's source, so Freeze and 'What's blocking Freeze?' can never
+        # disagree; it includes the v3.5 owner-actions gate the real
+        # Freeze previously skipped.
+        gates = freeze_gate_report(pdir)
+        if any(not g["ok"] for g in gates
+               if g["id"] not in ("draft", "frozen")):
+            self._freeze_gates_dialog(slug, gates, "Freeze")
             return
         body = draft.read_text(encoding="utf-8")
         # v2.0 — versioned filename: PART-01 v1.0.md
@@ -5273,9 +6059,10 @@ class App:
             prog.write_text("# PROGRESS — %s | PART-01 v1.0 | %s\n"
                             % (slug, date.today()), encoding="utf-8")
         self.say("intake", "FROZEN v1.0 — plan ready as 'plans/%s/"
-                 "PART-01 v1.0.md' (draft kept as history). Go to the Sessions "
-                 "tab, enter the slug, and click 'Copy session instruction' "
-                 "for session 1." % slug)
+                 "PART-01 v1.0.md' (draft kept as history). Go to the "
+                 "Sessions tab and click 'Next session →' to copy the "
+                 "session-1 instruction." % slug)
+        self._strip_refresh()   # v1.2.0 — strip flips to frozen immediately
 
     # ------------------------------------------------------------ sessions
     def _session_guards(self, leg=""):
@@ -5323,11 +6110,21 @@ class App:
         prog = pdir / "PROGRESS.md"
         done = set()
         if prog.is_file():
-            # v2.5 — lenient reader (read_progress): a drifting PROGRESS
+            # v2.5 - lenient reader (read_progress): a drifting PROGRESS
             # line ('Session #2 …', fields on separate lines) can no
             # longer hide a completed predecessor session
             done = {rec["n"] for rec in read_progress(prog)}
-        missing = [i for i in range(1, n) if i not in done]
+        # Owner-DEFERRED predecessors are skipped, not required. A plan may keep
+        # a row whose gate id must stay on the map so nothing renumbers while
+        # stating the session is NOT executed in this plan; no PROGRESS record
+        # for it can ever exist, because the only canonical 'done' status is
+        # PASS and asserting that would be claiming a gate for work never done
+        # (exactly what the row's own §A/§G clauses forbid). Without this the
+        # guard made every session after a deferred row permanently unrunnable.
+        rows_now = self._session_map(pdir)
+        missing = [i for i in range(1, n)
+                   if i not in done
+                   and not session_row_deferred(rows_now.get(i))]
         if missing:
             messagebox.showerror("Sequence", "PROGRESS.md doesn't show session(s) "
                                  "%s as complete — run sessions in order." % missing)
@@ -5479,6 +6276,45 @@ class App:
                      "post-deploy gate.")
         self.say("sessions", "When the agent finishes, click 'Session report'.")
 
+    def on_next_session(self):
+        """v1.2.0 — prefill the first not-done session/leg from
+        PROGRESS.md (next_pending_session — the exact computation Status
+        reports) and copy its instruction: the daily loop becomes one
+        click instead of type-#-maybe-leg-click-copy. The DEPLOY WINDOW
+        state copies leg b, which asks for the Coolify confirmation —
+        the designed flow."""
+        repo = self._preflight()
+        if repo is None: return
+        slug = self._get_slug("sessions")
+        if not SLUG_RE.match(slug):
+            messagebox.showerror("Next session",
+                                 "Enter the slug first (kebab-case).")
+            return
+        pdir = repo / "plans" / slug
+        nxt = next_pending_session(pdir)
+        if nxt is None:
+            messagebox.showerror(
+                "Next session",
+                "No frozen plan in plans/%s/ — freeze first (Intake tab)."
+                % slug)
+            return
+        if nxt["n"] is None:
+            messagebox.showinfo(
+                "Next session",
+                "plans/%s: %s — nothing left to run." % (slug, nxt["label"]))
+            return
+        if not nxt["copyable"]:
+            messagebox.showwarning(
+                "Next session",
+                "plans/%s: %s.\n\nOpen 'Session report' for the exact "
+                "state before continuing." % (slug, nxt["label"]))
+            return
+        self.snum.set(str(nxt["n"]))
+        self._leg_sync()
+        if nxt["leg"]:
+            self.leg_var.set(nxt["leg"])
+        self.on_copy_instr()
+
     def _log_deploy_window(self, pdir, slug, n):
         """v3.6 §C4/§F — one HEALTH.md audit line per owner-confirmed
         6b (post-deploy) instruction copy. HEALTH.md stays
@@ -5556,55 +6392,21 @@ class App:
         blocked = ("YES — resolve, then rename BLOCKED.md → "
                    "BLOCKED-resolved.md"
                    if (pdir / "BLOCKED.md").is_file() else "no")
-        # v3.6 — leg-aware next pointer (which leg is next / DEPLOY WINDOW)
+        # v1.2.0 — next pointer shared with the plan strip and the
+        # 'Next session →' prefill (next_pending_session): one wording
+        # everywhere (DEPLOY WINDOW / split legs included)
         nxt = "n/a (not frozen)"
         if frozen:
-            rows = self._session_map(pdir)
-            recs = read_progress(prog) if prog.is_file() else []
-            done = {(r["n"], r["leg"]) for r in recs}
-            nxt = "all sessions recorded"
-            for n in sorted(rows):
-                if rows[n][3]:
-                    if (n, "a") not in done:
-                        nxt = "leg %da (pre-deploy)" % n
-                        break
-                    if (n, "b") not in done:
-                        a = _pick_leg(recs, n, "a")
-                        nxt = ("DEPLOY WINDOW — owner runs Coolify NOW, then "
-                               "leg %db (post-deploy)" % n
-                               if a is not None and a["status"] == "PASS"
-                               else "leg %da (pre-deploy) — not PASS yet" % n)
-                        break
-                elif (n, "") not in done:
-                    nxt = "session %d" % n
-                    break
+            nxt = next_pending_session(pdir)["label"]
         self.say("sessions", "STATUS — %s | stage: %s | in progress: %s | last "
                  "progress: %s | open questions: %d | blocked: %s | next: %s"
                  % (slug, stage, inprog, tail, q, blocked, nxt))
 
     # --------------------------------------------- shared session analysis
     def _session_map(self, pdir):
-        rows = {}
-        part01 = self._frozen_file(pdir)   # v2.0 — any frozen name
-        if part01 is None:
-            return rows
-        for line in fold_map_rows(
-                part01.read_text(encoding="utf-8").splitlines()):
-            cells = [c.strip() for c in line.split("|") if c.strip()]
-            if len(cells) >= 3 and cells[0].isdigit():
-                d = cells[3].lower() if len(cells) >= 4 else ""
-                deploy = d.startswith(("y", "d")) or "deploy" in d or "supervis" in d
-                # v3.6 — opt-in split marker (§C1): split / pre+post /
-                # pre-post / pre/post in the deploy? cell (case-insensitive,
-                # combinable with yes) splits session N into legs Na (pre-
-                # deploy) / Nb (post-deploy). A split cell is always also a
-                # deploy session. No marker → split=False → byte-identical.
-                split = any(t in d for t in
-                            ("split", "pre+post", "pre-post", "pre/post"))
-                if split:
-                    deploy = True
-                rows[int(cells[0])] = (cells[1], cells[2], deploy, split)
-        return rows
+        """v1.2.0 — body extracted to session_map_rows() (module-level,
+        shared with next_pending_session / plan_snapshot)."""
+        return session_map_rows(pdir)
 
     def _session_state(self, pdir, n, rows=None, records=None,
                        part01_text=None, leg=""):
