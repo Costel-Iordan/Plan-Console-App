@@ -398,6 +398,13 @@ Step 4 — The owner pass
       or dashboards. Whitelisted read-only ones get a
       Run (read-only) button; anything else, Copy command, run it
       yourself, then Mark done.
+    - Reading a whole item: rows in both right-hand lists are cut off
+      (a list box cannot wrap). DOUBLE-CLICK a recon or owner-action
+      row to open it in full — the item, and for an owner action the
+      exact command, which §B line it confirms, and the expected
+      result. The whole item is pre-selected, so Ctrl+C lifts it.
+      Single-click still only selects, which is what Tick/untick
+      selected and Mark done act on.
     Reference: samples/demo-project/plans/demo-journal-wip/ is
     frozen mid-owner-pass — exactly what this step looks like
     before it is done; demo-recipe-cli/OPEN-QUESTIONS.md shows the
@@ -729,7 +736,8 @@ start.
 | Status                        | Sessions   | One-line where-am-I                                            | no             |
 | Session report                | Sessions   | Verdict for one session; on OK auto-advances, on CHECK copies the fix hint | no |
 | Plan health                   | Sessions   | Verdict for the whole plan + writes HEALTH.md                  | no             |
-| Refresh                       | Owner pass | Loads questions, owner actions and recon checklist             | no             |
+| Refresh                       | Owner pass | Loads questions, owner actions and recon checklist. Usually unnecessary: the console reloads them when the agent's files change, and only asks when you have unsaved answer text | no             |
+| (double-click a row)           | Owner pass | Opens that recon / owner-action item in full, pre-selected       | no             |
 | What's blocking Freeze?       | Owner pass | Read-only dry-run of the Freeze gates                          | no             |
 | Accept recommendation         | Owner pass | Confirmed one-click accept of the RECOMMEND line               | no             |
 | Save answer -> draft + remove | Owner pass | Saves your typed answer and removes the question               | no             |

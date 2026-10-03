@@ -3689,8 +3689,22 @@ class App:
         """Poll: re-read the plan dir so agent-side changes surface
         without any user action (PROGRESS.md is agent-owned, PART-01
         §F). Reschedules unconditionally — one bad read never kills the
-        strip (same discipline as _drain's `finally`)."""
+        strip (same discipline as _drain's `finally`).
+
+        v1.2.1 — also propagates agent changes to the Owner-pass lists,
+        which until now only reloaded on a manual Refresh click even
+        though this poll already reads the same files. It lives HERE and
+        not in _strip_refresh because on_owner_refresh touches the same
+        state the strip renders from."""
         self._strip_refresh()
+        try:
+            slug = self.slug_var.get().strip()
+            if SLUG_RE.match(slug):
+                pdir = self.repo_path() / "plans" / slug
+                if pdir.is_dir():
+                    self._maybe_auto_owner_refresh(pdir)
+        except Exception:
+            pass
         self._strip_job = self.root.after(3000, self._strip_tick)
 
     def _strip_refresh(self):
@@ -4077,7 +4091,17 @@ class App:
         # "Accept recommendation" button below the viewport (v2.0 bug).
         pw = ttk.Panedwindow(lq, orient="vertical")
         pw.pack(side="top", fill="both", expand=True, padx=6, pady=6)
-        self.oq_list = tk.Listbox(pw, height=8, activestyle="dotbox")
+        # v1.2.1 — exportselection=False on all three lists. Tk's default
+        # (True) exports a listbox selection as the CLIPBOARD selection, and
+        # only ONE widget can own it, so the three lists were fighting:
+        # selecting a recon row silently cleared the question selection
+        # (and fired <<ListboxSelect>> with nothing selected, wiping the
+        # full-question pane). That also made "keep the owner's place"
+        # across a refresh impossible - only the last restore survived.
+        # Nothing here relies on the export: every clipboard write in the
+        # app is an explicit clipboard_clear + clipboard_append.
+        self.oq_list = tk.Listbox(pw, height=8, activestyle="dotbox",
+                                  exportselection=False)
         pw.add(self.oq_list, weight=1)
         qf = ttk.Frame(pw)
         self.q_full = tk.Text(qf, height=6, wrap="word", relief="flat",
@@ -4103,7 +4127,7 @@ class App:
         # right: recon checklist
         rc = ttk.Labelframe(body, text="Recon checklist")
         rc.pack(side="left", fill="both", expand=True, padx=(5, 0))
-        self.rc_list = tk.Listbox(rc, height=10)
+        self.rc_list = tk.Listbox(rc, height=10, exportselection=False)
         self.rc_list.pack(fill="both", expand=True, padx=6, pady=6)
         # v3.8 — DOUBLE-click opens the item detail modal. Single-click is
         # left alone on purpose: it is what selects the row, and both
@@ -4122,7 +4146,7 @@ class App:
         # here so they can never be silently skipped before Freeze
         oa = ttk.Labelframe(body, text="Owner actions")
         oa.pack(side="left", fill="both", expand=True, padx=(5, 0))
-        self.oa_list = tk.Listbox(oa, height=10)
+        self.oa_list = tk.Listbox(oa, height=10, exportselection=False)
         self.oa_list.pack(fill="both", expand=True, padx=6, pady=6)
         self.oa_list.bind("<Double-Button-1>", self._on_oa_double_click)
         baro = ttk.Frame(oa); baro.pack(fill="x", padx=6, pady=6)
@@ -4147,10 +4171,71 @@ class App:
                        "rewrites unclear questions instead of guessing.",
             wraplength=680, justify="left")
         self._agent_hint.pack(side="left", padx=8)
+        # v1.2.1 — the recon and owner-action rows are truncated to ~100
+        # chars because a Listbox cannot wrap, and the item detail modal
+        # that shows them in full was reachable ONLY by double-clicking —
+        # which nothing on screen, in the guide, or in the README ever
+        # said. A new user had no way to find it. Plain visible label,
+        # not a tooltip: the console's own rule is that a clipped thing
+        # gets fixed in the layout, not hidden behind a hover.
+        self._modal_hint = ttk.Label(
+            bar2, text="Double-click a recon or owner-action row to read "
+                       "the whole item — the rows are cut off here.",
+            wraplength=300, justify="right", style="SlugHint.TLabel")
+        self._modal_hint.pack(side="right", padx=8)
         self._oq_items, self._rc_items = [], []
         self._oa_items = []     # v3.5 — parsed owner actions
         self._oq_file = self._rc_file = None
         self._oq_text = ""      # v2.1 — raw text for full-block display
+
+    # ---------------------------------------------- v1.2.1 auto-reload
+    def _owner_file_stamp(self, pdir):
+        """Cheap change fingerprint of the two agent-owned Owner-pass
+        files. mtime+size, not a read: the strip's 3 s poll already reads
+        these files via plan_snapshot, so this adds no I/O to speak of."""
+        out = []
+        for name in ("OPEN-QUESTIONS.md", "RECON-CHECKLIST.md"):
+            f = Path(pdir) / name
+            try:
+                st = f.stat()
+                out.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                out.append(None)
+        return tuple(out)
+
+    def _maybe_auto_owner_refresh(self, pdir):
+        """Reload the Owner-pass lists when the agent changed them, so the
+        Refresh button is not the only way to see the current state.
+
+        Refuses to reload while the owner has UNSAVED answer text: the
+        rebuild resets the question panes, so the text they are typing
+        would end up next to a different question. In that case it says
+        so once and leaves the button to them — an auto-refresh must never
+        cost unsaved work."""
+        stamp = self._owner_file_stamp(pdir)
+        seen = getattr(self, "_owner_files_seen", None)
+        if seen is None:
+            self._owner_files_seen = stamp      # first look: baseline only
+            return False
+        if stamp == seen:
+            self._owner_stale = False
+            return False
+        pending = ""
+        try:
+            pending = self.answer.get("1.0", "end").strip()
+        except Exception:
+            pending = ""
+        if pending:
+            if not getattr(self, "_owner_stale", False):
+                self._owner_stale = True
+                self.say("owner", "the plan files changed, but you have "
+                         "unsaved answer text — click Refresh once you have "
+                         "saved it (or clear the box).")
+            return False
+        self.on_owner_refresh()
+        self.say("owner", "owner pass lists reloaded — the agent changed "
+                 "OPEN-QUESTIONS.md / RECON-CHECKLIST.md.")
+        return True
 
     def _owner_paths(self):
         slug = self._get_slug("owner")
@@ -4176,6 +4261,13 @@ class App:
         got = self._owner_paths()
         if got is None: return
         slug, pdir = got
+        # v1.2.1 — keep the owner's place across the rebuild. This used to
+        # wipe every selection, so an auto-refresh (or a stray click) threw
+        # them back to the top of a list they had just navigated - and the
+        # next button press acted on a DIFFERENT item than the one on screen.
+        keep_oq = self.oq_list.curselection()
+        keep_rc = self.rc_list.curselection()
+        keep_oa = self.oa_list.curselection()
         self._oq_items, self._rc_items = [], []
         self._oa_items = []     # v3.5 — parsed owner actions
         self._oq_text = ""      # v2.1 — raw text for full-block display
@@ -4268,6 +4360,24 @@ class App:
                 and (self._oq_file.is_file() or self._rc_file.is_file())):
             self.say("intake", "owner pass: everything resolved — Freeze "
                      "is unblocked.")
+        # v1.2.1 — restore where the owner was (see the capture at the top).
+        # Clamped to the new sizes: the agent may have removed rows, and a
+        # selection past the end would silently point at nothing.
+        for lb, keep in ((self.oq_list, keep_oq), (self.rc_list, keep_rc),
+                         (self.oa_list, keep_oa)):
+            for i in keep:
+                if i < lb.size():
+                    lb.selection_set(i)
+        if keep_rc:
+            self.rc_list.activate(keep_rc[0])
+        # Re-show the full-question block explicitly. A programmatic
+        # selection_set does NOT emit <<ListboxSelect>> (verified on this
+        # Tk), so restoring the selection alone would leave the pane
+        # showing the placeholder while a row sits selected.
+        if keep_oq:
+            self._show_full_question()
+        self._owner_files_seen = self._owner_file_stamp(pdir)
+        self._owner_stale = False
 
     # ------------------------------------------------- owner actions (v3.5)
     def _selected_owner_action(self):

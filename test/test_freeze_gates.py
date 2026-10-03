@@ -290,6 +290,14 @@ def _make_repo(tmp_path):
     return repo
 
 
+def _touch(path):
+    """Bump mtime so a same-size rewrite still registers as a change."""
+    st = path.stat()
+    path.write_bytes(path.read_bytes())
+    import os
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+
+
 def _frozen_repo(tmp_path, progress=""):
     repo = _make_repo(tmp_path)
     pdir = repo / "plans" / "demo-plan"
@@ -690,6 +698,214 @@ def test_strip_copy_target_is_cleared_on_non_copy_states(app_window, tmp_path,
     root.update()
     assert app._strip_copy_target is None
     assert app._strip_action_kind in (None, "tab")
+
+
+# ------------------------------------------- v1.2.1 auto-reload + discoverability
+def test_owner_refresh_preserves_selection(app_window, tmp_path):
+    """The rebuild used to wipe every selection, so the owner's place was
+    lost and the next button press acted on a DIFFERENT item."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: first one?\n   RECOMMEND: yes\n"
+          "2. PROBLEM: b\n   QUESTION: second one?\n   RECOMMEND: no\n")
+    write(pdir / "RECON-CHECKLIST.md",
+          "- [ ] recon one\n- [ ] recon two\n- [ ] recon three\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkey = lambda *a, **k: None
+    app._auto_command_check = monkey
+
+    app.on_owner_refresh()
+    assert app.oq_list.size() == 2 and app.rc_list.size() == 3
+    app.oq_list.selection_set(1)
+    app.rc_list.selection_set(2)
+    app.on_owner_refresh()
+    assert app.oq_list.curselection() == (1,), app.oq_list.curselection()
+    assert app.rc_list.curselection() == (2,), app.rc_list.curselection()
+
+
+def test_owner_refresh_clamps_selection_to_new_size(app_window, tmp_path):
+    """The agent can remove rows; a selection past the end would silently
+    point at nothing."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: first?\n"
+          "2. PROBLEM: b\n   QUESTION: second?\n")
+    write(pdir / "RECON-CHECKLIST.md", "- [ ] one\n- [ ] two\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    app._auto_command_check = lambda *a, **k: None
+
+    app.on_owner_refresh()
+    app.rc_list.selection_set(1)
+    write(pdir / "RECON-CHECKLIST.md", "- [ ] only one left\n")
+    app.on_owner_refresh()
+    assert app.rc_list.size() == 1
+    assert app.rc_list.curselection() == (), "stale index must be dropped"
+
+
+def test_auto_refresh_picks_up_agent_changes(app_window, tmp_path):
+    """The whole point: the agent edits the files, the lists update without
+    a Refresh click."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "OPEN-QUESTIONS.md", "1. PROBLEM: a\n   QUESTION: one?\n")
+    write(pdir / "RECON-CHECKLIST.md", "- [ ] recon one\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    app._auto_command_check = lambda *a, **k: None
+
+    app.on_owner_refresh()                 # baseline the stamp
+    assert app.oq_list.size() == 1
+    # first poll only baselines, it must not fire a reload
+    assert app._maybe_auto_owner_refresh(pdir) is False
+
+    # the agent answers one question in the file
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: one?\n"
+          "2. PROBLEM: b\n   QUESTION: two?\n")
+    _touch(pdir / "OPEN-QUESTIONS.md")
+    assert app._maybe_auto_owner_refresh(pdir) is True, "must reload"
+    assert app.oq_list.size() == 2, app.oq_list.size()
+
+
+def test_auto_refresh_refuses_with_unsaved_answer_text(app_window, tmp_path):
+    """An auto-refresh must never cost unsaved work: the rebuild resets the
+    question panes, so pending text would end up beside another question."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "OPEN-QUESTIONS.md", "1. PROBLEM: a\n   QUESTION: one?\n")
+    write(pdir / "RECON-CHECKLIST.md", "- [ ] recon one\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    app._auto_command_check = lambda *a, **k: None
+    said = []
+    app.say = lambda target, msg: said.append(msg)
+
+    app.on_owner_refresh()
+    app._maybe_auto_owner_refresh(pdir)          # baseline
+    app.answer.insert("1.0", "  my unsaved answer")
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: one?\n"
+          "2. PROBLEM: b\n   QUESTION: two?\n")
+    _touch(pdir / "OPEN-QUESTIONS.md")
+
+    assert app._maybe_auto_owner_refresh(pdir) is False, "must NOT reload"
+    assert app.oq_list.size() == 1, "lists must be left alone"
+    assert app._owner_stale is True
+    assert any("unsaved" in m for m in said), said
+    # and it says it only once, not every 3 s
+    said.clear()
+    app._maybe_auto_owner_refresh(pdir)
+    assert not any("unsaved" in m for m in said), said
+
+
+def test_strip_advertises_the_double_click(app_window):
+    """Discoverability: the modal was reachable ONLY by double-clicking and
+    nothing on screen said so."""
+    app, root = app_window
+    text = app._modal_hint.cget("text")
+    assert "Double-click" in text
+    assert "owner-action" in text and "recon" in text.lower()
+
+
+def test_owner_lists_keep_independent_selections(app_window, tmp_path):
+    """Tk's default exportselection=True makes listboxes fight over the
+    CLIPBOARD selection, so only ONE could hold a selection: picking a
+    recon row silently cleared the question selection (and wiped the
+    full-question pane via an empty <<ListboxSelect>>). Nothing in the app
+    relies on the export - all four clipboard writes are explicit."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: q1?\n"
+          "2. PROBLEM: b\n   QUESTION: q2?\n")
+    write(pdir / "RECON-CHECKLIST.md", "- [ ] r1\n- [ ] r2\n")
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: q1?\n\n## Owner actions\n"
+          "- [ ] do the thing\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    app._auto_command_check = lambda *a, **k: None
+    app.on_owner_refresh()
+    root.update()
+
+    app.oq_list.selection_set(0)
+    app.rc_list.selection_set(1)
+    app.oa_list.selection_set(0)
+    root.update()
+    assert app.oq_list.curselection() == (0,), app.oq_list.curselection()
+    assert app.rc_list.curselection() == (1,), app.rc_list.curselection()
+    assert app.oa_list.curselection() == (0,), app.oa_list.curselection()
+    # a mouse click does emit <<ListboxSelect>> (a programmatic set does
+    # not), so the full-question pane follows a real selection
+    app._show_full_question()
+    assert "q1?" in app.q_full.get("1.0", "end")
+
+
+def test_owner_refresh_restores_full_question_pane(app_window, tmp_path):
+    """Restoring the selection is not enough: a programmatic selection_set
+    emits no <<ListboxSelect>>, so the pane has to be re-shown explicitly
+    or it keeps the placeholder while a row sits selected."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: q1?\n   RECOMMEND: yes\n"
+          "2. PROBLEM: b\n   QUESTION: q2?\n   RECOMMEND: no\n")
+    write(pdir / "RECON-CHECKLIST.md", "- [ ] r1\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    app._auto_command_check = lambda *a, **k: None
+    app.on_owner_refresh()
+    app.oq_list.selection_set(1)
+    app.on_owner_refresh()
+    assert app.oq_list.curselection() == (1,)
+    assert "q2?" in app.q_full.get("1.0", "end"), \
+        app.q_full.get("1.0", "end")
+
+
+def test_poll_wires_the_auto_reload(app_window, tmp_path):
+    """The wiring, not just the helper: one tick of the 3 s poll must be
+    enough for an agent-side edit to reach the Owner-pass lists. Without
+    this, disabling the call in _strip_tick would leave every other test
+        green."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "OPEN-QUESTIONS.md", "1. PROBLEM: a\n   QUESTION: one?\n")
+    write(pdir / "RECON-CHECKLIST.md", "- [ ] recon one\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    app._auto_command_check = lambda *a, **k: None
+    app.on_owner_refresh()
+    assert app.oq_list.size() == 1
+
+    write(pdir / "OPEN-QUESTIONS.md",
+          "1. PROBLEM: a\n   QUESTION: one?\n"
+          "2. PROBLEM: b\n   QUESTION: two?\n")
+    _touch(pdir / "OPEN-QUESTIONS.md")
+
+    app._strip_tick()                      # one poll tick
+    try:
+        root.update()
+        assert app.oq_list.size() == 2, \
+            "the 3 s poll must propagate the agent's change: %d" % \
+            app.oq_list.size()
+    finally:
+        job = getattr(app, "_strip_job", None)
+        if job:
+            try:
+                root.after_cancel(job)
+            except Exception:
+                pass
 
 
 def test_busy_lists_disjoint_and_complete():
