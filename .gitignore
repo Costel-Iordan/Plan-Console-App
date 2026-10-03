@@ -19,6 +19,10 @@ Desktop.ini
 
 # internal development artifacts (never committed; excluded from rel/)
 audits/
+# full-file recovery copies taken before editing plan-console.py, which has
+# been truncated by bad edits before. Local safety net only; git is the
+# real history.
+/backup-*/
 
 # plans live inside the target repo, not here
 /plans/

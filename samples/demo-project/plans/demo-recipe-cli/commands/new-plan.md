@@ -57,6 +57,11 @@ TYPE=plan (a ready-made, already-structured plan):
   the §A session map table with gN gate ids and a deploy column (last
   session = deploy, owner-supervised unless §G overrides). If it has
   none: propose a session map from its work items, marked PROPOSED.
+  The deploy? cell may also carry a SPLIT token — split / pre+post /
+  pre-post / pre/post (case-insensitive, combinable with yes) —
+  marking that session as two legs (Na pre-deploy agent work, Nb
+  post-deploy verification) around the owner's Coolify deploy; keep
+  ONE gates column listing all gates of both legs.
 - RECON-CHECKLIST.md — every claim the plan depends on (versions,
   paths, env vars, dependencies, commands): `- [ ]` items; use the
   `EXISTS: <repo-relative path>` form for pure file/dir existence

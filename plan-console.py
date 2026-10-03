@@ -2638,6 +2638,22 @@ This line is how the Plan Console reports gates in Plan health:
   the example's.
 The console parses leniently and flags non-canonical lines, but
 canonical is what reports cleanly.
+
+GATE SANITY (every session): a gate that silently does nothing is WORSE
+than a gate that fails, because it is reported as green. Before reporting
+any gate green, confirm it actually ran IN THIS REPO:
+  * typecheck - it compiled a file set, not zero files. Confirm with the
+    compiler's --listFilesOnly (or equivalent) and check the file count is
+    non-trivial. Printing help text and exiting 0/1 is NOT a pass.
+  * tests - the runner reported a test count, and it is not 0.
+If a gate command behaves unexpectedly (prints usage/help, reports a
+missing script, or resolves against a different tree than you expect),
+find out what it actually resolved against - its working directory and
+whether a package.json / node_modules exists ABOVE the repo root - before
+trusting its result. Re-run gates with absolute paths when in doubt.
+Record the invocation that worked in the session notes so the next
+session does not rediscover it.
+
 Execute per PART-00. Stop after gates pass and the PROGRESS line is
 appended.
 
@@ -4091,7 +4107,9 @@ class App:
         # v2.6.4 — third Freeze gate surfaced here too: the status line
         # checks VALIDATION.md (missing or != "PART-01 READY") so it can
         # never say "ready to Freeze" while the Freeze button would fail
-        # on a stale validation report (same condition as _freeze_blockers).
+        # on a stale validation report (the same third gate
+        # freeze_gate_report reports, so this line and the Freeze button
+        # read one source).
         val = pdir / "VALIDATION.md"
         if not val.is_file():
             vnote = " — VALIDATION.md not found — click 'Validate draft' first"

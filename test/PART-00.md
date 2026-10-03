@@ -1,5 +1,5 @@
 PART 00 — SESSION PROTOCOL (universal; loaded every session)
-Version 1.1 — Owner-only edits, version bump required. PROGRESS.md records
+Version 1.2 — Owner-only edits, version bump required. PROGRESS.md records
 the version executed. This file contains PROCESS rules only. All project
 facts live in the plan's frozen PART-01 file (e.g. "PART-01 v1.0.md").
 
@@ -8,9 +8,10 @@ SESSION MECHANICS
 - Only session(s) named in PART-01 §A may deploy or touch production.
 - Never modify/rename/delete assets in PART-01 §A "legacy inventory"
   unless this session is explicitly scoped to do so.
-- End every session: append ONE line to PROGRESS.md, canonical form:
-  SESSION <n> | <YYYY-MM-DD> | gates: <passed gN ids, comma-separated> |
-  status: PASS|PARTIAL|FAIL|BLOCKED[ — one-line reason] | P00 v<version>
+- End every session: append ONE line to PROGRESS.md, canonical form —
+  five pipe-separated fields on ONE physical line (never wrap it);
+  gate ids exactly as spelled in PART-01 §A:
+  SESSION <n> | <YYYY-MM-DD> | gates: <passed gate ids> | status: <PASS/PARTIAL/FAIL/BLOCKED> — <reason> | P00 v<version>
 - A failed verification gets ONE fix attempt. Second failure →
   BLOCKED.md (exact repro + what you tried) and STOP.
 - Never resolve ambiguity by guessing. BLOCKED.md is a correct outcome.

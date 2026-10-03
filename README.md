@@ -9,6 +9,8 @@
 
 It is built for **solo developers and small teams driving AI coding agents**. You stay the owner of the work: answer open questions, tick reconnaissance items, gate the freeze, run copy-paste sessions with standing orders, and track progress and health. The result is that ad-hoc AI-coding chaos becomes a disciplined **plan → owner pass → freeze → session** lifecycle with hard gates, machine-parseable progress records, and a complete audit trail (`HEALTH.md`) — all in a zero-dependency, offline desktop application.
 
+> **What's new in 1.2.0:** UI/UX batch 1 — a live **plan strip** under the top bar (stage, gate counts, next session, and a click-through action that jumps to the right tab), **Freeze shows all gates in one ✓/✗ checklist dialog** instead of one error per gate (and now enforces the owner-actions gate the dry run already used), a **"Next session →"** button that prefills the first not-done session/leg and copies its instruction in one click, and read-only tools (Status, Session report, validation report, Freeze check, Copy command) **stay live while an API chain runs**.
+
 > **What's new in 1.1.0:** split-deploy sessions (v3.6) — a deploy session marked `split` / `pre+post` / `pre-post` / `pre/post` in §A becomes two legs (Na pre-deploy, Nb post-deploy) with a DEPLOY WINDOW verdict; Plan health fixes for wrapped session-map row gates (v3.4.1) and finished-deploy verdicts (v3.4.2); owner-section regex hardening (v3.5.2).
 
 <p align="center">

@@ -2,7 +2,9 @@
 description: Execute a numbered session of a plan
 argument-hint: <slug> <session-number>
 ---
-Arguments: $ARGUMENTS → SLUG N
+Arguments: $ARGUMENTS → SLUG N (for a SPLIT deploy session the console
+passes the leg as a suffix: SLUG Na / SLUG Nb — see the SPLIT-DEPLOY
+PROTOCOL below)
 
 Load: PART-00.md → the frozen plan in plans/SLUG/ ("PART-01 v1.0.md",
 or whichever "PART-01 v*.md" exists; a legacy PART-01.md with a freeze
@@ -13,6 +15,8 @@ needs it.
 Guards (stop if any fail):
 - the frozen PART-01 file exists (see naming above)
 - PROGRESS.md shows sessions 1..N-1 complete
+- for a leg argument (Na/Nb): sessions 1..N-1 complete AND, for leg b,
+  leg a shows status: PASS (the Coolify deploy happens BETWEEN the legs)
 - N exists in the §A session map
 
 IN-PROGRESS HANDSHAKE (interruption safety — binding):
@@ -43,6 +47,28 @@ deploys to the agent (e.g. authenticated Supabase CLI in the agent's
 environment), the agent may execute them itself — still with gates
 before and after, and ordering constraints from §G.
 
+SPLIT-DEPLOY PROTOCOL (the §A deploy? cell says split / pre+post /
+pre-post / pre/post — binding):
+- The deploy session has TWO legs with SEPARATE canonical lines:
+  SESSION Na — pre-deploy work (every §A gate you can pass BEFORE any
+  deploy). End leg a: append its canonical line, then STOP.
+  SESSION Nb — post-deploy verification against the DEPLOYED build,
+  run ONLY after the owner has executed the Coolify deploy (the console
+  gates the Nb instruction copy on the owner's confirmation and logs it
+  to HEALTH.md).
+- The agent NEVER deploys. The §G agent-deploy exception does NOT
+  extend to Coolify — panel access is owner-only.
+- Leg a never does leg b's work; leg b never re-runs pre-deploy work.
+- Gates: list ONLY the gates that passed in THAT leg; the union of both
+  legs must cover the §A declared set. A leg re-run appends a
+  corrective line (last wins per leg).
+- Between the legs is the DEPLOY WINDOW: the agent has NOTHING to run.
+Canonical examples (split deploy session 6, g7 = post-deploy smoke):
+  SESSION 6a | 2026-09-16 | gates: g1, g2 | status: PASS | P00 v1.1
+  SESSION 6b | 2026-09-18 | gates: g7 | status: PASS | P00 v1.1
+- Prose: mention legs inside a record's note, never as a record start
+  ('SESSION 6a addendum…' would open a spurious record).
+
 BLOCKED PROTOCOL (restated from PART-00 — binding):
 - A failed verification gets ONE fix attempt. If the second attempt
   also fails: write plans/SLUG/BLOCKED.md containing (a) exact
@@ -62,18 +88,27 @@ BLOCKED PROTOCOL (restated from PART-00 — binding):
   while the file exists and clears it on the rename; the file
   BLOCKED-resolved.md triggers nothing.
 
-Close by appending exactly ONE canonical PROGRESS.md line (format per
-PART-00 SESSION MECHANICS):
-SESSION N | YYYY-MM-DD | gates: <passed gN ids> | status: PASS|PARTIAL|FAIL|BLOCKED — reason | P00 v<version>
-Worked example (fill in your values):
-SESSION 3 | 2025-06-01 | gates: g1, g2 | status: PASS | P00 v1.1
-The Plan Console reads this line to report gates in Plan health, so
-keep it strictly canonical: ONE physical line; lowercase 'gates:' and
-'status:' labels with colons; gate ids in gN form ('g1, g2') — never
-bare numbers, never 'all'; list ONLY the gates that passed (a PARTIAL
-line lists the passed subset; the reason field explains the rest). The
-console parses leniently and flags non-canonical lines, but canonical
-is what reports cleanly. Gate IDs come from PART-01 §A session N.
+Close by appending exactly ONE canonical PROGRESS.md line. Copy the
+shape EXACTLY — five pipe-separated fields on ONE physical line:
+SESSION <N> | <YYYY-MM-DD> | gates: <ids> | status: <PASS/PARTIAL/FAIL/BLOCKED> — <reason> | P00 v<version>
+Worked examples (same shape, real values — keep the field order):
+SESSION 3 | 2025-06-01 | gates: g1, g2 | status: PASS — 42/42 tests green; parity verified | P00 v1.1
+SESSION 4 | 2025-06-02 | gates: g4 | status: PARTIAL — g5 needs an owner API key; steps in BLOCKED.md | P00 v1.1
+This line is how the Plan Console reports gates in Plan health:
+- ONE physical line — never wrap it, however long the reason.
+- The reason sits BETWEEN the status word and the final '| P00'
+  field, after an em dash — never after P00, never its own field.
+- Lowercase 'gates:' and 'status:' labels with colons.
+- Gate ids EXACTLY as spelled in PART-01 §A session N — never bare
+  numbers, never 'all'.
+- List ONLY the gates that passed (a PARTIAL line lists the passed
+  subset; the reason explains the rest).
+- Drop ' — <reason>' only when nothing needs saying (the line then
+  ends '... | status: PASS | P00 v<version>').
+- The version is the 'Version' line of YOUR PART-00.md — never copy
+  the example's.
+The console parses leniently and flags non-canonical lines, but
+canonical is what reports cleanly.
 
 GATE SANITY (every session): a gate that silently does nothing is WORSE
 than a gate that fails, because it is reported as green. Before reporting
