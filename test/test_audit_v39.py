@@ -429,6 +429,26 @@ def test_live_bar_reads_left_to_right(owner_window):
         "live bar reads %s — 'Theme' must sit immediately LEFT of its "
         "combobox" % " | ".join(names))
 
+
+def test_live_bar_controls_are_not_crowded(owner_window):
+    """Adjacent controls must have a real gap, not touch.
+
+    Regression: padx is (left, right) in the WIDGET's own coordinates, so
+    for a right-packed widget "left" faces the neighbour. Transcribing
+    About's old grid padx=(12, 0) into pack as padx=(0, 12) put the whole
+    12px on the window edge and left About jammed against the Theme
+    dropdown with a 0px gap. Order is pinned by the test above; this one
+    pins the spacing itself, again on measured geometry."""
+    app, root = owner_window
+    _pump(root)
+    widgets = [app.btn_cancel, app._theme_label, app.theme_cb, app.btn_about]
+    gaps = [widgets[i].winfo_rootx()
+            - (widgets[i - 1].winfo_rootx() + widgets[i - 1].winfo_width())
+            for i in range(1, len(widgets))]
+    assert gaps[0] >= 8, "Cancel sits on the 'Theme' caption: %dpx" % gaps[0]
+    assert gaps[1] >= 3, "'Theme' sits on its dropdown: %dpx" % gaps[1]
+    assert gaps[2] >= 8, "About is crowded against the dropdown: %dpx" % gaps[2]
+
 def _pump(root, n=25):
     for _ in range(n):
         root.update_idletasks()

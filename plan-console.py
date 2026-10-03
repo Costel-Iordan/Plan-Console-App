@@ -4322,7 +4322,14 @@ class App:
         # Cancel" — the "Theme" caption landing to the RIGHT of its own
         # combobox. This restores the original left-to-right reading:
         # progress ... Cancel API call | Theme | Dark ▾ | About.
-        self.btn_about.pack(side="right", padx=(0, 12))
+        #
+        # padx is (left, right) in the WIDGET's own coordinates, so for a
+        # right-packed widget "left" is the side facing its neighbour and
+        # "right" faces the window edge. Writing padx=(0, 12) on About —
+        # a straight transcription of the old grid cell's meaning — put
+        # the whole 12px on the window edge and left the About button
+        # jammed against the Theme dropdown with no gap at all.
+        self.btn_about.pack(side="right", padx=(12, 0))
         self.theme_cb.pack(side="right")
         self._theme_label.pack(side="right", padx=(16, 4))
         self.btn_cancel.pack(side="right", padx=(8, 0))
