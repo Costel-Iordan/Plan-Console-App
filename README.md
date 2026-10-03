@@ -34,7 +34,7 @@ It is built for **solo developers and small teams driving AI coding agents**. Yo
 
 The lifecycle enforced by the console:
 
-1. **Intake** — paste a plan/brainstorm/audit report; the console writes `plans/<slug>/SOURCE.md` and either calls OpenRouter (if you opt in) or generates a ready-made instruction for your agent.
+1. **Intake** — paste a plan/brainstorm/audit report; the console writes `plans/<slug>/SOURCE.md` and either calls OpenRouter (if you opt in) or generates a ready-made instruction for your agent. Intake instructions carry the standing orders from `AGENT-ORDERS-INTAKE.md`, whose hard ban stops the agent running your owner actions or deploying.
 2. **Owner pass** — answer open questions (structured `PROBLEM`/`QUESTION`/`RECOMMEND` blocks), tick recon checklist items, and run owner-only actions; every answer is archived, nothing is lost.
 3. **Validate** — the agent's draft (`PART-01.draft.md`) is checked against validation rules before it may be frozen.
 4. **Freeze** — once all gates pass, the plan is stamped as `PART-01 v1.0.md` and becomes the single source of truth for execution.
@@ -54,6 +54,8 @@ For the full picture — including the first-run license gate and every tab — 
 ├── PART-00.md                 # Universal session-protocol rulebook deployed into
 │                              #   every target repo
 ├── AGENT-ORDERS.md            # Standing orders prepended to session instructions
+├── AGENT-ORDERS-INTAKE.md     # Standing orders for the intake phase (its own
+│                              #   contract: no owner actions, no deploys, no gates)
 ├── commands/                  # The 7 agent command files (new-plan, recon,
 │                              #   owner-resolve, validate-plan, freeze-plan,
 │                              #   session, plan-status); also embedded as

@@ -327,10 +327,14 @@ Owner pass
     parked for you (OPEN-QUESTIONS.md), ticking the recon checklist,
     and handling owner actions (commands the agent must never run).
 
-Standing orders (AGENT-ORDERS.md)
-    Your persistent rules for the agent ("always write tests",
-    "never push to main"), embedded in every session instruction.
-    Edit them via the Agent orders... button.
+Standing orders — two contracts, one button
+    Your persistent rules for the agent ("always write tests", "never
+    push to main"), embedded in every instruction.
+    AGENT-ORDERS-INTAKE.md governs the intake pass and AGENT-ORDERS.md
+    governs sessions; they are deliberately different documents,
+    because a session contract (run the gates, obey the section A file
+    list) is wrong for intake. Edit the relevant one via Agent orders...
+    — it opens the file for the tab you are on.
 
 Verdicts
     After each session, Session report returns one of:
@@ -682,12 +686,32 @@ during the deploy window.
 
 6.11 Agent orders (standing orders)
 -----------------------------------
-Agent orders... (top bar) opens AGENT-ORDERS.md from the repo root —
-the standing orders attached to every session instruction. Typical
-entries: "always write tests", "never push to main", "match the
-existing code style". Edit freely; the next Copy session instruction
-picks up your changes. The file is only created if missing — your
-customized text is never overwritten by the app.
+There are TWO standing-orders files, one per phase, each with its own
+contents, its own OFF switch and its own per-repo override:
+
+  AGENT-ORDERS-INTAKE.md — prepended to every INTAKE instruction
+    (new-plan, recon, owner-resolve, auto-resolve, and the OpenRouter
+    prompt). Ships with a HARD BAN: never run a command written under
+    "Owner actions", never deploy, never tick an owner checkbox, never
+    run live SQL or migrations, never write PROGRESS.md / HEALTH.md /
+    IN-PROGRESS.md / PART-01 v*.md, never answer your own questions —
+    and run NO gates during intake.
+
+  AGENT-ORDERS.md — prepended to every SESSION instruction. This is the
+    execution contract: gates, the section A scope list, the escalation
+    ladder. Typical entries: "always write tests", "never push to
+    main", "match the existing code style".
+
+Agent orders... (top bar) opens the file for the tab you are currently
+on — Intake or Sessions. Both files are only created if missing, so your
+customized text is never overwritten by the app. Typing just OFF (or
+leaving a file empty) disables the orders FOR THAT PHASE ONLY; the
+other phase keeps working.
+
+Why two files? The session contract would actively misbehave during
+intake — its "gates always run" rule makes the agent run your build and
+test suite while it is only meant to be drafting a plan. Keeping them
+apart also means no parser can ever hand an agent the wrong contract.
 
 6.12 API key and model selection
 --------------------------------
@@ -719,7 +743,7 @@ start.
 | Init starter repo             | top        | Creates PART-00.md, templates/, commands/ in the repo          | no             |
 | Update command files          | top        | Refreshes commands/ with the current built-in protocols        | no             |
 | Reload models                 | top        | Refreshes the OpenRouter model list                            | yes (for the list) |
-| Agent orders...               | top        | Edits AGENT-ORDERS.md standing orders                          | no             |
+| Agent orders...               | top        | Edits the standing orders for the active tab (Intake/Sessions) | no             |
 | Cancel API call               | top        | Aborts a running model call                                    | n/a            |
 | About                         | top        | Name, version, copyright, license link and viewer              | no             |
 | Theme                         | top        | Light / Dark / Follow OS                                       | no             |
@@ -774,6 +798,7 @@ Repo level (created by Init starter repo)
 | File / folder       | Meaning                                                | Who writes it |
 |---------------------|--------------------------------------------------------|---------------|
 | PART-00.md          | The rulebook every agent session must follow           | console       |
+| AGENT-ORDERS-INTAKE.md| Your standing orders for intake — bans owner actions and gates | you           |
 | AGENT-ORDERS.md     | Your standing orders, embedded in session instructions | you           |
 | templates/PART-01.md| The blank plan form                                    | console       |
 | commands/           | 7 instruction files the console and agent use          | console       |
@@ -940,13 +965,19 @@ A: Delete the license_accepted key (acceptance only) or the whole
 
 12. ADVANCED USAGE
 ==================
-Customizing AGENT-ORDERS.md
----------------------------
-Agent orders... opens the repo's standing orders. They are embedded
-verbatim into every session instruction, so house rules (test
+Customizing the standing orders
+-------------------------------
+Agent orders... opens the standing orders for the tab you are on —
+AGENT-ORDERS-INTAKE.md on Intake, AGENT-ORDERS.md on Sessions. They
+are embedded verbatim into each instruction, so house rules (test
 policy, branch policy, style rules) are enforced without you
-repeating them. Keep lines short and imperative. The file is yours —
-the app never overwrites it.
+repeating them. Keep lines short and imperative. Both files are yours —
+the app never overwrites them.
+
+When customizing the INTAKE contract, keep the hard ban intact: it is
+what stops the agent running your owner actions, deploying, or ticking
+your owner checkboxes during intake. You can add your own rules around
+it; do not remove the ban.
 
 Editing command files safely
 ----------------------------

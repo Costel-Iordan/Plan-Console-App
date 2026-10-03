@@ -18,12 +18,22 @@ tick it `- [x]`. Promote matching PART-01.draft.md §B lines to
 VERIFIED <today> ONLY where the check passed. Failures stay UNVERIFIED
 with a note.
 
+HARD BAN (binding): you never run an OWNER-ONLY item — not even when
+the command is right there in the checklist or you already know it
+would succeed. You never deploy, never run live SQL or migrations,
+never tick an owner checkbox under "## Owner actions" (`- [x]` there is
+the OWNER's own assertion that they ran it — ticking it yourself makes
+the Freeze gate pass over work that never happened), and you never run
+the project's build/type-checker/linter/test suite. You do not write
+PROGRESS.md, HEALTH.md, IN-PROGRESS.md, or "PART-01 v*.md". Recon
+verifies; it does not act.
+
 OWNER-ONLY items: append exact commands to OPEN-QUESTIONS.md under
-"## Owner actions" — do not stall on them. Use the owner-action format
-from commands/new-plan.md: `- [ ] <prose>` with the backticked command,
-plus `→ verifies §B "<exact §B line prefix>"` and `(expect: …)` tags
-when the command confirms an UNVERIFIED §B line (the console then
-offers one-click Run + VERIFIED write-back).
+"## Owner actions" — do not stall on them, and never run them. Use the
+owner-action format from commands/new-plan.md: `- [ ] <prose>` with the
+backticked command, plus `→ verifies §B "<exact §B line prefix>"` and
+`(expect: …)` tags when the command confirms an UNVERIFIED §B line (the
+console then offers one-click Run + VERIFIED write-back).
 
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:

@@ -203,6 +203,46 @@ v3.7 — canonical PROGRESS line, drift-proofed (root cause: the line was
     sg-ids): previously-flagged canonical shapes now canonical; drift
     still parses leniently and stays flagged.
 
+v3.8 — the intake phase gets its OWN standing orders (agents were
+  running owner work during intake):
+  * Root cause: AGENT-ORDERS.md was attached in exactly ONE of seven
+    instruction builders (on_copy_instr — the session lane). Every
+    intake instruction — the multi-step intake block, recon,
+    owner-resolve, auto-resolve, AND every _run_api prompt — was built
+    with no standing contract at all. With an API key the console IS the
+    agent, so the one unattended path had the least protection.
+  * New AGENT-ORDERS-INTAKE.md (separate file, own default, own OFF
+    switch, own per-repo override) resolves through the SAME precedence
+    machinery, now parameterized by phase (_agent_orders(repo, phase)).
+    A separate file, not a tagged section of the execution contract,
+    because that contract is actively WRONG for intake: C7 keys scope to
+    "the session block lists authorized files" (intake has no session
+    block) and C5 "gates always run, always pasted" would push the agent
+    to run the project's build/lint/test suite mid-intake. A section
+    parser could silently mis-split and hand an agent the wrong
+    contract — worse than the original gap, since it looks configured.
+  * The intake contract leads with a HARD BAN: never run a command you
+    wrote under "## Owner actions", never deploy, never tick an owner
+    checkbox (that makes Freeze pass over work that never happened),
+    never run live SQL/migrations, never write PROGRESS.md /
+    HEALTH.md / IN-PROGRESS.md / "PART-01 v*.md", never answer your own
+    questions, and run NO gates during intake.
+  * commands/new-plan.md + recon.md gained the same explicit HARD BAN,
+    so an agent reading only the command file still meets it.
+  * "Agent orders…" is phase-aware: the file it opens follows the
+    active tab (Intake → AGENT-ORDERS-INTAKE.md, Sessions →
+    AGENT-ORDERS.md). Every intake copy logs WHICH contract was
+    attached and from where, so a silently-dropped guard is visible.
+  * Backstop: owner actions ticked with no owner-pass.log entry were
+    marked done outside the console — during intake, that means the
+    agent ran owner work. Freeze reports it as a ⚠ WARNING (never a
+    blocking gate: a log miss must not strand a legitimate plan).
+  * The session lane is byte-for-byte unchanged — same separator text,
+    same orders, verified by test.
+  * Existing repos: nothing to do (both orders files are created on
+    first use). Run "Update command files" once for the two command-file
+    bans.
+
 v1.2.1 — the plan strip owns "what next"; the button is an accelerator:
   * The Sessions-tab button is now "+1 session →" and adds ONE to the
     number in the box. It used to be "Next session →" and JUMP to the
@@ -1240,6 +1280,65 @@ def count_open_owner_actions(text):
     return sum(1 for a in parse_owner_actions(text) if not a["checked"])
 
 
+# v3.8 — the backstop for "the agent ran an owner action during intake".
+# The Freeze owner_actions gate trusts the checkbox: a ticked `- [x]`
+# means "the owner ran this". If the agent ticks it itself, the gate
+# passes over work that never happened — and the plan freezes carrying
+# that lie. Every console-side tick appends to owner-pass.log
+# (_log_owner_action), so "checked but never logged" is exactly the
+# signature of an externally-ticked action. Reported as a WARNING, not a
+# gate: a log miss must never strand a legitimate plan (an owner may
+# legitimately tick by hand), it must only make the situation visible.
+OWNER_PASS_LOG = "owner-pass.log"
+
+
+def externally_ticked_owner_actions(pdir):
+    """[prose, ...] — checked owner actions with NO matching owner-pass.log
+    entry: ticked outside the Plan Console (v3.8).
+
+    Read-only, and deliberately forgiving: a missing/unreadable log or
+    an action whose text drifted since it was logged yields a report of
+    the checked items it cannot vouch for, never an exception. Matching
+    is by normalized substring of the logged item line against the
+    action's prose, so the common case (console-ticked) never appears
+    here."""
+    pdir = Path(pdir)
+    oq = pdir / "OPEN-QUESTIONS.md"
+    if not oq.is_file():
+        return []
+    try:
+        acts = parse_owner_actions(oq.read_text(encoding="utf-8"))
+    except OSError:
+        return []
+    if not acts:
+        return []
+    log_lines = []
+    lp = pdir / OWNER_PASS_LOG
+    if lp.is_file():
+        try:
+            log_lines = lp.read_text(encoding="utf-8",
+                                     errors="replace").splitlines()
+        except OSError:
+            log_lines = []
+    if not log_lines:
+        # No log at all: any checked action is unattributable. Report it
+        # rather than assume the benign case.
+        return [a["prose"] for a in acts
+                if a["checked"] and a["prose"]]
+    blob = "\n".join(log_lines).lower()
+    out = []
+    for a in acts:
+        if not (a["checked"] and a["prose"]):
+            continue
+        probe = a["prose"].strip().lower()
+        # Fall back to the leading words: a logged item is truncated to
+        # 300 chars, and the owner may have reworded the tail since.
+        probe = probe if len(probe) <= 300 else probe[:300]
+        if probe and probe not in blob:
+            out.append(a["prose"])
+    return out
+
+
 def mark_sb_verified(draft_text, prefix, date, command=""):
     """(new_text, new_line) — promote the FIRST §B line of a PART-01
     draft whose text starts with <prefix> from UNVERIFIED to
@@ -1764,9 +1863,14 @@ def freeze_gate_report(pdir):
     for the real Freeze too — previously only the dry run checked it."""
     gates = []
 
-    def _add(gid, label, ok, detail):
-        gates.append({"id": gid, "label": label, "ok": bool(ok),
-                      "detail": detail})
+    def _add(gid, label, ok, detail, level=None):
+        # level: None (pass/fail by ok) or "warn" — ok stays True so a warn
+        # never blocks Freeze, but it renders ⚠/orange rather than a green
+        # ✓ (v3.8). Callers that predate it are unchanged.
+        g = {"id": gid, "label": label, "ok": bool(ok), "detail": detail}
+        if level:
+            g["level"] = level
+        gates.append(g)
 
     draft = pdir / "PART-01.draft.md"
     _add("draft", "Draft", draft.is_file(),
@@ -1807,6 +1911,26 @@ def freeze_gate_report(pdir):
          ("%d unchecked owner action(s) — run/copy them in the Owner pass "
           "tab or mark them done" % noa) if noa
          else "no unchecked owner actions")
+
+    # v3.8 — WARNING, never a blocking gate: checked owner actions with
+    # no console-side log entry were ticked outside the Plan Console,
+    # which during intake means the agent ran owner work. Surfaced here
+    # (not as ok=False) so the owner confirms it — a hard block on a
+    # log miss would strand a plan whose actions the owner ran by hand.
+    ext = externally_ticked_owner_actions(pdir)
+    if ext:
+        # level="warn" — ok stays True so it never BLOCKS, but the dialog
+        # renders it ⚠/orange instead of a green ✓. A green tick beside
+        # "ticked off-console" would read as reassurance, which is the
+        # one thing this gate must not do.
+        _add("owner_actions_unlogged", "Owner actions ticked off-console",
+             True,
+             ("%d owner action(s) are ticked but NOT in %s — they were "
+              "marked done outside the Plan Console. During intake that "
+              "means the agent ran owner work: confirm each one really "
+              "ran before trusting the frozen plan. %s"
+              % (len(ext), OWNER_PASS_LOG, "; ".join(e[:70] for e in ext[:3]))),
+             level="warn")
 
     na = 0
     if draft.is_file():
@@ -2003,12 +2127,12 @@ RETRY_NOTE = ("\n\nYour previous reply had no valid <<<FILE>>> blocks. "
 # v2.6.3 — the one-line description of the NEWEST command-file change,
 # shown in the auto-update dialog. Bump this together with the command
 # files so the dialog text never goes stale.
-COMMAND_UPDATE_NOTE = ("new-plan/recon/validate-plan now document the "
-                       "v3.5 owner-action format (→ verifies §B and "
-                       "(expect: …) tags) so agents emit actions the "
-                       "Owner pass tab can run and write back; "
-                       "validate-plan also counts unchecked owner "
-                       "actions as findings")
+COMMAND_UPDATE_NOTE = ("new-plan/recon now carry the v3.8 INTAKE HARD BAN "
+                       "(never run an owner action, never deploy, never "
+                       "tick an owner checkbox, never run the build/test "
+                       "suite); validate-plan still counts unchecked owner "
+                       "actions as findings, whose remediation is the OWNER "
+                       "running them in the Owner pass tab")
 
 
 def parse_files(text, slug):
@@ -2091,8 +2215,26 @@ def parse_validation_findings(text):
 #                                then NEVER auto-overwritten again)
 # A file that is empty or contains only "OFF" disables the orders for
 # everything it governs. Init / Update-command-files never touch these.
+#
+# v3.8 — the SAME machinery, a SECOND phase. Intake instructions
+# (new-plan / recon / owner-resolve / auto-resolve, and every _run_api
+# prompt) used to carry NO standing orders at all, so the agent ran
+# owner-only work during intake. It is a SEPARATE file, not a section of
+# the execution one, for a concrete reason: the execution contract is
+# actively wrong for intake. C7 keys scope to "the session block lists
+# authorized files" (intake has no session block) and C5 says "gates
+# always run, always pasted" (intake has no gates — pasting this order
+# verbatim would push the agent to run the project's build/lint/test
+# suite mid-intake). A phase-tagged single file would need a section
+# parser whose silent mis-split hands an agent the wrong contract — a
+# worse failure than the original gap, because it LOOKS configured.
+# Per-phase files make a mis-split impossible, and each phase keeps its
+# own independent OFF switch and per-repo override.
 # ----------------------------------------------------------------------------
 AGENT_ORDERS_NAME = "AGENT-ORDERS.md"
+AGENT_ORDERS_PHASE_INTAKE = "intake"
+AGENT_ORDERS_PHASE_SESSION = "session"
+AGENT_ORDERS_INTAKE_NAME = "AGENT-ORDERS-INTAKE.md"
 AGENT_ORDERS_DEFAULT = """# AGENT-ORDERS.md
 
 STANDING ORDERS — EXECUTION AGENT (permanent; paste after global
@@ -2174,6 +2316,107 @@ Session specs dictate the authorized files and scope. Refer to the
 project's standard build, lint, and test commands. Global agent
 configuration governs everything not restated here.
 """
+
+# v3.8 — standing orders for the INTAKE phase. Read this next to the
+# execution contract above: it is deliberately a DIFFERENT contract, not
+# a subset. The execution orders assume a frozen PART-01 §A, a session
+# block, and a real gate set; intake has none of those, and inheriting
+# them produces a specific, observed failure — C5 ("gates always run,
+# always pasted") makes the agent run the project's build/lint/test
+# suite while it is only supposed to be drafting a plan.
+AGENT_ORDERS_INTAKE_DEFAULT = """# AGENT-ORDERS-INTAKE.md
+
+STANDING ORDERS — INTAKE AGENT (permanent; paste after global
+configuration, before every intake block given to this agent: new-plan,
+recon, owner-resolve, auto-resolve. Where stricter than global config,
+this block wins.)
+
+## WHO YOU ARE
+
+You are a software PLANNING agent working on a plan's INTAKE pass. You
+read a source document (a plan, a brainstorm, an audit report) and turn
+it into a plan draft plus the artifacts the owner needs to review it.
+You are NOT executing the plan. Nothing you write is implemented here —
+the plan has no frozen §A session map yet, no authorized file list, and
+no gate set. Future audits should find nothing.
+
+## THE HARD BAN — the one rule that outranks everything else below
+
+You NEVER perform work that belongs to the OWNER. Specifically:
+
+- You never RUN a command you have written into "## Owner actions".
+  You write the action; the owner runs it in the Plan Console Owner pass
+  tab. A command you just wrote is still owner work.
+- You never DEPLOY anything, ever — not to staging, not to production,
+  not "just to check". Panel access (Coolify or equivalent) is
+  owner-only.
+- You never tick an owner checkbox. `- [x]` under "## Owner actions" is
+  the OWNER's assertion that they ran it. Ticking it yourself is
+  forgery: it makes the Freeze gate pass over work that never happened.
+- You never run migrations, SQL against a live database, or anything
+  needing credentials, SSH, a dashboard, or a live external call.
+- You never write (or edit) PROGRESS.md, HEALTH.md, IN-PROGRESS.md, or
+  any "PART-01 v*.md" file. Those are console- and session-owned; the
+  agent never creates them. You write ONLY inside plans/<slug>/, and
+  never PART-01.draft.md's freeze state, VALIDATION.md's verdict, or
+  the OWNER ANSWERS inbox.
+- You never answer your own open questions, and you never write into
+  "## OWNER ANSWERS" — only the owner writes there, and only
+  owner-resolve.md integrates it.
+
+If you believe an owner action should be run: leave it as an unchecked
+owner action and continue with everything else. Never stall, never wait
+for a human, never improvise a substitute. That is a correct outcome.
+
+## SCOPE
+
+Write ONLY inside plans/<slug>/. No code changes, no config changes, no
+dependency edits, no commits, no deploys — there is nothing to
+implement yet. Treat every factual claim in SOURCE.md as UNVERIFIED:
+plans rot, brainstorms speculate, audits go stale.
+
+## NEVER INVENT FACTS
+
+Never invent a fact to fill a gap: versions, paths, env vars, IDs,
+commands, API shapes. A gap stays blank and surfaces as a question or a
+recon item. "Never invent keys, IDs, or variables present in none of
+the required target files" applies with full force here — a dead key
+written into a draft becomes a dead reference in the frozen plan.
+
+## NO GATES DURING INTAKE
+
+You do NOT run the project's build, type-checker, linter, or test suite.
+Intake authors a plan; it does not verify code. The only checks you run
+are the specific, read-only, AGENT-RUNNABLE recon items the checklist
+names (file/dir existence, grep, reading code/config, counts) — and for
+those you record the actual output next to the item and tick it.
+
+## OUTPUT SHAPE
+
+Emit every file you created as complete files (no diffs, no
+placeholders). End your notes with exactly one status line in the form
+the command file specifies (e.g. "verified X / pending-owner Y /
+failed Z"). No narrative, no concluding essay. One pass, stop.
+
+## ESCALATION
+
+Your only escape valves: put the gap in OPEN-QUESTIONS.md (a question
+the owner must settle) or in RECON-CHECKLIST.md (a check that must
+happen). Guessing is not one of them. A draft that is honest about what
+it does not know is worth more than one that is confidently wrong.
+"""
+
+# Per phase: (filename, app-level default). Built here rather than next
+# to the names, because a default may only be referenced after both are
+# defined. Resolved by _agent_orders(); unknown phase → session (the
+# pre-v3.8 behavior), so a bad call degrades to the old contract rather
+# than to nothing.
+AGENT_ORDERS_FILES = {
+    AGENT_ORDERS_PHASE_SESSION: (AGENT_ORDERS_NAME,
+                                 AGENT_ORDERS_DEFAULT),
+    AGENT_ORDERS_PHASE_INTAKE: (AGENT_ORDERS_INTAKE_NAME,
+                                AGENT_ORDERS_INTAKE_DEFAULT),
+}
 
 # ----------------------------------------------------------------------------
 # Starter repo files (created by "Init starter repo" — never overwrite existing)
@@ -2294,6 +2537,24 @@ argument-hint: <plan|brainstorm|audit> <source-path> <slug>
 ---
 Load PART-00.md and follow its economy rules. INTAKE pass — no code
 changes, no deploys, write only inside plans/<slug>/.
+
+INTAKE HARD BAN (binding — this outranks anything below):
+- You never RUN a command you write into "## Owner actions". You write
+  it; the owner runs it in the Plan Console Owner pass tab. A command
+  you just wrote is still owner work.
+- You never DEPLOY anything (Coolify or any panel) — not even to check.
+- You never tick an owner checkbox. `- [x]` under "## Owner actions" is
+  the OWNER's assertion that they ran it; ticking it yourself makes the
+  Freeze gate pass over work that never happened.
+- You never run migrations, live SQL, or anything needing credentials,
+  SSH, a dashboard, or a live external call.
+- You never write PROGRESS.md, HEALTH.md, IN-PROGRESS.md, or any
+  "PART-01 v*.md" file — those are console- and session-owned.
+- You never answer your own questions and never write into
+  "## OWNER ANSWERS".
+- You do NOT run the project's build, type-checker, linter, or test
+  suite: intake authors a plan, it does not verify code. The only
+  checks you run are the AGENT-RUNNABLE recon items named below.
 
 Arguments: $ARGUMENTS → parse as TYPE SOURCE SLUG
 TYPE: plan | brainstorm | audit. SOURCE: path to the source doc.
@@ -2493,12 +2754,22 @@ tick it `- [x]`. Promote matching PART-01.draft.md §B lines to
 VERIFIED <today> ONLY where the check passed. Failures stay UNVERIFIED
 with a note.
 
+HARD BAN (binding): you never run an OWNER-ONLY item — not even when
+the command is right there in the checklist or you already know it
+would succeed. You never deploy, never run live SQL or migrations,
+never tick an owner checkbox under "## Owner actions" (`- [x]` there is
+the OWNER's own assertion that they ran it — ticking it yourself makes
+the Freeze gate pass over work that never happened), and you never run
+the project's build/type-checker/linter/test suite. You do not write
+PROGRESS.md, HEALTH.md, IN-PROGRESS.md, or "PART-01 v*.md". Recon
+verifies; it does not act.
+
 OWNER-ONLY items: append exact commands to OPEN-QUESTIONS.md under
-"## Owner actions" — do not stall on them. Use the owner-action format
-from commands/new-plan.md: `- [ ] <prose>` with the backticked command,
-plus `→ verifies §B "<exact §B line prefix>"` and `(expect: …)` tags
-when the command confirms an UNVERIFIED §B line (the console then
-offers one-click Run + VERIFIED write-back).
+"## Owner actions" — do not stall on them, and never run them. Use the
+owner-action format from commands/new-plan.md: `- [ ] <prose>` with the
+backticked command, plus `→ verifies §B "<exact §B line prefix>"` and
+`(expect: …)` tags when the command confirms an UNVERIFIED §B line (the
+console then offers one-click Run + VERIFIED write-back).
 
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:
@@ -3587,53 +3858,109 @@ class App:
             pass
 
     # --------------------------------------------- v2.3 standing orders
-    def _agent_orders(self, repo=None):
-        """The active standing-orders text ("" = disabled).
+    def _agent_orders(self, repo=None, phase=AGENT_ORDERS_PHASE_SESSION):
+        """The active standing-orders TEXT for <phase> ("" = disabled).
 
         Precedence — the first existing file wins, content verbatim:
-        1. <repo>/AGENT-ORDERS.md  (per-repo override)
-        2. AGENT-ORDERS.md next to this script (app-level, user-editable)
+        1. <repo>/<FILE>  (per-repo override)
+        2. <FILE> next to this script (app-level, user-editable)
         3. the built-in default — materialized as the app-level file on
            first use, so future customizations edit a real file.
         A file that is empty or contains only 'OFF' disables the orders
         for everything it governs (that repo, or all repos). Never
         written by Init / Update-command-files — created here, once,
-        only when absent."""
+        only when absent.
+
+        v3.8 — parameterized by phase. The two phases resolve through
+        SEPARATE files with separate defaults, separate OFF switches
+        and separate per-repo overrides: a repo that tuned its execution
+        orders must not silently inherit a mismatched intake contract.
+        An unknown phase degrades to 'session' (the pre-v3.8 contract)
+        rather than to no orders at all."""
+        name, default = AGENT_ORDERS_FILES.get(
+            phase, AGENT_ORDERS_FILES[AGENT_ORDERS_PHASE_SESSION])
         cands = []
         if repo is not None:
-            cands.append(Path(repo) / AGENT_ORDERS_NAME)
-        cands.append(HERE / AGENT_ORDERS_NAME)
+            cands.append(Path(repo) / name)
+        cands.append(HERE / name)
         for f in cands:
             if f.is_file():
                 body = f.read_text(encoding="utf-8").strip()
                 if body and body.upper() != "OFF":
                     return body
                 return ""          # explicit OFF / empty → disabled
-        sidecar = HERE / AGENT_ORDERS_NAME
+        sidecar = HERE / name
         try:
-            sidecar.write_text(AGENT_ORDERS_DEFAULT, encoding="utf-8")
+            sidecar.write_text(default, encoding="utf-8")
         except OSError:
             pass    # read-only location -> the in-memory default is used
                     # below anyway, so nothing is lost. Narrowed to OSError:
                     # a bare Exception here would also hide a real bug while
                     # still returning working orders.
-        return AGENT_ORDERS_DEFAULT.strip()
+        return default.strip()
+
+    def _prepend_orders(self, body, orders, phase):
+        """orders + a phase separator + body — the ONE place the orders
+        are attached, so no instruction emitter can silently skip them
+        again (the v3.8 defect: attached in exactly one of seven call
+        sites, so intake ran with no contract at all).
+
+        The separator maps the orders' own placement rule ("after global
+        configuration, before every session/intake block") onto the plan
+        system: scope and content come from the command file that
+        follows. Returns <body> verbatim when the phase is disabled, so
+        an 'OFF' file produces byte-identical pre-v3.8 instructions."""
+        if not orders:
+            return body
+        what = ("SESSION BLOCK (the session spec that follows)"
+                if phase == AGENT_ORDERS_PHASE_SESSION
+                else "INTAKE BLOCK (the intake task that follows)")
+        rule = ("Authorized scope, gates and deploy rules come from "
+                "PART-01 §A via commands/session.md."
+                if phase == AGENT_ORDERS_PHASE_SESSION
+                else "Authorized scope, artifacts and output format come "
+                     "from the command file named below. This is a "
+                     "PLANNING pass: it implements nothing and runs no "
+                     "owner action.")
+        return (orders
+                + "\n\n===== %s — the standing orders above apply. %s "
+                  "=====\n\n" % (what, rule)
+                + body)
+
+    def _orders_phase_now(self):
+        """Which phase the 'Agent orders…' button should edit: the tab
+        the owner is looking at (v3.8). Intake tab → the intake contract,
+        Sessions tab → the execution contract. Falls back to 'session'
+        when there is no notebook yet."""
+        try:
+            return (AGENT_ORDERS_PHASE_INTAKE
+                    if self.nb.index(self.nb.select()) == 0
+                    else AGENT_ORDERS_PHASE_SESSION)
+        except Exception:
+            return AGENT_ORDERS_PHASE_SESSION
 
     def on_edit_agent_orders(self):
-        """v2.3 — open the ACTIVE AGENT-ORDERS.md for editing: the
-        per-repo override if present, else the app-level file next to
-        the script (created from the built-in default when missing).
-        Edits apply to the NEXT session instruction you copy; nothing
-        is ever overwritten automatically afterwards."""
+        """v2.3 — open the ACTIVE orders file for editing: the per-repo
+        override if present, else the app-level file next to the script
+        (created from the built-in default when missing).
+        Edits apply to the NEXT instruction you copy; nothing is ever
+        overwritten automatically afterwards.
+
+        v3.8 — phase-aware: the file follows the active tab (Intake →
+        AGENT-ORDERS-INTAKE.md, Sessions → AGENT-ORDERS.md). One button,
+        not two, because the tab already says which contract the owner
+        is about to hand their agent."""
+        phase = self._orders_phase_now()
+        name, default = AGENT_ORDERS_FILES[phase]
         repo = self.repo_path()
-        f = repo / AGENT_ORDERS_NAME
+        f = repo / name
         which = "per-repo override — wins for this repo only"
         if not f.is_file():
-            f = HERE / AGENT_ORDERS_NAME
+            f = HERE / name
             which = "app-level — applies to every repo"
             if not f.is_file():
                 try:
-                    f.write_text(AGENT_ORDERS_DEFAULT, encoding="utf-8")
+                    f.write_text(default, encoding="utf-8")
                 except OSError:
                     # Cannot seed the file (read-only install dir). _open_path
                     # then fails and the owner is told the path to open by
@@ -3646,7 +3973,7 @@ class App:
         self.say("intake", "agent orders: editing %s (%s). Set the content "
                  "to just 'OFF' (or empty) to disable; delete the repo file "
                  "to fall back to the app-level file. Changes apply to the "
-                 "next session instruction you copy." % (f, which))
+                 "next instruction you copy." % (f, which))
 
     def _tabs(self):
         nb = ttk.Notebook(self.root); nb.pack(fill="both", expand=True,
@@ -4403,13 +4730,45 @@ class App:
         # must still exist AND still carry the prose Refresh read (the
         # bullet's own text); a mismatch means the file was rewritten
         # and the toggle would flip the wrong line.
+        #
+        # v3.5.2 audit fix — CONTAINMENT was not identity. `prose not in
+        # lines[ln]` accepts a line that merely CONTAINS the prose, so a
+        # shifted index whose line happens to quote or repeat it passed
+        # the guard and flipped the wrong bullet — which is how a whole
+        # list can end up ticked one silent click at a time. Re-locate by
+        # content instead: exactly one line in the file must be the same
+        # checkbox bullet carrying this exact prose, and it must be the
+        # line we indexed. Zero matches = stale, >1 = ambiguous; both
+        # refuse rather than guess.
+        target = None
+        if action["prose"]:
+            hits = [i for i, l in enumerate(lines)
+                    if (RECON_ITEM_RE.match(l) or OA_PLAIN_BULLET_RE.match(l))
+                    and action["prose"] in l]
+            if len(hits) == 1:
+                target = hits[0]
+            elif not hits:
+                messagebox.showerror(
+                    "Owner actions",
+                    "OPEN-QUESTIONS.md changed since Refresh — click "
+                    "Refresh.")
+                return False
+            else:
+                messagebox.showerror(
+                    "Owner actions",
+                    "OPEN-QUESTIONS.md changed since Refresh — %d bullets "
+                    "match this action, so ticking it could hit the wrong "
+                    "one. Click Refresh and re-select." % len(hits))
+                return False
         if (not (0 <= ln < len(lines))
                 or not action["prose"]
-                or action["prose"] not in lines[ln]):
+                or not (0 <= target < len(lines))
+                or lines[target].strip() != action["prose"].strip()):
             messagebox.showerror(
                 "Owner actions",
                 "OPEN-QUESTIONS.md changed since Refresh — click Refresh.")
             return False
+        ln = target
         flipped = flip_recon_item(lines[ln])
         if flipped is None:
             # legacy plain bullet ("- prose"): upgrade it to checkbox form
@@ -4433,11 +4792,40 @@ class App:
         return True
 
     def _log_owner_action(self, action, what, extra=""):
-        """One archive line per owner-action event (owner-pass.log via
-        the owner log) — nothing the owner does here is ever lost."""
+        """One PERSISTED archive line per owner-action event.
+
+        v3.5.2 audit fix: this used to call self.say() only, which pushes
+        onto an in-memory GUI queue — so marking an owner action done left
+        NO durable trace anywhere (no owner-pass.log line, and .bak is
+        written only by on_answer_save/on_question_remove). The docstring
+        claimed "nothing the owner does here is ever lost", which was
+        false: with no log, a later run could not tell who ticked what or
+        when. Every event is now appended to the plan's owner-pass.log in
+        the same timestamped format _oq_archive uses, and the GUI still
+        gets the line for immediate feedback."""
         cmd = action.get("command") or "(no command)"
-        self.say("owner", "owner action: %s — %s%s"
-                 % (what, cmd, (" — " + extra) if extra else ""))
+        prose = (action.get("prose") or "").strip()
+        detail = " — " + extra if extra else ""
+        line = "owner action: %s — %s%s" % (what, cmd, detail)
+        # Durable record first: a GUI-only log is not an archive.
+        try:
+            pdir = self._oq_file.parent if self._oq_file else None
+            if pdir is not None and pdir.is_dir():
+                with (pdir / OWNER_PASS_LOG).open("a",
+                                                  encoding="utf-8") as f:
+                    f.write("[%s] OWNER ACTION — %s\n    cmd: %s\n"
+                            % (datetime.now().strftime("%Y-%m-%d %H:%M"),
+                               what, cmd))
+                    if prose:
+                        f.write("    item: %s\n" % prose[:300])
+        except Exception:
+            # R-10 — a silently-failed archive write is the exact defect
+            # this fix removes; surface it loudly rather than losing it.
+            traceback.print_exc()
+            self.say("owner", "WARN: owner-pass.log append failed — this "
+                     "owner action was NOT archived (the checkbox is still "
+                     "written).")
+        self.say("owner", line)
 
     def on_owner_action_copy(self):
         a = self._selected_owner_action()
@@ -5016,7 +5404,7 @@ class App:
                 return
         self._show_instruction(
             "Owner-resolve instruction — %s" % slug,
-            self._instruction(repo, "owner-resolve.md", slug),
+            self._intake_instruction(repo, "owner-resolve.md", slug),
             pdir / "instructions" / "owner-resolve.txt")
         self.say("intake", "owner pass: instruction copied — paste into your "
                  "agent (repo open as workspace). It will apply the draft "
@@ -5549,10 +5937,19 @@ class App:
                 for i, (cmd, a) in enumerate(steps, 1):
                     lines.append("%d. commands/%s — arguments: %s" % (i, cmd, a))
                 lines += ["", "Follow PART-00.md economy rules. "
-                          "Write only inside plans/%s/." % slug]
-                self._show_instruction("Intake instruction — %s" % slug,
-                                       "\n".join(lines),
-                                       pdir / "instructions" / "intake.txt")
+                   "Write only inside plans/%s/." % slug]
+                orders = self._agent_orders(repo, AGENT_ORDERS_PHASE_INTAKE)
+                self._show_instruction(
+                    "Intake instruction — %s" % slug,
+                    # v3.8 — the multi-step intake block is hand-built (not
+                    # _instruction()), so it needed the contract attached
+                    # by hand too. Same helper as every other intake
+                    # emitter, so the two cannot drift apart.
+                    self._prepend_orders("\n".join(lines), orders,
+                                        AGENT_ORDERS_PHASE_INTAKE),
+                    pdir / "instructions" / "intake.txt")
+                self._log_orders_attached(
+                    repo, orders, AGENT_ORDERS_PHASE_INTAKE)
                 self.say("intake", "NO API KEY — intake instruction copied to "
                          "clipboard (popup + backup file in plans/%s/"
                          "instructions/). Paste it into your agent with the "
@@ -5640,7 +6037,7 @@ class App:
                 if not ui["key"]:
                     self._show_instruction(
                         "Recon instruction — %s" % slug,
-                        self._instruction(repo, "recon.md", slug),
+                        self._intake_instruction(repo, "recon.md", slug),
                         pdir / "instructions" / "recon.txt")
                     self.say("intake", "NO API KEY — recon instruction copied "
                              "(popup + backup file). Fastest path: your agent "
@@ -5701,7 +6098,8 @@ class App:
                 if not ui["key"]:
                     self._show_instruction(
                         "Validate instruction — %s" % slug,
-                        self._instruction(repo, "validate-plan.md", slug),
+                        self._intake_instruction(
+                            repo, "validate-plan.md", slug),
                         pdir / "instructions" / "validate.txt")
                     self.say("intake", "NO API KEY — validate instruction copied "
                              "(popup + backup file). The agent writes the report "
@@ -5802,7 +6200,14 @@ class App:
             lines.append("")
         lines += ["Follow PART-00.md economy rules. Write only inside "
                   "plans/%s/." % slug]
-        return "\n".join(lines)
+        # v3.8 — the intake contract, attached like every other intake
+        # emitter. This one is the remediation loop: findings that ask
+        # for owner-run commands flow through here, which is exactly
+        # where an unguarded agent would start running them.
+        orders = self._agent_orders(repo, AGENT_ORDERS_PHASE_INTAKE)
+        self._log_orders_attached(repo, orders, AGENT_ORDERS_PHASE_INTAKE)
+        return self._prepend_orders("\n".join(lines), orders,
+                                    AGENT_ORDERS_PHASE_INTAKE)
 
     def _auto_resolve_chain(self, repo, slug, ui, f):
         """v2.8 — run the remediation for classified findings: with an
@@ -6112,6 +6517,17 @@ class App:
             self.say(target, "ERROR: no model selected — pick one in the top bar.")
             return False
         prompt = cpath.read_text(encoding="utf-8").replace("$ARGUMENTS", args)
+        # v3.8 — the intake contract, on the API lane too. With a key set
+        # the console IS the agent, and this prompt previously carried no
+        # standing orders at all — so the one path that runs unattended
+        # was the one with no guard. Placed ahead of the command file so
+        # the contract reads as permanent context, matching the orders'
+        # own placement rule.
+        orders = self._agent_orders(repo, AGENT_ORDERS_PHASE_INTAKE)
+        if orders:
+            prompt = self._prepend_orders(prompt, orders,
+                                          AGENT_ORDERS_PHASE_INTAKE)
+            self._log_orders_attached(repo, orders, AGENT_ORDERS_PHASE_INTAKE)
         prompt += FILE_RULES + "".join(
             "\n\n===== INLINED FILE: %s =====\n%s" % (l, c) for l, c in extra)
         self.say(target, "----- %s via %s -----" % (cmd_file, model))
@@ -6193,6 +6609,7 @@ class App:
         gates = freeze_gate_report(pdir)
         self._freeze_gates_dialog(slug, gates, "Freeze check", verb="Freeze")
         nfail = sum(1 for g in gates if not g["ok"])
+        nwarn = sum(1 for g in gates if g.get("level") == "warn")
         if not nfail:
             self.say("owner", "freeze dry-run: nothing blocking — Freeze "
                      "is unblocked.")
@@ -6202,6 +6619,11 @@ class App:
             for g in gates:
                 if not g["ok"]:
                     self.say("owner", "  ✗ %s — %s" % (g["label"], g["detail"]))
+        # v3.8 — warnings are reported in the dry-run log too, and are
+        # explicitly NOT counted as blocking.
+        for g in gates:
+            if g.get("level") == "warn":
+                self.say("owner", "  ⚠ %s — %s" % (g["label"], g["detail"]))
 
     def _freeze_gates_dialog(self, slug, gates, title, verb=None):
         """v1.2.0 — the ✓/✗ Freeze-gate checklist in ONE dialog: every
@@ -6219,9 +6641,19 @@ class App:
         frm = ttk.Frame(win, padding=14)
         frm.pack(fill="both", expand=True)
         nfail = sum(1 for g in gates if not g["ok"])
+        nwarn = sum(1 for g in gates if g.get("level") == "warn")
+        # v3.8 — a warn gate is ok=True, so it must never be counted as
+        # plain reassurance in the header either: "All gates pass" next to
+        # a ⚠ row is the exact misreading the level exists to prevent.
         if nfail:
             header = ("%d of %d gates pass — resolve the ✗ items, then "
                       "%s again." % (len(gates) - nfail, len(gates), verb))
+            if nwarn:
+                header += " (%d ⚠ warning(s) below — read them too.)" % nwarn
+        elif nwarn:
+            header = ("All %d gates pass — %s is unblocked, but %d ⚠ "
+                      "warning(s) below need your confirmation."
+                      % (len(gates), title, nwarn))
         else:
             header = "All %d gates pass — %s is unblocked." % (len(gates),
                                                                title)
@@ -6231,9 +6663,14 @@ class App:
         for g in gates:
             row = ttk.Frame(frm)
             row.pack(anchor="w", fill="x", pady=1)
-            glyph_kw = ({"foreground": t["accent-green" if g["ok"]
-                                              else "accent-red"]} if t else {})
-            tk.Label(row, text="✓" if g["ok"] else "✗", **glyph_kw)\
+            # v3.8: a warn gate renders ⚠/orange — never a green ✓. The
+            # whole point is that it must not read as reassurance.
+            tone = ("accent-orange" if g.get("level") == "warn"
+                    else "accent-green" if g["ok"] else "accent-red")
+            glyph = ("⚠" if g.get("level") == "warn"
+                     else "✓" if g["ok"] else "✗")
+            glyph_kw = ({"foreground": t[tone]} if t else {})
+            tk.Label(row, text=glyph, **glyph_kw)\
                 .pack(side="left")
             ttk.Label(row, text="%s — %s" % (g["label"], g["detail"]),
                       wraplength=520, justify="left")\
@@ -6438,6 +6875,37 @@ class App:
                 "Read the file commands/%s in this repo and execute it exactly "
                 "as written,\nwith arguments: %s" % (repo, cmd_file, args))
 
+    def _intake_instruction(self, repo, cmd_file, args):
+        """v3.8 — the intake-phase instruction, with the INTAKE orders
+        prepended. One choke point for every intake emitter, so no call
+        site can silently skip the contract again (the defect this
+        fixes: AGENT-ORDERS.md was attached in exactly one of seven
+        instruction builders, so intake ran unguarded)."""
+        orders = self._agent_orders(repo, AGENT_ORDERS_PHASE_INTAKE)
+        body = self._instruction(repo, cmd_file, args)
+        self._log_orders_attached(repo, orders, AGENT_ORDERS_PHASE_INTAKE)
+        return self._prepend_orders(body, orders, AGENT_ORDERS_PHASE_INTAKE)
+
+    def _log_orders_attached(self, repo, orders, phase):
+        """Say WHICH contract was attached, from WHERE. A phase that
+        silently stopped attaching would otherwise be invisible — the
+        owner would have no way to tell a working guard from a missing
+        one (v3.8)."""
+        if not orders:
+            self.say("intake",
+                     "agent orders: DISABLED for the intake phase (missing "
+                     "file is created on first use — or content is empty/"
+                     "'OFF'); intake block only.")
+            return
+        name = AGENT_ORDERS_FILES[phase][0]
+        src = ("per-repo %s (wins for this repo)" % name
+               if (repo and (Path(repo) / name).is_file())
+               else "app-level %s next to the console" % name)
+        self.say("intake",
+                 "agent orders: intake contract attached ahead of the block "
+                 "(%s). Customize via 'Agent orders…' on the Intake tab — "
+                 "changes apply from the next copy." % src)
+
     def on_copy_instr(self):
         leg_sel = (self.leg_var.get().strip().lower()
                    if hasattr(self, "leg_var") else "full")
@@ -6469,21 +6937,13 @@ class App:
                 return
         # v2.3 — standing orders (AGENT-ORDERS.md) prepended ahead of the
         # session block, per the orders' own placement rule ("after global
-        # configuration, before every session block"). The separator maps
-        # the orders' "session spec / authorized files" language to the
-        # plan system: scope and gates come from PART-01 §A via
-        # commands/session.md.
-        orders = self._agent_orders(repo)
+        # configuration, before every session block"). v3.8 — built by the
+        # same _prepend_orders helper the intake phase uses, so the two
+        # phases share one separator and cannot drift; the SESSION phase
+        # separator text is byte-identical to the pre-v3.8 inline string.
+        orders = self._agent_orders(repo, AGENT_ORDERS_PHASE_SESSION)
         body = self._instruction(repo, "session.md", "%s %d%s" % (slug, n, leg))
-        if orders:
-            text = (orders
-                    + "\n\n===== SESSION BLOCK (the session spec that "
-                      "follows) — the standing orders above apply. "
-                      "Authorized scope, gates and deploy rules come from "
-                      "PART-01 §A via commands/session.md. =====\n\n"
-                    + body)
-        else:
-            text = body
+        text = self._prepend_orders(body, orders, AGENT_ORDERS_PHASE_SESSION)
         self._show_instruction(
             ("Leg %d%s instruction — %s" % (n, leg, slug)) if leg
             else ("Session %d instruction — %s" % (n, slug)),

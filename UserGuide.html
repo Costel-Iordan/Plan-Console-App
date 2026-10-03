@@ -304,9 +304,13 @@ LOG (bottom)
         <p><strong>Owner pass</strong> — the only manual thinking step: answering the questions the
         agent parked for you (<code>OPEN-QUESTIONS.md</code>), ticking the recon checklist, and
         handling owner actions (commands the agent must never run).</p>
-        <p><strong>Standing orders (AGENT-ORDERS.md)</strong> — your persistent rules for the agent
-        (<em>"always write tests", "never push to main"</em>), embedded in every session
-        instruction. Edit them via the <strong>Agent orders…</strong> button.</p>
+        <p><strong>Standing orders — two contracts, one button</strong> — your persistent rules for
+        the agent (<em>"always write tests", "never push to main"</em>), embedded in every
+        instruction. <code>AGENT-ORDERS-INTAKE.md</code> governs the intake pass and
+        <code>AGENT-ORDERS.md</code> governs sessions; they are deliberately different documents,
+        because a session contract (run the gates, obey the §A file list) is wrong for intake.
+        Edit the relevant one via <strong>Agent orders…</strong> — it opens the file for the tab
+        you are on.</p>
         <p class="mb-0"><strong>Verdicts</strong> — after each session, <strong>Session report</strong>
         returns one of: <strong>OK</strong> (complete; the number auto-advances),
         <strong>⚠ CHECK</strong> (something is off, usually a completion line not in the exact
@@ -618,11 +622,29 @@ LOG (bottom)
     (post-deploy) instruction. The agent has nothing to run during the deploy window.</p>
 
     <h3>6.11 Agent orders (standing orders)</h3>
-    <p><strong>Agent orders…</strong> (top bar) opens <code>AGENT-ORDERS.md</code> from the repo
-    root — the standing orders attached to every session instruction. Typical entries:
-    <em>"always write tests", "never push to main", "match the existing code style"</em>. Edit
-    freely; the next Copy session instruction picks up your changes. The file is only created if
-    missing — your customized text is never overwritten by the app.</p>
+    <p>There are <strong>two</strong> standing-orders files, one per phase, each with its own
+    contents, its own <code>OFF</code> switch and its own per-repo override:</p>
+    <ul>
+        <li><code>AGENT-ORDERS-INTAKE.md</code> — prepended to every <em>intake</em> instruction
+        (new-plan, recon, owner-resolve, auto-resolve, and the OpenRouter prompt). Ships with a
+        <strong>hard ban</strong>: never run a command written under <em>Owner actions</em>, never
+        deploy, never tick an owner checkbox, never run live SQL or migrations, never write
+        <code>PROGRESS.md</code> / <code>HEALTH.md</code> / <code>IN-PROGRESS.md</code> /
+        <code>PART-01 v*.md</code>, never answer your own questions — and run <strong>no
+        gates</strong> during intake.</li>
+        <li><code>AGENT-ORDERS.md</code> — prepended to every <em>session</em> instruction. This
+        is the execution contract: gates, the §A scope list, the escalation ladder. Typical
+        entries: <em>"always write tests", "never push to main", "match the existing code
+        style"</em>.</li>
+    </ul>
+    <p><strong>Agent orders…</strong> (top bar) opens the file for the tab you are currently on —
+    Intake or Sessions. Both files are only created if missing, so your customized text is never
+    overwritten by the app. Typing just <code>OFF</code> (or leaving a file empty) disables the
+    orders <em>for that phase only</em>; the other phase keeps working.</p>
+    <p class="note-box">Why two files? The session contract would actively misbehave during
+    intake — its "gates always run" rule makes the agent run your build and test suite while it is
+    only meant to be drafting a plan. Keeping them apart also means no parser can ever hand an
+    agent the wrong contract.</p>
 
     <h3>6.12 API key and model selection</h3>
     <p>The OpenRouter key is optional. Paste it in the top bar and tick <strong>"Use API
@@ -656,7 +678,7 @@ LOG (bottom)
             <tr><td style="padding:0.4rem;">Init starter repo</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Creates PART-00.md, templates/, commands/ in the repo</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Update command files</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Refreshes commands/ with the current built-in protocols</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Reload models</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Refreshes the OpenRouter model list</td><td style="padding:0.4rem;">yes (for the list)</td></tr>
-            <tr><td style="padding:0.4rem;">Agent orders…</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Edits AGENT-ORDERS.md standing orders</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Agent orders…</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Edits the standing orders for the active tab (Intake or Sessions)</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Cancel API call</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Aborts a running model call</td><td style="padding:0.4rem;">n/a</td></tr>
             <tr><td style="padding:0.4rem;">About</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Name, version, copyright, license link and viewer</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Theme</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Light / Dark / Follow OS</td><td style="padding:0.4rem;">no</td></tr>
@@ -710,6 +732,7 @@ LOG (bottom)
         </tr></thead>
         <tbody>
             <tr><td style="padding:0.4rem;"><code>PART-00.md</code></td><td style="padding:0.4rem;">The rulebook every agent session must follow</td><td style="padding:0.4rem;">console</td></tr>
+            <tr><td style="padding:0.4rem;"><code>AGENT-ORDERS-INTAKE.md</code></td><td style="padding:0.4rem;">Your standing orders for the intake pass — bans owner actions and gates</td><td style="padding:0.4rem;">you</td></tr>
             <tr><td style="padding:0.4rem;"><code>AGENT-ORDERS.md</code></td><td style="padding:0.4rem;">Your standing orders, embedded in session instructions</td><td style="padding:0.4rem;">you</td></tr>
             <tr><td style="padding:0.4rem;"><code>templates/PART-01.md</code></td><td style="padding:0.4rem;">The blank plan form</td><td style="padding:0.4rem;">console</td></tr>
             <tr><td style="padding:0.4rem;"><code>commands/</code></td><td style="padding:0.4rem;">7 instruction files the console and agent use</td><td style="padding:0.4rem;">console</td></tr>
@@ -897,11 +920,15 @@ LOG (bottom)
 
     <h2 id="advanced">12. Advanced usage</h2>
 
-    <h3>Customizing AGENT-ORDERS.md</h3>
-    <p><strong>Agent orders…</strong> opens the repo's standing orders. They are embedded verbatim
-    into every session instruction, so house rules (test policy, branch policy, style rules) are
-    enforced without you repeating them. Keep lines short and imperative. The file is yours — the
-    app never overwrites it.</p>
+    <h3>Customizing the standing orders</h3>
+    <p><strong>Agent orders…</strong> opens the standing orders for the tab you are on —
+    <code>AGENT-ORDERS-INTAKE.md</code> on Intake, <code>AGENT-ORDERS.md</code> on Sessions. They
+    are embedded verbatim into each instruction, so house rules (test policy, branch policy, style
+    rules) are enforced without you repeating them. Keep lines short and imperative. Both files are
+    yours — the app never overwrites them.</p>
+    <p>When customizing the <em>intake</em> contract, keep the hard ban intact: it is what stops
+    the agent running your owner actions, deploying, or ticking your owner checkboxes during
+    intake. You can add your own rules around it; do not remove the ban.</p>
 
     <h3>Editing command files safely</h3>
     <p>The 7 files in <code>commands/</code> are plain Markdown instructions. You can edit them, but

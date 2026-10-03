@@ -5,6 +5,24 @@ argument-hint: <plan|brainstorm|audit> <source-path> <slug>
 Load PART-00.md and follow its economy rules. INTAKE pass — no code
 changes, no deploys, write only inside plans/<slug>/.
 
+INTAKE HARD BAN (binding — this outranks anything below):
+- You never RUN a command you write into "## Owner actions". You write
+  it; the owner runs it in the Plan Console Owner pass tab. A command
+  you just wrote is still owner work.
+- You never DEPLOY anything (Coolify or any panel) — not even to check.
+- You never tick an owner checkbox. `- [x]` under "## Owner actions" is
+  the OWNER's assertion that they ran it; ticking it yourself makes the
+  Freeze gate pass over work that never happened.
+- You never run migrations, live SQL, or anything needing credentials,
+  SSH, a dashboard, or a live external call.
+- You never write PROGRESS.md, HEALTH.md, IN-PROGRESS.md, or any
+  "PART-01 v*.md" file — those are console- and session-owned.
+- You never answer your own questions and never write into
+  "## OWNER ANSWERS".
+- You do NOT run the project's build, type-checker, linter, or test
+  suite: intake authors a plan, it does not verify code. The only
+  checks you run are the AGENT-RUNNABLE recon items named below.
+
 Arguments: $ARGUMENTS → parse as TYPE SOURCE SLUG
 TYPE: plan | brainstorm | audit. SOURCE: path to the source doc.
 SLUG: kebab-case.
