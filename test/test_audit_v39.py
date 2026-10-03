@@ -410,6 +410,24 @@ def test_collapsed_state_is_persisted(owner_window, tmp_path):
     saved = json.loads(pc.CFG.read_text(encoding="utf-8"))
     assert saved.get("setup_collapsed") is True
 
+def test_live_bar_reads_left_to_right(owner_window):
+    """The live row must read "... Cancel | Theme | <value> | About".
+
+    Regression: the row was rebuilt with side="right" packing, where the
+    FIRST widget packed lands RIGHTMOST. Issued in the wrong order it
+    rendered "About | Dark | Theme | Cancel" — the "Theme" caption sitting
+    to the RIGHT of its own combobox. Asserted on real x positions, since
+    that is the only way the reading order is actually observable."""
+    app, root = owner_window
+    _pump(root)
+    order = sorted(
+        ((app.btn_cancel, "cancel"), (app._theme_label, "theme"),
+         (app.theme_cb, "value"), (app.btn_about, "about")),
+        key=lambda t: t[0].winfo_rootx())
+    names = [n for _, n in order]
+    assert names == ["cancel", "theme", "value", "about"], (
+        "live bar reads %s — 'Theme' must sit immediately LEFT of its "
+        "combobox" % " | ".join(names))
 
 def _pump(root, n=25):
     for _ in range(n):

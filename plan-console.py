@@ -4300,25 +4300,33 @@ class App:
         live = ttk.Frame(self.root)
         live.grid(row=2, column=0, sticky="ew", padx=10, pady=(2, 2))
         self.prog = ttk.Label(live, text="", wraplength=520, justify="left")
-        self.prog.pack(side="left", padx=(0, 8), fill="x", expand=True)
         # R-11 — Cancel is only meaningful while a chain runs: it starts
         # disabled (idle) and the __busy__ handler flips it with the rest.
         self.btn_cancel = ttk.Button(live, text="Cancel API call",
                                      command=self.on_cancel_api,
                                      state="disabled")
-        self.btn_cancel.pack(side="right", padx=(8, 0))
         # v3.0 — theme selector (Light / Dark / Follow OS), persisted §E
-        ttk.Label(live, text="Theme").pack(side="right", padx=(16, 4))
+        self._theme_label = ttk.Label(live, text="Theme")
         self.theme_var = tk.StringVar(value=THEME_LABELS[self.theme_setting])
         self.theme_cb = ttk.Combobox(live, textvariable=self.theme_var,
                                      values=tuple(THEME_LABELS[s] for s
                                                   in THEME_SETTINGS),
                                      state="readonly", width=10)
-        self.theme_cb.pack(side="right")
         self.theme_cb.bind("<<ComboboxSelected>>", self.on_theme_change)
-        # public release — About box (name / version / copyright / license)
-        ttk.Button(live, text="About", command=self._show_about)\
-            .pack(side="right", padx=(0, 12))
+        self.btn_about = ttk.Button(live, text="About",
+                                    command=self._show_about)
+        # v3.9 — pack order matters and is easy to get wrong: with
+        # side="right" the FIRST widget packed lands RIGHTMOST, so the
+        # pack calls below must be issued in right-to-left reading order.
+        # Packed in the wrong order the row rendered "About | Dark | Theme |
+        # Cancel" — the "Theme" caption landing to the RIGHT of its own
+        # combobox. This restores the original left-to-right reading:
+        # progress ... Cancel API call | Theme | Dark ▾ | About.
+        self.btn_about.pack(side="right", padx=(0, 12))
+        self.theme_cb.pack(side="right")
+        self._theme_label.pack(side="right", padx=(16, 4))
+        self.btn_cancel.pack(side="right", padx=(8, 0))
+        self.prog.pack(side="left", padx=(0, 8), fill="x", expand=True)
         # the progress caption fills the row and must not run off the edge
         _fit_to_own_column(self.prog, live, pad=8, floor=180)
         self._apply_setup_visibility()
