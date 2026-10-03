@@ -595,6 +595,54 @@ def test_strip_refresh_surfaces_permanent_failure(app_window, monkeypatch):
     assert app._strip_fails == 0
 
 
+def test_strip_copy_action_honours_its_own_label(app_window, tmp_path,
+                                                  monkeypatch):
+    """Regression: _strip_action_go used to call on_next_session(), which is
+    now a +1. The strip's label is derived from PROGRESS.md and reads
+    "Copy session 2 ->", so clicking it must copy session 2 even when the
+    spinbox holds something else entirely."""
+    app, root = app_window
+    repo, _pdir = _frozen_repo(
+        tmp_path,
+        progress="SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS "
+                 "| P00 v1.0\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    copied = []
+    monkeypatch.setattr(app, "on_copy_instr",
+                        lambda: copied.append(app.snum.get()))
+
+    app.snum.set("1")
+    app._strip_refresh()
+    root.update()
+    # session 2 is a SPLIT row in FROZEN_ROWS, so the strip offers leg a
+    assert "Copy leg 2a" in app.strip_action.cget("text"), \
+        app.strip_action.cget("text")
+    assert app._strip_copy_target == (2, "a")
+
+    # the spinbox now sits somewhere the strip never mentioned
+    app.snum.set("7")
+    app._strip_action_go()
+    assert app.snum.get() == "2", "strip must copy the session it NAMED"
+    assert app.leg_var.get() == "a", "and the leg it advertised"
+    assert copied == ["2"]
+
+
+def test_strip_copy_target_is_cleared_on_non_copy_states(app_window, tmp_path,
+                                                        monkeypatch):
+    """A target must not outlive the label that advertised it."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    app._strip_refresh()
+    root.update()
+    assert app._strip_copy_target is None
+    assert app._strip_action_kind in (None, "tab")
+
+
 def test_busy_lists_disjoint_and_complete():
     assert not (set(pc.BUSY_DISABLE) & set(pc.BUSY_KEEP_LIVE))
     assert {"btn_status", "btn_showval", "btn_freeze_dry",

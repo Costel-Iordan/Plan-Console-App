@@ -3704,6 +3704,9 @@ class App:
     def _strip_render(self):
         slug = self.slug_var.get().strip()
         self._strip_action_kind = None
+        # cleared every render: only the two COPY branches set it, so a
+        # target can never outlive the label that advertised it
+        self._strip_copy_target = None
         self.strip_action.configure(text="")
         self.strip_next.configure(text="")
         if not slug or not SLUG_RE.match(slug):
@@ -3768,6 +3771,9 @@ class App:
             self._strip_fg(self.strip_state, "accent-orange")
             self.strip_action.configure(text="Resume — copy instruction →")
             self._strip_action_kind = "copy"
+            # name the session we will actually copy, so the label and the
+            # copy cannot disagree (the strip label is a promise)
+            self._strip_copy_target = (None if n is None else (n, leg))
             self._strip_fg(self.strip_action, "accent-cyan")
             return
         nxt = snap["next"]
@@ -3785,6 +3791,7 @@ class App:
                 else ("session %d" % nxt["n"])
             self.strip_action.configure(text="Copy %s →" % what)
             self._strip_action_kind = "copy"
+            self._strip_copy_target = (nxt["n"], nxt["leg"])
             self._strip_fg(self.strip_action, "accent-cyan")
         else:
             self._strip_fg(self.strip_next, "accent-orange")
@@ -3794,11 +3801,34 @@ class App:
 
     def _strip_action_go(self, _e=None):
         """The strip's action link: either jump to the tab that resolves
-        the current state, or prefill+copy the next session (single code
-        path — on_next_session recomputes before copying)."""
+        the current state, or copy the session the strip NAMED.
+
+        v1.2.1 — the copy branch used to call on_next_session(), which is
+        now a +1 on the spinbox. That made the strip's own label a lie:
+        it offered "Copy session 4 ->" and copied whatever the box
+        happened to hold plus one. The strip is DERIVED from
+        PROGRESS.md, so it sets the number it advertised and copies
+        that. on_next_session stays the manual accelerator, where
+        asserting the next number is the point.
+        """
         if self._strip_action_kind == "copy":
             self._goto_tab(1)
-            self.on_next_session()
+            target = getattr(self, "_strip_copy_target", None)
+            if not target or target[0] is None:
+                # marker present but its session number was unreadable:
+                # nothing to copy, so do not guess a number
+                messagebox.showerror(
+                    "Resume",
+                    "An IN-PROGRESS.md marker is present but its session "
+                    "number could not be read.\n\nSet the session number "
+                    "and leg by hand, then use 'Copy session instruction'.")
+                return
+            n, leg = target
+            self.snum.set(str(n))
+            self._leg_sync()
+            if leg:
+                self.leg_var.set(leg)
+            self.on_copy_instr()
         elif self._strip_action_kind == "tab":
             self._goto_tab(self._strip_action_tab)
 
