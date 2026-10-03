@@ -355,9 +355,128 @@ def test_next_session_prefills_and_copies(app_window, tmp_path,
     calls = []
     monkeypatch.setattr(app, "on_copy_instr", lambda: calls.append(1))
     app.on_next_session()
-    assert app.snum.get() == "2", "session 1 is done → prefill 2 (leg a)"
+    assert app.snum.get() == "2", "session 1 → advance to 2 (leg a)"
     assert app.leg_var.get() == "a"
     assert calls == [1], "copy must run as part of the same click"
+
+
+def test_next_session_is_a_plain_increment(app_window, tmp_path,
+                                           monkeypatch):
+    """v1.2.1 — the button is +1 on the number in the box, NOT a jump to
+    the first not-done session. A jump quietly renumbered the box around
+    a re-run or BLOCKED session, so the box stopped meaning "the session
+    I am on". Sitting on session 1 with session 2 recorded must still
+    advance to 2, not skip to 3."""
+    app, root = app_window
+    repo, _pdir = _frozen_repo(
+        tmp_path,
+        progress="SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS "
+                 "| P00 v1.0\n"
+                 "SESSION 2 | 2026-09-26 | gates: g7 | status: PASS "
+                 "| P00 v1.0\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    calls = []
+    monkeypatch.setattr(app, "on_copy_instr", lambda: calls.append(1))
+    app.snum.set("1")
+    app.on_next_session()
+    assert app.snum.get() == "2", "increment, not a jump past recorded work"
+    assert calls == [1]
+
+
+def test_next_session_refuses_to_run_off_the_map(app_window, tmp_path,
+                                                 monkeypatch):
+    """The increment is applied LAST: a target §A never declared must
+    leave the box alone rather than copy an instruction for it.
+    _session_guards only checks PREDECESSORS, so nothing downstream
+    would have caught this."""
+    app, root = app_window
+    repo, _pdir = _frozen_repo(
+        tmp_path,
+        progress="SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS "
+                 "| P00 v1.0\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    calls = []
+    monkeypatch.setattr(app, "on_copy_instr", lambda: calls.append(1))
+    monkeypatch.setattr(pc.messagebox, "showinfo", lambda *a, **k: None)
+    app.snum.set("2")          # last session in FROZEN_ROWS is 2
+    app.on_next_session()
+    assert app.snum.get() == "2", "no run off the end of §A"
+    assert calls == [], "nothing to copy"
+
+
+def test_next_session_gap_in_map_refuses_and_lists(app_window, tmp_path,
+                                                   monkeypatch):
+    """A §A that skips a number (1, 3) must not be advanced into: the
+    message names what §A actually declares so the gap is visible."""
+    app, root = app_window
+    repo = _make_repo(tmp_path)
+    pdir = repo / "plans" / "demo-plan"
+    write(pdir / "PART-01 v1.0.md", FROZEN_ROWS.replace(
+        "    2 | Deploy to production | g7 | split",
+        "    3 | Deploy to production | g7 | no"))
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS | P00 v1.0\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    calls = []
+    monkeypatch.setattr(app, "on_copy_instr", lambda: calls.append(1))
+    seen = []
+    monkeypatch.setattr(pc.messagebox, "showinfo",
+                        lambda *a, **k: seen.append(a[1] if len(a) > 1 else ""))
+    app.snum.set("1")
+    app.on_next_session()
+    assert app.snum.get() == "1", "session 2 is not declared — do not move"
+    assert calls == []
+    assert seen and "3" in seen[0], "the message must list what §A declares"
+
+
+def test_next_session_empty_box_starts_at_one(app_window, tmp_path,
+                                              monkeypatch):
+    """An empty or non-numeric box is 0, so +1 lands on session 1 — never
+    on 0, and never a ValueError dialog."""
+    app, root = app_window
+    repo, _pdir = _frozen_repo(tmp_path)
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    calls = []
+    monkeypatch.setattr(app, "on_copy_instr", lambda: calls.append(1))
+    for junk in ("", "abc"):
+        app.snum.set(junk)
+        app.on_next_session()
+        assert app.snum.get() == "1", "junk %r must start at 1" % junk
+    assert calls == [1, 1]
+
+
+def test_next_session_keeps_split_leg_across_clicks(app_window, tmp_path,
+                                                    monkeypatch):
+    """v1.2.1 — the increment must not drop the split-deploy leg: with
+    leg a PASS it lands on b (the DEPLOY WINDOW copy), otherwise on a."""
+    app, root = app_window
+    repo, _pdir = _frozen_repo(
+        tmp_path,
+        progress="SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS "
+                 "| P00 v1.0\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    monkeypatch.setattr(app, "on_copy_instr", lambda: None)
+    app.snum.set("1")
+    app.on_next_session()
+    assert (app.snum.get(), app.leg_var.get()) == ("2", "a"), "leg a first"
+
+    # leg a now PASS → the same button lands on leg b
+    write(repo / "plans" / "demo-plan" / "PROGRESS.md",
+          "SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS | P00 v1.0\n"
+          "SESSION 2a | 2026-09-26 | gates: g7 | status: PASS | P00 v1.0\n")
+    app.snum.set("1")
+    app.on_next_session()
+    assert (app.snum.get(), app.leg_var.get()) == ("2", "b"), "leg b next"
 
 
 def test_busy_lists_disjoint_and_complete():

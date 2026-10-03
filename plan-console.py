@@ -6295,12 +6295,24 @@ class App:
         self.say("sessions", "When the agent finishes, click 'Session report'.")
 
     def on_next_session(self):
-        """v1.2.0 — prefill the first not-done session/leg from
-        PROGRESS.md (next_pending_session — the exact computation Status
-        reports) and copy its instruction: the daily loop becomes one
-        click instead of type-#-maybe-leg-click-copy. The DEPLOY WINDOW
-        state copies leg b, which asks for the Coolify confirmation —
-        the designed flow."""
+        """v1.2.1 — advance the session number by ONE and copy that
+        session's instruction: the daily loop is a single click.
+
+        The number is a plain increment, not a jump to the first
+        not-done session. The owner drives the sequence, and a jump
+        quietly renumbered the box around a re-run, deferred or
+        BLOCKED session — so the box stopped meaning "the session I am
+        on". next_pending_session is still consulted, but only for the
+        leg of a split deploy session.
+
+        Every guard still applies: the copy goes through on_copy_instr
+        -> _session_guards (frozen plan, BLOCKED.md, predecessors
+        recorded, split-leg ordering). Only the number selection moved.
+
+        The increment is applied LAST, once the target is known to
+        exist, so a refused preflight or a run off the end of §A leaves
+        the box where the owner left it.
+        """
         repo = self._preflight()
         if repo is None: return
         slug = self._get_slug("sessions")
@@ -6308,29 +6320,53 @@ class App:
             messagebox.showerror("Next session",
                                  "Enter the slug first (kebab-case).")
             return
+        try:
+            cur = int(self.snum.get())
+        except ValueError:
+            cur = 0              # empty or non-numeric box -> start at 1
+        n = max(cur + 1, 1)
         pdir = repo / "plans" / slug
-        nxt = next_pending_session(pdir)
-        if nxt is None:
+        if self._frozen_file(pdir) is None:
+            names = (sorted(q.name for q in pdir.iterdir())
+                     if pdir.is_dir() else [])
+            hint = ("\n\nOnly a DRAFT exists — finish the owner pass, "
+                    "Validate, then Freeze.") if any(
+                "draft" in x.lower() for x in names) else ""
             messagebox.showerror(
                 "Next session",
-                "No frozen plan in plans/%s/ — freeze first (Intake tab)."
-                % slug)
+                "No frozen plan in plans/%s/ — freeze first (Intake tab).%s"
+                % (slug, hint))
             return
-        if nxt["n"] is None:
+        rows = self._session_map(pdir)
+        if not rows:
+            messagebox.showerror(
+                "Next session",
+                "plans/%s: the frozen plan has no §A session map — there is "
+                "nothing to advance to." % slug)
+            return
+        if n not in rows:
+            # Reachable now that the number is a blind increment:
+            # _session_guards only checks PREDECESSORS, so without this
+            # the copy would build an instruction for a session §A never
+            # declared. A gap in §A lands here too, hence the listing.
             messagebox.showinfo(
                 "Next session",
-                "plans/%s: %s — nothing left to run." % (slug, nxt["label"]))
+                "plans/%s: session %d is not in the §A session map.\n\n"
+                "§A declares: %s"
+                % (slug, n, ", ".join(str(k) for k in sorted(rows))))
             return
-        if not nxt["copyable"]:
-            messagebox.showwarning(
-                "Next session",
-                "plans/%s: %s.\n\nOpen 'Session report' for the exact "
-                "state before continuing." % (slug, nxt["label"]))
-            return
-        self.snum.set(str(nxt["n"]))
+        leg = ""
+        if rows[n][3]:
+            # split (pre/post) deploy session: keep the leg the plan is
+            # actually at, so the increment does not make the owner
+            # re-pick it on every click (v3.6 DEPLOY WINDOW)
+            nxt_rec = next_pending_session(pdir)
+            if nxt_rec and nxt_rec["n"] == n and nxt_rec["leg"]:
+                leg = nxt_rec["leg"]
+        self.snum.set(str(n))
         self._leg_sync()
-        if nxt["leg"]:
-            self.leg_var.set(nxt["leg"])
+        if leg:
+            self.leg_var.set(leg)
         self.on_copy_instr()
 
     def _log_deploy_window(self, pdir, slug, n):
