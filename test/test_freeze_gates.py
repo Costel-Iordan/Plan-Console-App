@@ -629,6 +629,55 @@ def test_strip_copy_action_honours_its_own_label(app_window, tmp_path,
     assert copied == ["2"]
 
 
+def test_strip_copy_is_guarded_while_a_chain_runs(app_window, tmp_path,
+                                                  monkeypatch):
+    """R-11 gap: the strip's copy action writes the instruction file and
+    (leg b) HEALTH.md, so it belongs in BUSY_DISABLE's category. As a Label
+    it had no `state` option and was never guarded, which made the PRIMARY
+    path the one path that could still write mid-chain — while btn_next,
+    which does the same thing, was disabled."""
+    app, root = app_window
+    repo, _pdir = _frozen_repo(
+        tmp_path,
+        progress="SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS "
+                 "| P00 v1.0\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    copied = []
+    monkeypatch.setattr(app, "on_copy_instr",
+                        lambda: copied.append(app.snum.get()))
+    told = []
+    monkeypatch.setattr(pc.messagebox, "showinfo",
+                        lambda *a, **k: told.append(a))
+
+    app.snum.set("1")
+    app._strip_refresh()
+    root.update()
+    assert app._strip_action_kind == "copy"
+
+    # start a chain the way the app does (the queue needs an explicit drain)
+    app.q.put(("__busy__", (True, "testing")))
+    app._drain()
+    root.update()
+    assert getattr(app, "_strip_locked", False) is True, \
+        "the strip copy must be locked while a chain runs"
+    assert str(app.btn_next.cget("state")) == "disabled", \
+        "...and so must the button that does the same thing"
+
+    app._strip_action_go()
+    assert copied == [], "no instruction file may be written mid-chain"
+    assert told, "the owner must be told why nothing happened"
+
+    # chain over -> unlocked, and the copy works again
+    app.q.put(("__busy__", (False, "")))
+    app._drain()
+    root.update()
+    assert getattr(app, "_strip_locked", False) is False
+    app._strip_action_go()
+    assert copied == ["2"]
+
+
 def test_strip_copy_target_is_cleared_on_non_copy_states(app_window, tmp_path,
                                                         monkeypatch):
     """A target must not outlive the label that advertised it."""

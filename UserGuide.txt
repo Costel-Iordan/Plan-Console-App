@@ -245,8 +245,8 @@ bottom:
   TABS (three, sharing one slug field concept)
     Intake      — paste source text, pick type, slug, Proceed,
                   Freeze, and the recon/validate/auto-resolve row
-    Sessions    — session number, Copy session instruction, Status,
-                  Session report, Plan health
+    Sessions    — session number, leg, +1 session, Copy session
+                  instruction, Status, Session report, Plan health
     Owner pass  — open questions, owner actions, recon checklist
 
   LOG (bottom)
@@ -440,11 +440,14 @@ The whole loop on one page (cheat sheet)
  3. Run owner-only checks -> tick [x] in RECON-CHECKLIST
  4. Validate draft -> Auto-resolve findings -> repeat until READY
  5. Freeze
- 6. Sessions tab: slug + 1 -> Copy session instruction
- 7. Paste into your agent (repo open as workspace)
- 8. Watch it work
- 9. Session report -> verdict
-10. verdict OK -> next session number -> back to 6
+6. Click "Copy session N →" in the plan strip under the top bar
+     (it always names the session the plan needs; if you already know
+     you are moving on, Sessions tab -> "+1 session →" does the same
+     job by advancing the number one)
+  7. Paste into your agent (repo open as workspace)
+  8. Watch it work
+  9. Session report -> verdict
+ 10. verdict OK -> next session number -> back to 6
 11. verdict CHECK -> fix hint is on your clipboard -> paste ->
     Session report again
 12. verdict BLOCKED -> fix cause -> rename BLOCKED.md to
@@ -721,7 +724,8 @@ start.
 | Validate draft                | Intake     | Gap-report on the current draft                                | optional       |
 | Auto-resolve findings         | Intake     | Parses VALIDATION.md and chains fix + re-validate              | optional       |
 | Show validation report        | Intake     | Displays plans/<slug>/VALIDATION.md in the log                 | no             |
-| Copy session instruction      | Sessions   | Puts the next session's instruction on your clipboard          | no             |
+| Copy session instruction      | Sessions   | Puts the numbered session's instruction on your clipboard       | no             |
+| +1 session                    | Sessions   | Adds 1 to the session number, then copies that session         | no             |
 | Status                        | Sessions   | One-line where-am-I                                            | no             |
 | Session report                | Sessions   | Verdict for one session; on OK auto-advances, on CHECK copies the fix hint | no |
 | Plan health                   | Sessions   | Verdict for the whole plan + writes HEALTH.md                  | no             |

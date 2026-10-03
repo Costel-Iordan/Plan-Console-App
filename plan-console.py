@@ -203,6 +203,28 @@ v3.7 — canonical PROGRESS line, drift-proofed (root cause: the line was
     sg-ids): previously-flagged canonical shapes now canonical; drift
     still parses leniently and stays flagged.
 
+v1.2.1 — the plan strip owns "what next"; the button is an accelerator:
+  * The Sessions-tab button is now "+1 session →" and adds ONE to the
+    number in the box. It used to be "Next session →" and JUMP to the
+    first not-done session, so around a re-run, deferred or BLOCKED
+    session it quietly renumbered the box and stopped meaning "the
+    session I am on".
+  * The plan strip is the primary path. It is derived from PROGRESS.md,
+    so it cannot drift, and it now sets the number and leg its own label
+    advertised before copying — previously it called on_next_session(),
+    which made the label a promise the code did not keep (offered
+    session 2, copied the box plus one).
+  * Two controls, two intents, no shared code path: strip = derived,
+    button = asserted.
+  * R-11 gap closed: the strip's copy action writes the instruction file
+    and (leg b) HEALTH.md, so it belongs in BUSY_DISABLE's category. As a
+    Label it had no `state` option and was never guarded — the primary
+    path was the one path that could still write mid-chain. It is now
+    gated by a flag and dimmed while a chain runs.
+  * Four swallowed failures fixed (see EXCEPTION-HANDLING CONVENTION
+    below). The worst: _log_deploy_window swallowed a failed HEALTH.md
+    append and the caller still reported "audit line appended".
+
 v1.2.0 — UI/UX audit batch 1 (show state instead of asking for it):
   * Plan strip (one line under the top bar): live per-slug plan state —
     stage, gate counts, blocked/IN-PROGRESS marker, next session — and
@@ -3659,6 +3681,8 @@ class App:
         self.strip_action.bind("<Return>", self._strip_action_go)
         self._strip_job = None
         self._strip_action_kind = None   # None | "copy" | "tab"
+        self._strip_copy_target = None  # (n, leg) the strip NAMED, copy only
+        self._strip_locked = False # R-11: True while an API chain runs
         self._strip_action_tab = 0
 
     def _strip_tick(self):
@@ -3698,8 +3722,14 @@ class App:
 
     def _strip_fg(self, label, key):
         t = self._tokens
-        if t:
-            label.configure(foreground=t[key])
+        if not t:
+            return
+        # R-11 — while a chain runs the strip's action is dimmed: the state
+        # text stays readable, but the action's colour says "not now", which
+        # matches the click actually being refused.
+        if getattr(self, "_strip_locked", False) and key == "accent-cyan":
+            key = "text-muted"
+        label.configure(foreground=t[key])
 
     def _strip_render(self):
         slug = self.slug_var.get().strip()
@@ -3813,6 +3843,13 @@ class App:
         """
         if self._strip_action_kind == "copy":
             self._goto_tab(1)
+            if getattr(self, "_strip_locked", False):
+                messagebox.showinfo(
+                    "Chain running",
+                    "A chain is still running, so the instruction file and "
+                    "HEALTH.md must not be written right now.\n\nWait for it "
+                    "to finish, then click again.")
+                return
             target = getattr(self, "_strip_copy_target", None)
             if not target or target[0] is None:
                 # marker present but its session number was unreadable:
@@ -3917,10 +3954,14 @@ class App:
                                 values=("full", "a", "b"), width=6,
                                 state="disabled")
         self.leg.grid(row=0, column=5, padx=4)
-        # v1.2.0 — the daily loop's first button: prefill the first
-        # not-done session/leg (from PROGRESS.md, same logic as Status)
-        # and copy its instruction in one click
-        self.btn_next = ttk.Button(top, text="Next session →",
+        # v1.2.1 — the plan strip owns "what does this plan need next" (it is
+        # derived from PROGRESS.md, so it cannot drift). This button is the
+        # manual accelerator: it adds ONE to the number in the box and
+        # copies that, for when you already know you are moving on. It is
+        # deliberately NOT called "Next session" any more — that name
+        # belongs to the strip, and sharing it is what made the two
+        # controls look interchangeable when they are not.
+        self.btn_next = ttk.Button(top, text="+1 session →",
                                    command=self.on_next_session)
         self.btn_next.grid(row=0, column=6, padx=6)
         self.btn_copy = ttk.Button(top, text="Copy session instruction",
@@ -5193,6 +5234,13 @@ class App:
                     if cb:
                         cb.configure(state="normal" if busy_now
                                      else "disabled")
+                    # R-11 — the strip's COPY action writes the instruction
+                    # file and (leg b) HEALTH.md, so it belongs in
+                    # BUSY_DISABLE's category. It is a Label, not a Button,
+                    # so it has no `state` option: gate it with a flag and
+                    # dim the label instead. Without this the primary path
+                    # was the one path that could still write mid-chain.
+                    self._strip_locked = busy_now
                     for st in self.status.values():
                         st.configure(text=(msg or "working …") if busy_now else "idle")
                     if not busy_now:
@@ -6167,9 +6215,9 @@ class App:
             prog.write_text("# PROGRESS — %s | PART-01 v1.0 | %s\n"
                             % (slug, date.today()), encoding="utf-8")
         self.say("intake", "FROZEN v1.0 — plan ready as 'plans/%s/"
-                 "PART-01 v1.0.md' (draft kept as history). Go to the "
-                 "Sessions tab and click 'Next session →' to copy the "
-                 "session-1 instruction." % slug)
+                 "PART-01 v1.0.md' (draft kept as history). Click "
+                 "'Copy session 1 →' in the plan strip at the top to copy "
+                 "the session-1 instruction." % slug)
         self._strip_refresh()   # v1.2.0 — strip flips to frozen immediately
 
     # ------------------------------------------------------------ sessions
@@ -6420,7 +6468,7 @@ class App:
         if repo is None: return
         slug = self._get_slug("sessions")
         if not SLUG_RE.match(slug):
-            messagebox.showerror("Next session",
+            messagebox.showerror("+1 session",
                                  "Enter the slug first (kebab-case).")
             return
         try:
@@ -6436,14 +6484,14 @@ class App:
                     "Validate, then Freeze.") if any(
                 "draft" in x.lower() for x in names) else ""
             messagebox.showerror(
-                "Next session",
+                "+1 session",
                 "No frozen plan in plans/%s/ — freeze first (Intake tab).%s"
                 % (slug, hint))
             return
         rows = self._session_map(pdir)
         if not rows:
             messagebox.showerror(
-                "Next session",
+                "+1 session",
                 "plans/%s: the frozen plan has no §A session map — there is "
                 "nothing to advance to." % slug)
             return
@@ -6453,7 +6501,7 @@ class App:
             # the copy would build an instruction for a session §A never
             # declared. A gap in §A lands here too, hence the listing.
             messagebox.showinfo(
-                "Next session",
+                "+1 session",
                 "plans/%s: session %d is not in the §A session map.\n\n"
                 "§A declares: %s"
                 % (slug, n, ", ".join(str(k) for k in sorted(rows))))
