@@ -257,6 +257,36 @@ Settings are stored in plan-console.json next to this script.
 # limitations under the License.
 
 # ---------------------------------------------------------------------------
+# EXCEPTION-HANDLING CONVENTION (v1.2.1)
+#
+# This file still contains ~40 `except ...: pass` handlers. They were
+# triaged rather than blanket-removed, because most are CORRECT and
+# several are load-bearing. The rule that came out of it:
+#
+#   1. NEVER swallow a write. A failed write is data loss discovered at
+#      review time, and the owner-pass.log / HEALTH.md / AGENT-ORDERS.md
+#      writes are audit records: an audit trail that silently drops
+#      entries is worse than none, because it looks complete. -> return a
+#      success flag, `traceback.print_exc()`, and say so in the log pane.
+#      (see _oq_backup, _oq_archive, _log_deploy_window)
+#   2. NEVER claim success you did not verify. The bug this convention
+#      exists for: _log_deploy_window swallowed its write and the caller
+#      then told the owner "audit line appended to HEALTH.md".
+#   3. `tk.TclError` on widget teardown is CORRECT to swallow - an
+#      `after` callback firing into a destroyed widget must not crash the
+#      app. Those stay, and should stay narrow.
+#   4. Where a fallback is genuinely correct (read-only install dir, a
+#      stale layout recompute), narrow the type - `OSError`, not
+#      `Exception` - so a real fault inside the try is not hidden.
+#   5. A poll that tolerates failure must distinguish a HICCUP from a
+#      PERMANENT fault and say so after a run of failures. Silent-stale
+#      state that looks correct is the same failure class. (see
+#      _strip_refresh)
+#
+# Before adding another `except Exception: pass`, check it against these.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Identity & licensing — the single source of truth for the app's public
 # identity. A rename or copyright-holder change is a one-line edit here;
 # every generated copyright string in the app derives from these constants.
@@ -3560,8 +3590,11 @@ class App:
         sidecar = HERE / AGENT_ORDERS_NAME
         try:
             sidecar.write_text(AGENT_ORDERS_DEFAULT, encoding="utf-8")
-        except Exception:
-            pass                   # read-only location → default in memory
+        except OSError:
+            pass    # read-only location -> the in-memory default is used
+                    # below anyway, so nothing is lost. Narrowed to OSError:
+                    # a bare Exception here would also hide a real bug while
+                    # still returning working orders.
         return AGENT_ORDERS_DEFAULT.strip()
 
     def on_edit_agent_orders(self):
@@ -3579,7 +3612,11 @@ class App:
             if not f.is_file():
                 try:
                     f.write_text(AGENT_ORDERS_DEFAULT, encoding="utf-8")
-                except Exception:
+                except OSError:
+                    # Cannot seed the file (read-only install dir). _open_path
+                    # then fails and the owner is told the path to open by
+                    # hand, so nothing is lost. OSError only: a bare
+                    # Exception here would mask a real fault silently.
                     pass
         if not self._open_path(f):
             messagebox.showinfo("Agent orders", "Open manually:\n%s" % f)
@@ -3635,11 +3672,29 @@ class App:
     def _strip_refresh(self):
         """Recompute the strip from the current repo+slug. Failure-safe:
         an I/O hiccup (e.g. a file locked while the agent writes it)
-        keeps the last shown state; the poll retries in 3 s."""
+        keeps the last shown state; the poll retries in 3 s.
+
+        A HICCUP clears itself. A permanent error (a real bug in
+        _strip_render) never would, so after a run of consecutive
+        failures the strip says so rather than showing stale state
+        indefinitely and looking correct — the silent-stale case is
+        worse than an ugly one."""
         try:
             self._strip_render()
-        except Exception:
-            pass
+            self._strip_fails = 0
+        except Exception as e:
+            self._strip_fails = getattr(self, "_strip_fails", 0) + 1
+            if self._strip_fails >= 3 and not getattr(self, "_strip_warned", False):
+                self._strip_warned = True
+                traceback.print_exc()
+                self.say("intake", "WARN: plan strip failed to refresh %d "
+                         "times in a row (%s) — it is showing STALE state, "
+                         "not the current plan. Click Refresh, and report "
+                         "this if it persists."
+                         % (self._strip_fails, e.__class__.__name__))
+                self.say("intake", "  %s" % e)
+            elif self._strip_fails == 1:
+                self._strip_warned = False
 
     def _strip_fg(self, label, key):
         t = self._tokens
@@ -5926,8 +5981,13 @@ class App:
                             # R-02 (§E): every inlined file is logged so the
                             # owner can audit exactly what was sent.
                             self.say("intake", "context-pack: inlined %s" % rel)
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        # R-02 (§E): the log must show what was NOT sent
+                        # too, or the owner cannot tell "did not match" from
+                        # "matched but could not be read" — a gap in the
+                        # pack that looks complete in the audit trail.
+                        self.say("intake", "context-pack: SKIPPED %s (%s)"
+                                 % (rel, e.__class__.__name__))
             if len(picked) >= max_files:
                 break
         return "\n\n".join(picked) if picked else "(no matching files found)"
@@ -6246,10 +6306,23 @@ class App:
                  "open as the workspace folder." % repo)
         if leg == "b":
             # v3.6 §C4/§F — one console-appended audit line per
-            # owner-confirmed 6b copy (no credentials in HEALTH.md)
-            self._log_deploy_window(repo / "plans" / slug, slug, n)
-            self.say("sessions", "DEPLOY WINDOW: owner confirmed the Coolify "
-                     "deploy completed — audit line appended to HEALTH.md.")
+            # owner-confirmed 6b copy (no credentials in HEALTH.md).
+            # Claimed ONLY on success: see _log_deploy_window.
+            if self._log_deploy_window(repo / "plans" / slug, slug, n):
+                self.say("sessions", "DEPLOY WINDOW: owner confirmed the "
+                         "Coolify deploy completed — audit line appended to "
+                         "HEALTH.md.")
+            else:
+                self.say("sessions", "WARN: DEPLOY WINDOW confirmed, but the "
+                         "audit line could NOT be appended to HEALTH.md — "
+                         "record it by hand before you rely on the trail.")
+                messagebox.showwarning(
+                    "Audit line not written",
+                    "The Coolify deploy confirmation was recorded for this "
+                    "session, but writing HEALTH.md failed:\n\n"
+                    "plans/%s/HEALTH.md has NOT been updated. Add the line "
+                    "by hand — an audit trail that silently drops entries is "
+                    "worse than none, because it looks complete." % slug)
         if orders:
             src = ("per-repo AGENT-ORDERS.md (wins for this repo)"
                    if (repo / AGENT_ORDERS_NAME).is_file()
@@ -6372,7 +6445,12 @@ class App:
     def _log_deploy_window(self, pdir, slug, n):
         """v3.6 §C4/§F — one HEALTH.md audit line per owner-confirmed
         6b (post-deploy) instruction copy. HEALTH.md stays
-        console-appended only; no credentials are recorded."""
+        console-appended only; no credentials are recorded.
+
+        Returns True when the line landed. The caller must NOT claim the
+        audit line was appended without checking: an audit trail that
+        silently drops entries while reporting success is worse than no
+        trail, because the owner trusts it."""
         f = pdir / "HEALTH.md"
         try:
             header = ("# HEALTH — %s | audit trail of Plan-health runs "
@@ -6383,8 +6461,12 @@ class App:
                 fh.write(header + "- %s — DEPLOY WINDOW: owner confirmed the "
                          "Coolify deploy completed; session %db (post-deploy) "
                          "instruction copied\n" % (stamp, n))
+            return True
         except Exception:
-            pass
+            # R-10 class: a silently-missing audit line is data loss
+            # discovered at review time. Surface it loudly instead.
+            traceback.print_exc()
+            return False
 
     def _ip_summary(self, pdir):
         """v2.2 — (path, session_number, leg, one-line summary) from the

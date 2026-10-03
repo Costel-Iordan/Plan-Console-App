@@ -479,6 +479,122 @@ def test_next_session_keeps_split_leg_across_clicks(app_window, tmp_path,
     assert (app.snum.get(), app.leg_var.get()) == ("2", "b"), "leg b next"
 
 
+# ------------------------------------------- v1.2.1 swallowed-failure fixes
+def test_deploy_window_reports_write_failure(app_window, tmp_path,
+                                            monkeypatch):
+    """The bug this guards: _log_deploy_window swallowed a failed write
+    and the caller then told the owner "audit line appended to
+    HEALTH.md". A failed write must be visible, and the success claim
+    must be withheld."""
+    app, root = app_window
+    pdir = tmp_path / "plans" / "dw"
+    pdir.mkdir(parents=True)
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pc.Path, "open", boom)
+    assert app._log_deploy_window(pdir, "dw", 6) is False, \
+        "a failed HEALTH.md append must return False, not None/silence"
+
+    monkeypatch.undo()
+    assert app._log_deploy_window(pdir, "dw", 6) is True
+    assert "DEPLOY WINDOW" in (pdir / "HEALTH.md").read_text(encoding="utf-8")
+
+
+def test_deploy_window_success_claim_follows_the_flag(app_window, tmp_path,
+                                                     monkeypatch):
+    """on_copy_instr must only say the audit line landed when it did.
+    Driven end-to-end through the leg-b copy path, not by reading the
+    source: _log_deploy_window returns False -> no success claim, and a
+    warning instead."""
+    app, root = app_window
+    repo, _pdir = _frozen_repo(
+        tmp_path,
+        progress="SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS "
+                 "| P00 v1.0\n"
+                 "SESSION 2a | 2026-09-26 | gates: g7 | status: PASS "
+                 "| P00 v1.0\n")
+    app.repo_var.set(str(repo))
+    app.slug_var.set("demo-plan")
+    monkeypatch.setattr(app, "_auto_command_check", lambda repo=None: None)
+    monkeypatch.setattr(pc.messagebox, "askyesno", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_show_instruction", lambda *a, **k: None)
+    said, warned = [], []
+    app.say = lambda target, msg: said.append(msg)
+    monkeypatch.setattr(pc.messagebox, "showwarning",
+                        lambda *a, **k: warned.append(a))
+
+    app.snum.set("2")
+    app.leg_var.set("b")
+    monkeypatch.setattr(app, "_log_deploy_window", lambda *a, **k: False)
+    app.on_copy_instr()
+    assert not any("audit line appended" in m for m in said), \
+        "must NOT claim the audit line landed: %r" % said
+    assert any("WARN" in m for m in said), said
+    assert warned, "a failed audit write must warn the owner, not just log"
+
+    # and when it DID land, the claim is made
+    said.clear(); warned.clear()
+    monkeypatch.setattr(app, "_log_deploy_window", lambda *a, **k: True)
+    app.on_copy_instr()
+    assert any("audit line appended" in m for m in said), said
+    assert not warned
+
+
+def test_context_pack_logs_skipped_file(app_window, tmp_path, monkeypatch):
+    """R-02 (§E): the audit log must show what was NOT sent, or the owner
+    cannot tell 'did not match' from 'matched but unreadable'."""
+    app, root = app_window
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    write(repo / "PART-00.md", "# PART 00\n")
+    # _context_pack derives its search words from identifiers of 5+ chars
+    # in the checklist, so the matched name needs one too
+    (repo / "src" / "parser.py").write_text("x = 1\n", encoding="utf-8")
+    said = []
+    app.say = lambda target, msg: said.append(msg)
+
+    real_open = pc.Path.open
+
+    def deny_parser(self, *a, **k):
+        if self.name == "parser.py":
+            raise OSError("locked")
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(pc.Path, "open", deny_parser)
+    app._context_pack(repo, "check the parser behaviour")
+    joined = " ".join(said)
+    assert "SKIPPED" in joined, said
+    assert "parser.py" in joined
+
+
+def test_strip_refresh_surfaces_permanent_failure(app_window, monkeypatch):
+    """A 3 s poll that swallows forever shows STALE state and looks
+    correct. After a run of consecutive failures the strip must say so."""
+    app, root = app_window
+    said = []
+    app.say = lambda target, msg: said.append(msg)
+
+    def boom():
+        raise ValueError("render bug")
+
+    monkeypatch.setattr(app, "_strip_render", boom)
+    app._strip_fails = 0
+    app._strip_warned = False
+    app._strip_refresh()          # hiccup 1-2: tolerated, silent
+    app._strip_refresh()
+    assert not any("STALE" in m for m in said), "one hiccup must stay quiet"
+    app._strip_refresh()          # 3rd: permanent fault -> must surface
+    assert any("STALE" in m for m in said), said
+    assert app._strip_warned is True
+    # and a success clears the counter, so a later fault warns afresh
+    app._strip_warned = False
+    monkeypatch.setattr(app, "_strip_render", lambda: None)
+    app._strip_refresh()
+    assert app._strip_fails == 0
+
+
 def test_busy_lists_disjoint_and_complete():
     assert not (set(pc.BUSY_DISABLE) & set(pc.BUSY_KEEP_LIVE))
     assert {"btn_status", "btn_showval", "btn_freeze_dry",
