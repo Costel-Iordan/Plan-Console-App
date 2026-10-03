@@ -340,9 +340,9 @@ One-time: point "Repo folder" at your project folder and click
 "Init starter repo" to create PART-00.md, templates/ and commands/.
 Existing repo: "Update command files" refreshes commands/ only.
 
-Public release: version 3.9 (APP_VERSION). The public release started
+Public release: version 3.10 (APP_VERSION). The public release started
 at 1.0.0, continuing the former internal v3.6 lineage; the historical
-v2.x–v3.9 changelog above is kept intact for reference.
+v2.x–v3.10 changelog above is kept intact for reference.
 
 Settings are stored in plan-console.json next to this script.
 """
@@ -402,7 +402,7 @@ APP_NAME = "Plan Console"
 # the About box both read it, so the app reported a version its own
 # behavior no longer matched — which makes any bug report ("does 1.2.0
 # have this?") unanswerable. It now tracks the feature version.
-APP_VERSION = "3.9"               # public release
+APP_VERSION = "3.10"              # public release
 COPYRIGHT_HOLDER = "Costel Iordan"
 COPYRIGHT_EMAIL = "costel.iordan@gmail.com"
 COPYRIGHT_LINE = f"Copyright © {COPYRIGHT_HOLDER} ({COPYRIGHT_EMAIL})"

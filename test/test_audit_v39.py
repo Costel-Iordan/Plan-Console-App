@@ -8,6 +8,7 @@ them, which is why each is pinned explicitly here.
 """
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -476,6 +477,50 @@ def test_escalation_appended_into_owner_section_is_not_invisible():
     orphans = pc.unaccounted_escalations(ESCALATION_APPENDED)
     assert len(orphans) == 1, orphans
     assert "Coolify app id" in orphans[0]
+# ============================================ 3.10 one version line, everywhere
+def test_version_is_consistent_across_app_and_docs():
+    """One version line, everywhere.
+
+    Regression: the project carried THREE different app versions at once —
+    APP_VERSION showed one value in the title bar and About box, the
+    UserGuide still said 1.1.0 in its title/header/footer, and
+    no-api-key-guide.html still said 1.0.0. Nothing asserted they agreed,
+    so each could drift independently on every edit.
+
+    The trap this must NOT trip over: the guides legitimately say
+    "Python 3.9" (the minimum interpreter), which is NOT the app version.
+    Only "Plan Console <v>" / "PLAN CONSOLE <v>" claims are checked."""
+    here = Path(__file__).resolve().parent.parent
+    claim = re.compile(r"(?:Plan Console|PLAN CONSOLE)\s+(\d+\.\d+)")
+    found = {}
+    for rel in ("UserGuide.txt", "UserGuide.html", "no-api-key-guide.html",
+                "README.md"):
+        for m in claim.finditer((here / rel).read_text(encoding="utf-8")):
+            found.setdefault(rel, set()).add(m.group(1))
+    stale = {f: sorted(v) for f, v in found.items()
+             if v - {pc.APP_VERSION}}
+    assert not stale, (
+        "docs disagree with APP_VERSION %s: %s" % (pc.APP_VERSION, stale))
+
+
+def test_python_requirement_lines_were_not_mistaken_for_the_version():
+    """The guides' "Python 3.9" is the interpreter requirement, not the app
+    version. The sweep above must never rewrite it."""
+    here = Path(__file__).resolve().parent.parent
+    for rel in ("UserGuide.txt", "UserGuide.html"):
+        t = (here / rel).read_text(encoding="utf-8")
+        assert re.search(r"Python 3\.9", t), rel
+
+
+def test_version_bump_is_visible_in_the_ui(owner_window):
+    """APP_VERSION is what the title bar and About box show, so a bump that
+    only edits the docs would leave the running app reporting the old one."""
+    app, root = owner_window
+    _pump(root)
+    assert pc.APP_VERSION in root.title(), (
+        "window title %r does not carry APP_VERSION %r"
+        % (root.title(), pc.APP_VERSION))
+    assert pc.APP_VERSION.count(".") == 1, pc.APP_VERSION
 
 
 def test_escalation_written_above_the_section_is_a_normal_question():

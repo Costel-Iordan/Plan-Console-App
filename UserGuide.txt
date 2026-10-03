@@ -9,7 +9,7 @@
 |   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝          |
 |_______________________________________________|
 
-PLAN CONSOLE 1.1.0 — USER GUIDE
+PLAN CONSOLE 3.10 — USER GUIDE
 Paste-to-plan intake + session lifecycle manager
 
 Copyright © Costel Iordan (costel.iordan@gmail.com)
@@ -185,7 +185,7 @@ Python from python.org (Windows/macOS) or your package manager
 3.1 The splash screen
 ---------------------
 At launch a small borderless splash window appears for a moment,
-showing the app name (Plan Console), the version (1.1.0), the tagline
+showing the app name (Plan Console), the version (3.10), the tagline
 ("Paste-to-plan intake + session lifecycle manager"), the copyright
 line, and the Apache 2.0 licensing note. It disappears by itself when
 the main window is ready. If anything goes wrong with the splash, the
@@ -227,7 +227,7 @@ touched by this.
 
 3.3 Window tour (text layout map)
 ---------------------------------
-The window title reads "Plan Console 3.9". The layout, top to
+The window title reads "Plan Console 3.10". The layout, top to
 bottom:
 
   SETUP BAR (collapsible — see "Setup ▸/▾" below)
@@ -1068,7 +1068,7 @@ keys restores their defaults on the next save.
 
 13. LICENSE & CREDITS
 =====================
-Plan Console 1.1.0
+Plan Console 3.10
 Paste-to-plan intake + session lifecycle manager
 Copyright © Costel Iordan (costel.iordan@gmail.com)
 
