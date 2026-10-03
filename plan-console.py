@@ -284,6 +284,49 @@ v1.2.0 — UI/UX audit batch 1 (show state instead of asking for it):
     validation report / Freeze check / Copy command stay LIVE while an
     API chain runs — only chain-starting or file-mutating buttons are
     disabled (BUSY_DISABLE / BUSY_KEEP_LIVE).
+v3.9 — audit batch: nothing that reaches the owner may be INVISIBLE.
+  Every defect below was content that existed in the plan files but was
+  counted by no list and blocked no gate, so the console reported a plan
+  as clean while it was not.
+  * ONE section scanner. parse_questions() located "## Owner actions"
+    with a case-insensitive regex while parse_owner_actions() used a
+    case-SENSITIVE str.find, and the two disagreed on where a section
+    ended (a "###" closed one and not the other). A legal heading
+    variant such as "## owner actions" therefore opened the question
+    parser's skipped region and could not be found by the action parser:
+    its content was counted by NEITHER and the Freeze gate passed over
+    it. Both now read their spans from _section_spans().
+  * Stranded-escalation guard (unaccounted_escalations): a numbered
+    question block sitting in a skipped region and claimed by no owner
+    action — the shape of the bug above — now raises an "escalation"
+    WARNING gate, is counted in plan_snapshot(), is flagged in the plan
+    strip and named on the Owner-pass status line. It warns and never
+    hard-blocks, so a formatting quirk cannot strand a legitimate plan,
+    but it can no longer pass silently. commands/recon.md and
+    AGENT-ORDERS-INTAKE.md now state the section-placement rule.
+  * DEFERRED anchoring. The bracketed form was a plain re.search, so
+    "- [ ] check the DEFERRED mechanism (DEFERRED means skip)" counted
+    as RESOLVED and silently un-blocked Freeze. Only a leading tag, a
+    leading bracket, or a trailing bracket with no bare earlier mention
+    resolves an item now.
+  * OWNER-ONLY recon items are first-class. The intake contract bans the
+    agent from running them, yet the only remedy the console offered was
+    "tick them in the Owner pass tab" — the very forgery the ban exists
+    to prevent — so such an item was an unresolvable Freeze blocker.
+    They are counted apart (count_open_recon_owner_only), marked ⛔ in
+    the recon list, named in the gate remedy and the status line, and
+    "Escalate to owner action →" moves one into the Owner-actions list
+    where the owner can actually run it.
+  * Serialized intake. recon.md and validate-plan.md ran in PARALLEL
+    threads while both emit OPEN-QUESTIONS.md / RECON-CHECKLIST.md and
+    every write was a plain write_text — so a reply could silently
+    overwrite the other's whole file (last writer wins, no backup). They
+    now run in order, and agent-written files are written atomically.
+  * Layout. _autofit_wrap() is one shared wraplength tracker for every
+    wrapping caption; three captions (the agent hint, the double-click
+    hint, the no-key hint) still had fixed wraplengths and clipped on a
+    narrow window, next to the two that had already been fixed.
+  * APP_VERSION reported 1.2.0 while the code was v3.8/v3.9.
 
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
@@ -297,9 +340,9 @@ One-time: point "Repo folder" at your project folder and click
 "Init starter repo" to create PART-00.md, templates/ and commands/.
 Existing repo: "Update command files" refreshes commands/ only.
 
-Public release: version 1.0.0 (APP_VERSION). The public release starts
+Public release: version 3.9 (APP_VERSION). The public release started
 at 1.0.0, continuing the former internal v3.6 lineage; the historical
-v2.x–v3.6 changelog above is kept intact for reference.
+v2.x–v3.9 changelog above is kept intact for reference.
 
 Settings are stored in plan-console.json next to this script.
 """
@@ -354,7 +397,12 @@ Settings are stored in plan-console.json next to this script.
 # every generated copyright string in the app derives from these constants.
 # ---------------------------------------------------------------------------
 APP_NAME = "Plan Console"
-APP_VERSION = "1.2.0"          # public release
+# v3.9 audit fix — this constant said "1.2.0" while the module docstring
+# documented v3.8 and the code carried v3.9 fixes. The window title and
+# the About box both read it, so the app reported a version its own
+# behavior no longer matched — which makes any bug report ("does 1.2.0
+# have this?") unanswerable. It now tracks the feature version.
+APP_VERSION = "3.9"               # public release
 COPYRIGHT_HOLDER = "Costel Iordan"
 COPYRIGHT_EMAIL = "costel.iordan@gmail.com"
 COPYRIGHT_LINE = f"Copyright © {COPYRIGHT_HOLDER} ({COPYRIGHT_EMAIL})"
@@ -730,6 +778,34 @@ Q_LINE_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")
 # sentence still does not match.
 OWNER_SECTION_RE = re.compile(
     r"^#{2,}\s*(?:owner\s+actions|commands?|sql)\b(?:\s*[:—(-].*)?$", re.I)
+# v3.9 — audit fix, the invisible-escalation class. '## Owner actions'
+# used to be located by parse_owner_actions with a CASE-SENSITIVE
+# str.find while parse_questions used the case-INSENSITIVE regex above:
+# a heading written '## owner actions' or '## Owner Actions' (perfectly
+# legal markdown) opened the question parser's skipped region and could
+# not be found at all by the action parser. The result was a FAILURE OF
+# BOTH DIRECTIONS AT ONCE — the content was invisible to the list that
+# must show it and invisible to the counter that must block Freeze.
+#   '## owner actions' -> questions skip it, actions cannot find it
+# The section is now located ONCE, case-insensitively, by
+# _section_spans(); both parsers read the same span, so a heading can
+# no longer be visible to one and invisible to the other.
+OWNER_ACTIONS_HEADING_RE = re.compile(
+    r"^#{2,}\s*owner\s+actions\b", re.I)
+# a heading of ANY depth closes the region for BOTH parsers. They used
+# to disagree here: parse_questions reset on every '#' line while
+# parse_owner_actions only broke on a literal '## ' prefix, so a '###'
+# subsection closed one region and not the other (probe G).
+_HEADING_RE = re.compile(r"^#{1,}\s*")
+# v3.9 — the owner-only tag on a RECON item, same discipline as
+# DEFERRED below: it counts only as a LEADING tag (right after the
+# checkbox) or a bracketed one at the head of the item text. Prose
+# that merely mentions "owner-only" never reclassifies an item.
+OWNER_ONLY_START_RE = re.compile(r"^OWNER[- ]ONLY\b", re.I)
+OWNER_ONLY_BRACKET_RE = re.compile(r"^[\[(]\s*OWNER[- ]ONLY\b", re.I)
+# the BARE (un-bracketed) mention, the owner-only twin of
+# DEFERRED_MENTION_RE — see is_owner_only for why it is needed.
+OWNER_ONLY_MENTION_RE = re.compile(r"\bOWNER[- ]ONLY\b", re.I)
 # v2.6.1 — recon checkbox lines are recognized only at line start
 # (optional bullet), so prose that merely MENTIONS `- [ ]` (e.g. the
 # RECON-CHECKLIST.md header explaining the format) is never counted.
@@ -739,8 +815,21 @@ RECON_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s*)?\[( |x|X)\]")
 # like '(DEFERRED …)'. Prose that merely MENTIONS the word ('not
 # DEFERRED yet', 'what about DEFERRED?') no longer silently resolves
 # an open item.
+# v3.9 audit fix — the bracketed form was `re.search`, i.e. ANYWHERE in
+# the line, so '- [ ] check the DEFERRED mechanism (DEFERRED means
+# skip)' counted as RESOLVED and silently un-blocked Freeze. The bracket
+# must open the item text like the plain tag does; both forms are now
+# anchored with match(). DEFERRED_BRACKET_RE is kept (its name is part
+# of the documented contract) but only ever used with match().
 DEFERRED_START_RE = re.compile(r"^DEFERRED\b", re.I)
 DEFERRED_BRACKET_RE = re.compile(r"[\[(]\s*DEFERRED\b", re.I)
+# v3.9 — the BARE (un-bracketed) mention, used by is_deferred to tell a
+# legitimate trailing tag ('the flaky probe (DEFERRED — no env yet)')
+# from a sentence that is merely ABOUT the tag ('check the DEFERRED
+# mechanism (DEFERRED means skip)'). DEFERRED_START_RE is ^-anchored and
+# therefore useless for that test; this one is a plain word-boundary
+# search.
+DEFERRED_MENTION_RE = re.compile(r"\bDEFERRED\b", re.I)
 
 # ------------------------------------------------------------- v3.0 theme
 # Semantic token system — mirrors the guides' CSS token names/values
@@ -1007,13 +1096,109 @@ def recon_item_state(line):
     return "done" if m.group(1).lower() == "x" else "open"
 
 
+def _item_text(line):
+    """The item's own text: everything after the checkbox anchor (or the
+    whole stripped line when the line is not a checkbox item). The single
+    place the tag-detection helpers read from, so 'leading tag' means the
+    same thing for DEFERRED and for OWNER-ONLY."""
+    m = RECON_ITEM_RE.match(line)
+    return line[m.end():].strip() if m else line.strip()
+
+
+def _leading_tag(rest, start_re, mention_re):
+    """True when `rest` (the item text) OPENS with the tag word.
+
+    This is the documented v2.0/v2.6.3 contract and is kept as-is: an
+    item that opens with the tag word is tagged. It is deliberately NOT
+    tightened further — 'deferred by owner' (a real tag) and 'deferred
+    items are counted here' (prose describing a rule) are not separable
+    by syntax, and the SAFE direction here is the documented one. The
+    defect that actually mattered was the un-anchored bracket SEARCH,
+    which is fixed in _trailing_tag below.
+
+    Known, accepted limitation: an item whose text merely BEGINS with
+    the tag word ('owner-only items are never ticked') is classified as
+    tagged. That errs toward showing the owner an extra owner-only item,
+    which is a visible, actionable over-report — never a silent
+    under-report."""
+    return bool(start_re.match(rest))
+
+
+def _trailing_tag(rest, bracket_re, mention_re):
+    """True when `rest` ends with a bracketed tag and the tag word does
+    NOT appear bare earlier in the same text (the trailing-note form —
+    see is_deferred form 3)."""
+    stripped = rest.rstrip().rstrip(".;:!?")
+    if not stripped.endswith((")", "]")):
+        return False
+    open_at = max(stripped.rfind("("), stripped.rfind("["))
+    if open_at <= 0 or not bracket_re.match(stripped[open_at:]):
+        return False
+    return not mention_re.search(stripped[:open_at])
+
+
 def is_deferred(line):
     """True when the owner marked this recon item DEFERRED (v2.0 rule,
-    tightened v2.6.3 — see DEFERRED_START_RE above)."""
-    m = RECON_ITEM_RE.match(line)
-    rest = line[m.end():].strip() if m else line.strip()
-    return bool(DEFERRED_START_RE.match(rest)
-                or DEFERRED_BRACKET_RE.search(rest))
+    tightened v2.6.3, anchored v3.9 — see DEFERRED_START_RE above).
+
+    Because DEFERRED is the "ready to Freeze" signal, a FALSE POSITIVE is
+    the dangerous direction: it silently un-blocks Freeze. v3.9 audit fix
+    — the bracketed form used to be a plain `re.search`, so ANY line
+    mentioning the word in parentheses resolved the item:
+        '- [ ] check the DEFERRED mechanism (DEFERRED means skip)'
+    counted as RESOLVED.
+
+    Three forms are accepted, and nothing else:
+      1. the tag OPENS the item text            'DEFERRED (owner-approved)'
+      2. a bracket OPENS the item text          '(DEFERRED) old check'
+      3. a bracket TRAILS the item text        'the flaky probe (DEFERRED …)'
+    Form 3 additionally requires that the word DEFERRED does NOT appear
+    un-bracketed earlier in the same line — that is exactly what
+    separates the legitimate trailing note above from the prose mention
+    in the defect, where the sentence is ABOUT the DEFERRED mechanism and
+    the trailing bracket merely repeats it."""
+    rest = _item_text(line)
+    if DEFERRED_BRACKET_RE.match(rest):
+        return True                      # form 2: '(DEFERRED) old check'
+    return (_leading_tag(rest, DEFERRED_START_RE, DEFERRED_MENTION_RE)
+            or _trailing_tag(rest, DEFERRED_BRACKET_RE, DEFERRED_MENTION_RE))
+
+
+def is_owner_only(line):
+    """True when this recon item is tagged OWNER-ONLY (v3.9).
+
+    The v3.8 intake contract HARD-BANS the agent from running an
+    owner-only item ('never run an OWNER-ONLY item — not even when the
+    command is right there'), yet count_open_recon had no notion of the
+    tag: such an item was an UNRESOLVABLE blocker. The agent must not run
+    it, the console offered no way to clear it, and the Freeze gate
+    detail told the owner to 'tick them in the Owner pass tab' — which
+    is precisely the forgery the ban exists to prevent. The owner route
+    is the OWNER-ACTIONS list, so owner-only recon items are counted
+    separately (count_open_recon_owner_only) and surfaced with their own
+    gate and their own console remedy.
+
+    Because a misclassification changes what the gate asks the owner to
+    do, this mirrors is_deferred's three accepted forms exactly — a
+    LEADING tag, a LEADING bracket, or a TRAILING bracket with no bare
+    earlier mention. That last clause is what keeps the prose sentence
+    'owner-only items are never ticked' (which is a NORMAL item being
+    described, not a tagged one) from being reclassified."""
+    if not is_recon_item(line):
+        return False
+    rest = _item_text(line)
+    if OWNER_ONLY_BRACKET_RE.match(rest):
+        return True                  # '(OWNER-ONLY) needs creds'
+    return (_leading_tag(rest, OWNER_ONLY_START_RE, OWNER_ONLY_MENTION_RE)
+            or _trailing_tag(rest, OWNER_ONLY_BRACKET_RE,
+                             OWNER_ONLY_MENTION_RE))
+
+
+def is_recon_item(line):
+    """True when the line is a real checkbox item (the 'done'/'open'
+    states). Named for clarity at the call sites that care about the
+    checkbox but not the state."""
+    return RECON_ITEM_RE.match(line) is not None
 
 
 def flip_recon_item(line):
@@ -1028,12 +1213,32 @@ def flip_recon_item(line):
     return line[:a] + ("x" if m.group(1) == " " else " ") + line[b:]
 
 
-def count_open_recon(text):
+def count_open_recon(text, include_owner_only=True):
     """Unresolved `- [ ]` items in a RECON-CHECKLIST body: real checkbox
-    lines only; owner-marked DEFERRED lines count as resolved (v2.0 rule)."""
+    lines only; owner-marked DEFERRED lines count as resolved (v2.0 rule).
+
+    v3.9 — `include_owner_only=False` drops OWNER-ONLY-tagged items, so a
+    caller can count what the AGENT owes (and what 'tick it' is a valid
+    remedy for) separately from what only the OWNER can discharge. The
+    default keeps the historical meaning, so every existing caller and
+    the total reported to the owner are unchanged."""
     return sum(1 for l in text.splitlines()
                if recon_item_state(l) == "open"
-               and not is_deferred(l))
+               and not is_deferred(l)
+               and (include_owner_only or not is_owner_only(l)))
+
+
+def count_open_recon_owner_only(text):
+    """v3.9 — unchecked OWNER-ONLY recon items: the ones the intake
+    contract forbids the agent from running. Counted apart from the
+    agent-runnable remainder so the Freeze gate can offer the OWNER the
+    real remedy (run it from the Owner-actions list, or mark it DEFERRED)
+    instead of the 'tick it yourself' advice that made the ban
+    unsatisfiable."""
+    return sum(1 for l in text.splitlines()
+               if recon_item_state(l) == "open"
+               and not is_deferred(l)
+               and is_owner_only(l))
 # continuation lines of a v2.1 question block: indented, or explicitly
 # labelled QUESTION:/RECOMMEND:/RECOMMENDATION:
 Q_CONT_RE = re.compile(r"^\s*(QUESTION|RECOMMEND(?:ATION)?)\s*:", re.I)
@@ -1051,6 +1256,48 @@ def _is_continuation(line):
     return line[:1] in (" ", "\t") or bool(Q_CONT_RE.match(line))
 
 
+def _section_spans(text, opener):
+    """[(start, end)] 0-based half-open line spans of every region in
+    `text` that `opener` opens, where `opener` is a heading regex.
+
+    v3.9 — THE single place a skipped section is located. parse_questions
+    and parse_owner_actions used to locate '## Owner actions'
+    independently and with DIFFERENT rules (a case-sensitive str.find
+    vs a case-insensitive regex; a literal '## ' prefix vs any heading),
+    so a legal variant like '## owner actions' or a '###' subsection made
+    the region visible to one parser and invisible to the other. Content
+    in such a region was then counted by NEITHER: invisible in the UI and
+    invisible to the Freeze gate.
+
+    Both parsers now read their spans from here, so they cannot disagree.
+    A region ends at the next heading of ANY depth (a '###' subsection
+    included) or at end-of-file, whichever comes first — matching
+    parse_questions' original, tested semantics.
+
+    Content inside code fences never opens or closes a region."""
+    spans, start, fence = [], None, False
+    for i, line in enumerate(text.splitlines()):
+        s = line.strip()
+        if s.startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        if s.startswith("#"):
+            if start is not None:
+                spans.append((start, i))
+                start = None
+            if opener.search(s):
+                start = i + 1        # the heading line itself is not content
+    if start is not None:
+        spans.append((start, len(text.splitlines())))
+    return spans
+
+
+def _in_spans(i, spans):
+    return any(a <= i < b for a, b in spans)
+
+
 def parse_questions(text):
     """[(lineno, line)] of REAL questions only — block-aware (v2.1).
 
@@ -1063,9 +1310,14 @@ def parse_questions(text):
     line, or any '?'-ending line. Flush-left prose after a question is
     NOT absorbed (legacy files keep their exact v2.0 behavior). Lines
     in Owner-actions/commands/SQL sections and ``` fences never count.
-    """
-    out, in_owner, in_fence, in_block = [], False, False, False
-    for i, line in enumerate(text.splitlines()):
+
+    v3.9 — the skipped regions come from _section_spans(), the same
+    scanner parse_owner_actions() reads, so the two can no longer
+    disagree about where a section starts and ends."""
+    lines = text.splitlines()
+    skipped = _section_spans(text, OWNER_SECTION_RE)
+    out, in_fence, in_block = [], False, False
+    for i, line in enumerate(lines):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
             in_block = False
@@ -1075,10 +1327,10 @@ def parse_questions(text):
             in_block = False
             continue
         if s.startswith("#"):
-            in_owner = bool(OWNER_SECTION_RE.search(s))
             in_block = False
             continue
-        if in_owner or in_fence:
+        if in_fence or _in_spans(i, skipped):
+            in_block = False
             continue
         if Q_LINE_RE.match(line):
             out.append((i, line))
@@ -1212,26 +1464,40 @@ def parse_owner_actions(text):
     join the block (so multi-line bullets parse whole). `verifies` and
     `expect` are None when the tags are absent. Content before the
     section, other sections, and code fences never count — mirroring the
-    question counter's fence handling."""
+    question counter's fence handling.
+
+    v3.9 — the section is located by _section_spans() with
+    OWNER_ACTIONS_HEADING_RE (case-insensitive, `## ` or deeper): the
+    SAME scanner parse_questions() uses. It used to be a case-sensitive
+    str.find for the literal string '## Owner actions', so a heading
+    written '## owner actions' or '## Owner Actions' was skipped by the
+    question parser and unfindable here — its content was counted by
+    NEITHER and the Freeze owner-actions gate silently passed over it.
+    The region also ends at a heading of ANY depth (a '###' subsection
+    included), so both parsers agree on where it stops.
+    """
     actions = []
-    pos = text.find("## Owner actions")
-    if pos == -1:
+    lines = text.splitlines()
+    spans = _section_spans(text, OWNER_ACTIONS_HEADING_RE)
+    if not spans:
         return actions
-    # 0-based line index of the heading (v3.5.2 fix: was +1, i.e. 1-based,
-    # which made _tick_owner_action's stale-index guard read one line PAST
-    # the bullet and reject every Mark Done with "changed since Refresh";
-    # parse_questions already emits 0-based linenos — stay consistent).
-    lineno0 = text[:pos].count("\n")
+    # 0-based line numbers, consistent with parse_questions (the v3.5.2
+    # stale-index guard depends on it): _section_spans already reports
+    # the 0-based index of each section's first content line, and the
+    # loop below iterates absolute line indexes, so `lineno` is exact.
     cur = None
     fence = False
-    for off, line in enumerate(text[pos:].splitlines()):
-        if off and line.lstrip().startswith("## "):
-            break                # a later heading ends the section
+    for i, line in enumerate(lines):
+        if not _in_spans(i, spans):
+            if cur is not None:
+                actions.append(cur)   # left the region: end the block
+                cur = None
+            continue
         if line.strip().startswith("```"):
             fence = not fence
             continue
         if fence:
-            continue
+            continue                   # content in a code fence never counts
         m = RECON_ITEM_RE.match(line)
         plain = None if m else OA_PLAIN_BULLET_RE.match(line)
         if m or plain:
@@ -1241,7 +1507,7 @@ def parse_owner_actions(text):
             cm = OA_CMD_RE.search(s)
             vm = OA_VERIFIES_RE.search(s)
             em = OA_EXPECT_RE.search(s)
-            cur = {"lineno": lineno0 + off,
+            cur = {"lineno": i,
                    "checked": bool(m) and m.group(1).lower() == "x",
                    "prose": s[(m or plain).end():].strip(),
                    "command": cm.group(1).strip() if cm else None,
@@ -1278,6 +1544,52 @@ def count_open_owner_actions(text):
     number the Freeze gate and the Owner-pass tab report, matching the
     validate-plan check."""
     return sum(1 for a in parse_owner_actions(text) if not a["checked"])
+
+
+def unaccounted_escalations(text):
+    """[line, ...] — numbered QUESTION blocks stranded inside a skipped
+    region (v3.9, the systemic guard against the invisible-escalation
+    class).
+
+    Every defect in this family had the same shape: the agent escalated a
+    gap, the content landed in a region one parser skipped and the other
+    did not recognise, and the result was counted by NEITHER — absent
+    from both UI lists and from every Freeze gate, so the plan froze over
+    an unanswered question. Fixing each instance (the case-sensitivity
+    mismatch, the missing closing heading) is not enough on its own: the
+    next format variant reintroduces it silently.
+
+    So the invariant is checked directly instead of assumed. Every
+    numbered line in a skipped region that opens a question block, but
+    is NOT claimed as an owner action, is returned here. Each one is a
+    real item the owner must settle and the console currently shows
+    nowhere — surfaced by the 'escalation' Freeze gate as a WARNING (it
+    must never hard-block, or a legitimate plan would be stranded) and
+    echoed to the log so it can never be invisible again.
+
+    Read-only; pure, so it is unit-testable without Tk."""
+    if not text:
+        return []
+    claimed = {a["lineno"] for a in parse_owner_actions(text)}
+    skipped = _section_spans(text, OWNER_SECTION_RE)
+    lines = text.splitlines()
+    out, fence = [], False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence or i in claimed:
+            continue
+        if not _in_spans(i, skipped):
+            continue
+        m = Q_LINE_RE.match(line)
+        if m and m.group(2).strip():
+            blk = question_block(text, i)
+            # only flag a genuine block: a numbered line with a QUESTION
+            # or a real decision, not a stray '1.' inside a fenced block
+            if blk.strip():
+                out.append(blk.strip())
+    return out
 
 
 # v3.8 — the backstop for "the agent ran an owner action during intake".
@@ -1943,16 +2255,51 @@ def freeze_gate_report(pdir):
           "finish owner pass' to integrate them, then re-validate" % na)
          if na else "no parked answers")
 
+    # v3.9 — the systemic invisible-escalation guard. A numbered question
+    # block that sits in a skipped region and is claimed by NO owner
+    # action is counted by neither list and no gate — the defect class
+    # that let a plan freeze over an unanswered question. Reported as a
+    # WARNING (never a block: a legitimate plan must not be stranded by
+    # a formatting quirk), but it can no longer be silent.
+    orphan = unaccounted_escalations(oq_text)
+    if orphan:
+        _add("escalation", "Stranded escalations", True,
+             ("%d escalated question block(s) sit in a section the console "
+              "does not list — ask the agent to move them ABOVE the "
+              "'## Owner actions' heading (or into a `## ` section of "
+              "their own), then re-validate: %s"
+              % (len(orphan), " | ".join(o.splitlines()[0][:60]
+                                         for o in orphan[:3]))),
+             level="warn")
+
     n = 0
+    owner_only = 0
     rc = pdir / "RECON-CHECKLIST.md"
     if rc.is_file():
         try:
-            n = count_open_recon(rc.read_text(encoding="utf-8"))
+            rc_text = rc.read_text(encoding="utf-8")
+            n = count_open_recon(rc_text)
+            owner_only = count_open_recon_owner_only(rc_text)
         except OSError:
-            n = 0
-    _add("recon", "Recon checklist", not n,
-         ("%d unchecked item(s) — tick them in the Owner pass tab or mark "
-          "the line DEFERRED" % n) if n else "no unchecked recon items")
+            n = owner_only = 0
+    # v3.9 — the recon gate's remedy text now distinguishes what the AGENT
+    # owes from what only the OWNER can discharge. Before this, an
+    # OWNER-ONLY item produced "tick them in the Owner pass tab" — advice
+    # that asks the owner to forge the very assertion the intake contract
+    # forbids the agent from making, on an item the agent is hard-banned
+    # from running.
+    if owner_only:
+        detail = ("%d unchecked item(s) — tick them in the Owner pass tab "
+                  "or mark the line DEFERRED" % n)
+        detail += ("  |  %d of them are OWNER-ONLY: the agent is barred "
+                   "from running those. Run them from the Owner-actions "
+                   "panel, or mark the checklist line DEFERRED."
+                   % owner_only)
+    else:
+        detail = ("%d unchecked item(s) — tick them in the Owner pass tab "
+                  "or mark the line DEFERRED" % n) if n \
+            else "no unchecked recon items"
+    _add("recon", "Recon checklist", not n, detail)
 
     val = pdir / "VALIDATION.md"
     if not val.is_file():
@@ -1973,13 +2320,15 @@ def freeze_gate_report(pdir):
 def plan_snapshot(pdir):
     """Live plan state for the plan strip (v1.2.0) — one dict, read-only.
     Keys: exists · stage ('empty'|'draft'|'frozen') · frozen_name ·
-    questions · owner_actions · parked · recon · validation
+    questions · owner_actions · parked · recon · recon_owner_only ·
+    stranded · validation
     ('none'|'ready'|'not-ready') · blocked · in_progress (None or
     (session, leg)) · next (next_pending_session() dict or None) ·
     gates (freeze_gate_report() when a draft exists, else [])."""
     pdir = Path(pdir)
     snap = {"exists": pdir.is_dir(), "stage": "empty", "frozen_name": None,
             "questions": 0, "owner_actions": 0, "parked": 0, "recon": 0,
+            "recon_owner_only": 0, "stranded": 0,
             "validation": "none", "blocked": False, "in_progress": None,
             "next": None, "gates": []}
     if not snap["exists"]:
@@ -2010,9 +2359,17 @@ def plan_snapshot(pdir):
     rc = pdir / "RECON-CHECKLIST.md"
     if rc.is_file():
         try:
-            snap["recon"] = count_open_recon(rc.read_text(encoding="utf-8"))
+            rc_text = rc.read_text(encoding="utf-8")
+            snap["recon"] = count_open_recon(rc_text)
+            snap["recon_owner_only"] = count_open_recon_owner_only(rc_text)
         except OSError:
-            snap["recon"] = 0
+            snap["recon"] = snap["recon_owner_only"] = 0
+    # v3.9 — stranded escalations, so the plan strip can flag a plan whose
+    # OPEN-QUESTIONS.md holds a question block no list shows. Without this
+    # the strip reported the plan as simply having fewer questions, which
+    # reads as progress rather than as a lost item.
+    snap["stranded"] = (len(unaccounted_escalations(oq_text))
+                        if oq_text else 0)
     val = pdir / "VALIDATION.md"
     if val.is_file():
         try:
@@ -2127,12 +2484,17 @@ RETRY_NOTE = ("\n\nYour previous reply had no valid <<<FILE>>> blocks. "
 # v2.6.3 — the one-line description of the NEWEST command-file change,
 # shown in the auto-update dialog. Bump this together with the command
 # files so the dialog text never goes stale.
-COMMAND_UPDATE_NOTE = ("new-plan/recon now carry the v3.8 INTAKE HARD BAN "
-                       "(never run an owner action, never deploy, never "
-                       "tick an owner checkbox, never run the build/test "
-                       "suite); validate-plan still counts unchecked owner "
-                       "actions as findings, whose remediation is the OWNER "
-                       "running them in the Owner pass tab")
+COMMAND_UPDATE_NOTE = ("recon.md and AGENT-ORDERS-INTAKE.md now state the "
+                       "SECTION PLACEMENT rule (v3.9): a question you still "
+                       "need answered goes ABOVE the '## Owner actions' "
+                       "heading — one written below it is listed by neither "
+                       "panel and counted by no Freeze gate. The intake "
+                       "INTAKE HARD BAN is unchanged (never run an owner "
+                       "action, never deploy, never tick an owner checkbox, "
+                       "never run the build/test suite); validate-plan still "
+                       "counts unchecked owner actions as findings, whose "
+                       "remediation is the OWNER running them in the Owner "
+                       "pass tab")
 
 
 def parse_files(text, slug):
@@ -2404,6 +2766,20 @@ Your only escape valves: put the gap in OPEN-QUESTIONS.md (a question
 the owner must settle) or in RECON-CHECKLIST.md (a check that must
 happen). Guessing is not one of them. A draft that is honest about what
 it does not know is worth more than one that is confidently wrong.
+
+WHERE it goes decides whether the owner ever sees it (v3.9). "##
+Owner actions" is the LAST section of OPEN-QUESTIONS.md and is read
+ONLY as a list of `- [ ]` bullets. So:
+
+- a QUESTION you still need answered goes ABOVE that heading, in the
+  numbered PROBLEM / QUESTION / RECOMMEND block form;
+- OWNER-ONLY work (needs credentials, DB, a dashboard, SSH) goes BELOW
+  it, as a `- [ ]` bullet carrying the exact command.
+
+A numbered question block written under "## Owner actions" appears in
+NEITHER panel and is counted by NO Freeze gate. The console raises a
+"stranded escalation" warning for it, but do not rely on the warning:
+put the question where the owner is looking for questions.
 """
 
 # Per phase: (filename, app-level default). Built here rather than next
@@ -2771,6 +3147,18 @@ backticked command, plus `→ verifies §B "<exact §B line prefix>"` and
 `(expect: …)` tags when the command confirms an UNVERIFIED §B line (the
 console then offers one-click Run + VERIFIED write-back).
 
+SECTION PLACEMENT IS PART OF THE FORMAT (v3.9): "## Owner actions" is
+the LAST section of OPEN-QUESTIONS.md. Anything you append below that
+heading belongs to the owner-action list, so:
+- owner work goes there as a `- [ ]` BULLET with its command;
+- a QUESTION you still need answered goes ABOVE that heading (or into a
+  `## ` section of its own), in the numbered PROBLEM/QUESTION/RECOMMEND
+  block form.
+A numbered question block placed under "## Owner actions" is listed by
+NEITHER panel and counted by NO Freeze gate — the console reports it as
+a "stranded escalation" warning, but you must not rely on that to notice
+it. Write questions above the heading.
+
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:
 verified X / pending-owner Y / failed Z.
@@ -3016,7 +3404,10 @@ BUSY_DISABLE = ("btn_proceed", "btn_freeze", "btn_recon", "btn_validate",
                 "btn_own_refresh", "btn_answer_save", "btn_recommend",
                 "btn_question_remove", "btn_tick_toggle",
                 "btn_verify_exists", "btn_oa_run", "btn_oa_done",
-                "btn_owner_resolve")
+                # v3.9 — escalate writes BOTH OPEN-QUESTIONS.md and
+                # RECON-CHECKLIST.md, so it must be disabled while a chain
+                # runs for exactly the reason btn_owner_resolve is.
+                "btn_escalate", "btn_owner_resolve")
 BUSY_KEEP_LIVE = ("btn_status", "btn_report", "btn_showval",
                   "btn_freeze_dry", "btn_oa_copy")
 # v1.2.0 — gate id → (notebook index, jump-button text) for the Freeze
@@ -3027,6 +3418,7 @@ _GATE_JUMP_TABS = {
     "owner_actions": (2, "Open Owner pass →"),
     "parked": (2, "Open Owner pass →"),
     "recon": (2, "Open Owner pass →"),
+    "escalation": (2, "Open Owner pass →"),
     "validation": (0, "Go to Intake (Validate) →"),
     "frozen": (1, "Go to Sessions →"),
 }
@@ -3110,6 +3502,131 @@ def _theme_text_widget(txt, t):
                          activebackground=t["bg-card"])
     except tk.TclError:
         pass
+
+
+def _flow_buttons(bar, buttons, target_w):
+    """Lay `buttons` out in as many rows as `target_w` requires.
+
+    v3.9 — the Owner-pass tab has three panes side by side, and each one's
+    BUTTON BAR sets that pane's REQUESTED width. The three bars came to
+    657 + 433 + 307 = ~1400px, so on a 1366px window pack carved the whole
+    deficit out of the LAST pane packed: Owner actions lost ~90px and
+    "Mark done" was squeezed to 1px wide — present in the widget tree,
+    invisible on screen. Widening any one bar silently steals from the
+    last pane, which is how the v3.9 "Escalate to owner action" button
+    cost Owner actions its third button.
+
+    Wrapping to a second row costs a little vertical space, which the
+    resizable list above absorbs; a zero-width button costs the owner the
+    whole action, and the app's own rule is that a clipped thing gets
+    fixed in the layout rather than hidden.
+
+    `target_w` comes from the pane's FAIR SHARE of the row (the parent
+    width divided by the pane count), NOT from the bar's own measured
+    width. That matters: deriving it from the bar would be circular — the
+    bar would set the pane's width, which would set the bar's width.
+
+    Returns True only when the layout actually changed, so a <Configure>
+    handler driven by this cannot oscillate.
+    """
+    if not buttons:
+        return False
+    per_row, used = 0, 0
+    for b in buttons:
+        w = b.winfo_reqwidth() + 8
+        if per_row and used + w > target_w:
+            break
+        used += w
+        per_row += 1
+    per_row = max(1, min(per_row, len(buttons)))
+    if per_row == getattr(bar, "_flow_cols", 0):
+        return False
+    for b in buttons:
+        b.grid_forget()
+    for i, b in enumerate(buttons):
+        r, c = divmod(i, per_row)
+        b.grid(row=r, column=c, padx=3, pady=2, sticky="w")
+    bar._flow_cols = per_row
+    return True
+
+
+def _autofit_wrap(label, container, siblings=(), pad=24, floor=240):
+    """Keep `label`'s wraplength in sync with its container's width, so a
+    wrapped caption FOLDS instead of being clipped.
+
+    v3.9 — three captions still carried a FIXED wraplength while the two
+    that were fixed earlier (the owner-pass flow hint and status line)
+    already used this pattern. A fixed wraplength is itself a lower bound
+    on a ttk.Label's requested width, so below roughly that width the
+    tail is drawn past the frame edge and lost — the owner loses the
+    instruction the caption exists to give.
+
+    `siblings` are the widgets sharing the row; their REQUESTED widths
+    (plus their padx) are subtracted, so the caption gets the width
+    actually left over. They are measured at fit time, not at bind time,
+    so a label that resizes later is still accounted for. Pass () for a
+    caption that has the row to itself.
+
+    The >8px change guard breaks the <Configure> -> configure ->
+    <Configure> feedback loop that a naive tracker creates."""
+    def _fit(_event=None):
+        try:
+            reserve = pad
+            for w in siblings:
+                try:
+                    reserve += w.winfo_reqwidth() + 16
+                except Exception:
+                    pass
+            avail = max(floor, container.winfo_width() - reserve)
+            cur = label.cget("wraplength")
+            if not isinstance(cur, int) or abs(cur - avail) > 8:
+                label.configure(wraplength=avail)
+        except Exception:
+            pass
+    # add="+" is REQUIRED, not stylistic: a plain bind() REPLACES any
+    # existing <Configure> binding on the same widget, so two captions
+    # sharing one row (agent_hint + modal_hint) would leave only the
+    # second one tracking — the first silently frozen at its fixed
+    # wraplength, which is the very clipping this helper exists to fix.
+    try:
+        container.bind("<Configure>", _fit, add="+")
+    except Exception:
+        pass
+    return _fit
+
+
+def _fit_to_own_column(label, container, pad=12, floor=240):
+    """Keep `label`'s wraplength equal to the space from ITS OWN left edge
+    to the container's right edge.
+
+    v3.9 — the Owner-pass status line was clipped mid-word ("…— next: run/")
+    because _autofit_wrap reserved space by SUMMING the requested widths
+    of the widgets to its left. That under-reports: the reserve ignored the
+    "Slug" text label, the grid gutters and the widgets' own padx, so the
+    computed wraplength was ~50px wider than the space actually left, the
+    label refused to wrap, and its tail ran off the window edge.
+
+    Measuring the label's real x offset instead is exact by construction
+    and, because the label is left-anchored in its column (grid sticky="w"),
+    that offset does not depend on the label's own width — so there is no
+    width <-> wraplength feedback loop to oscillate.
+    """
+    def _fit(_event=None):
+        try:
+            x = label.winfo_x()
+            if x <= 0:
+                return              # not laid out yet; retry on the next event
+            avail = max(floor, container.winfo_width() - x - pad)
+            cur = label.cget("wraplength")
+            if not isinstance(cur, int) or abs(cur - avail) > 8:
+                label.configure(wraplength=avail)
+        except Exception:
+            pass
+    try:
+        container.bind("<Configure>", _fit, add="+")
+    except Exception:
+        pass
+    return _fit
 
 
 def _fit_dialog_to_screen(dlg, max_w, max_h, margin=32):
@@ -3600,6 +4117,14 @@ class App:
             except tk.TclError:
                 pass          # other platforms: best-effort, normal size
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        # v3.9 — the window chrome (setup toggle, collapsible setup panel,
+        # live row, plan strip, tabs) is laid out with GRID in one column
+        # rather than pack. Only the setup panel is ever hidden, and
+        # grid_remove() collapses its row cleanly; the equivalent
+        # pack_forget()/pack_propagate() calls were measured to free no
+        # space at all because a ttk wrapper keeps a cached reqheight.
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(4, weight=1)      # the notebook absorbs the slack
         self._topbar()
         self._plan_strip()          # v1.2.0 — live plan-state line
         self._tabs()
@@ -3644,7 +4169,40 @@ class App:
 
     # ------------------------------------------------------------------ UI
     def _topbar(self):
-        top = ttk.Frame(self.root); top.pack(fill="x", padx=10, pady=(6, 0))
+        # v3.9 — the setup controls (repo folder, model, API key) now live
+        # in a COLLAPSIBLE panel. They are configuration, needed once and
+        # then rarely, yet they permanently consumed ~200px of a ~700px
+        # client area — roughly a quarter of the window — which is what
+        # squeezed the Owner-pass panes and pushed "Agent: finish owner
+        # pass" below the visible area. Collapsing reclaims that space for
+        # the work itself, and the collapsed state persists.
+        #
+        # TWO rows stay visible always:
+        #   head — the toggle plus a summary, so the current mode is still
+        #          readable at a glance while collapsed;
+        #   live — API progress text, Cancel, Theme and About. This one must
+        #          never be hidden: Cancel is only meaningful mid-chain and
+        #          the progress text is the only feedback that anything is
+        #          happening at all.
+        head = ttk.Frame(self.root)
+        head.grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 2))
+        self._setup_toggle = ttk.Button(head, text="Setup ▾",
+                                        command=self._toggle_setup)
+        self._setup_toggle.pack(side="left")
+        self._setup_summary = ttk.Label(head, text="", style="SlugHint.TLabel",
+                                        anchor="w", justify="left")
+        self._setup_summary.pack(side="left", padx=8, fill="x", expand=True)
+        # The collapsible row. v3.9 — grid_remove() is used rather than
+        # pack_forget()/pack_propagate(), both of which were MEASURED to
+        # free nothing here: the ttk wrapper kept a cached reqheight of
+        # 114px and kept occupying it after the child was unmapped or the
+        # height forced to 0, so collapsing reclaimed no space at all.
+        # grid_remove() collapses the row itself and is the documented way
+        # to hide a widget without disturbing the ones around it.
+        self._setup_wrap = ttk.Frame(self.root)
+        self._setup_wrap.grid(row=1, column=0, sticky="ew")
+        top = self._setup_panel = ttk.Frame(self._setup_wrap)   # collapsible panel
+        top.pack(fill="x", padx=10)
         top.columnconfigure(1, weight=1)
         # Row 0: repo folder
         ttk.Label(top, text="Repo folder").grid(row=0, column=0, sticky="w")
@@ -3707,6 +4265,13 @@ class App:
         self._guide_link.grid(row=3, column=2, padx=(16, 0))
         self._guide_link.bind("<Button-1>", lambda _e: self._open_nokey_guide())
         self._guide_link.bind("<Return>", lambda _e: self._open_nokey_guide())
+        # v3.9 — this caption carried a FIXED wraplength=680 in a row that
+        # also holds the Browse/Init/Update buttons, so on a narrow window
+        # its tail ("...instead.") was clipped past the frame edge. Same
+        # defect class already fixed twice on the Owner-pass tab; it now
+        # uses the shared tracker, reserving the guide link beside it.
+        # Registered AFTER _guide_link exists — its width is measured here.
+        _fit_to_own_column(self._key_hint, top, pad=12, floor=240)
 
         def _toggle_key():
             # checked = API mode → key field editable, link hidden;
@@ -3723,28 +4288,129 @@ class App:
                         command=_toggle_key)\
             .grid(row=2, column=2, sticky="w", padx=(16, 0), pady=(6, 0))
         _toggle_key()      # apply saved state right now (startup)
-        # Row 4: live progress + cancel
-        self.prog = ttk.Label(top, text="")
-        self.prog.grid(row=4, column=1, sticky="w", padx=4, pady=(6, 0))
+        # v3.9 — the collapsed summary must track every control it reports,
+        # or it would quietly go stale (and a stale summary is worse than
+        # none: it names the wrong repo or mode).
+        self.use_key.trace_add("write",
+                               lambda *a: self._update_setup_summary())
+        self.model_cb.bind("<<ComboboxSelected>>",
+                           lambda _e: self._update_setup_summary())
+        self.repo_var.trace_add("write", lambda *_a: self._update_summary_soon())
+        # ---- always-visible live row: progress + cancel + theme + about
+        live = ttk.Frame(self.root)
+        live.grid(row=2, column=0, sticky="ew", padx=10, pady=(2, 2))
+        self.prog = ttk.Label(live, text="", wraplength=520, justify="left")
+        self.prog.pack(side="left", padx=(0, 8), fill="x", expand=True)
         # R-11 — Cancel is only meaningful while a chain runs: it starts
         # disabled (idle) and the __busy__ handler flips it with the rest.
-        self.btn_cancel = ttk.Button(top, text="Cancel API call",
+        self.btn_cancel = ttk.Button(live, text="Cancel API call",
                                      command=self.on_cancel_api,
                                      state="disabled")
-        self.btn_cancel.grid(row=4, column=2, padx=(16, 0), pady=(6, 0))
+        self.btn_cancel.pack(side="right", padx=(8, 0))
         # v3.0 — theme selector (Light / Dark / Follow OS), persisted §E
-        ttk.Label(top, text="Theme").grid(row=4, column=3, sticky="e",
-                                          padx=(16, 4), pady=(6, 0))
+        ttk.Label(live, text="Theme").pack(side="right", padx=(16, 4))
         self.theme_var = tk.StringVar(value=THEME_LABELS[self.theme_setting])
-        self.theme_cb = ttk.Combobox(top, textvariable=self.theme_var,
+        self.theme_cb = ttk.Combobox(live, textvariable=self.theme_var,
                                      values=tuple(THEME_LABELS[s] for s
                                                   in THEME_SETTINGS),
                                      state="readonly", width=10)
-        self.theme_cb.grid(row=4, column=4, sticky="w", pady=(6, 0))
+        self.theme_cb.pack(side="right")
         self.theme_cb.bind("<<ComboboxSelected>>", self.on_theme_change)
         # public release — About box (name / version / copyright / license)
-        ttk.Button(top, text="About", command=self._show_about)\
-            .grid(row=4, column=5, padx=(12, 0), pady=(6, 0))
+        ttk.Button(live, text="About", command=self._show_about)\
+            .pack(side="right", padx=(0, 12))
+        # the progress caption fills the row and must not run off the edge
+        _fit_to_own_column(self.prog, live, pad=8, floor=180)
+        self._apply_setup_visibility()
+
+    # ------------------------------------------------ collapsible setup panel
+    def _repo_ready(self):
+        """True once the chosen folder looks like a plan repo. Used to
+        refuse to collapse the panel while it still holds the one thing a
+        first-time user needs: where to point the app.
+
+        The empty case matters: Path("") resolves to "." — the CURRENT
+        directory — so a blank field would have counted as "a folder is
+        chosen" and the first-run panel could be collapsed out of sight,
+        hiding the only field that tells a new user what to do."""
+        try:
+            raw = self.repo_var.get().strip()
+            return bool(raw) and Path(raw).is_dir()
+        except Exception:
+            return False
+
+    def _setup_summary_text(self):
+        """One line naming the current configuration, shown next to the
+        toggle while the panel is collapsed — collapsing must never leave
+        the owner unsure which repo or mode the app is pointed at."""
+        try:
+            raw = self.repo_var.get().strip() or "(no folder)"
+            name = Path(raw).name or raw
+            model = (self.model_cb.get().strip()
+                     if hasattr(self, "model_cb") else "") or "no model"
+            key = "API key on" if self.use_key.get() else "paste mode"
+            return "repo: %s   ·   model: %s   ·   %s" % (name, model, key)
+        except Exception:
+            return ""
+
+    def _update_setup_summary(self):
+        try:
+            self._setup_summary.configure(text=self._setup_summary_text())
+        except Exception:
+            pass
+
+    def _update_summary_soon(self):
+        """Debounced summary refresh: repo_var fires per keystroke while the
+        owner types a path, and re-deriving the label each time is wasted
+        work (the repo trace is already debounced for the same reason)."""
+        job = getattr(self, "_summary_job", None)
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        self._summary_job = self.root.after(
+            300, lambda: self._update_setup_summary())
+
+    def _apply_setup_visibility(self):
+        """Show or hide the setup panel. Collapsing is refused until the
+        panel's own content is redundant: a panel that has never been
+        pointed at a repo is the first-run instruction, so it stays open.
+
+        Collapsing sets the panel's height to 0 with propagation off rather
+        than calling pack_forget(). Measured: after pack_forget() the
+        wrapper frame kept a CACHED reqheight of 114px and kept occupying
+        it, so collapsing freed nothing at all — the exact opposite of the
+        point. height=0 + pack_propagate(False) is deterministic: the panel
+        asks for no space, the notebook below absorbs it, and the panel's
+        children are clipped to nothing rather than left visible."""
+        collapsed = bool(self.cfg.get("setup_collapsed")) and self._repo_ready()
+        try:
+            if collapsed:
+                self._setup_wrap.grid_remove()
+            else:
+                # the SAME cell it was created in — a bare .grid() resets
+                # the row/column to 0/0 and would stack the panel on top of
+                # the header row instead of restoring it
+                self._setup_wrap.grid(row=1, column=0, sticky="ew")
+            self._setup_toggle.configure(text="Setup ▸" if collapsed
+                                         else "Setup ▾")
+        except Exception:
+            collapsed = False
+        self._setup_collapsed = collapsed
+        self._update_setup_summary()
+        return collapsed
+
+    def _toggle_setup(self):
+        want = not bool(self.cfg.get("setup_collapsed"))
+        self.cfg["setup_collapsed"] = want
+        if self._apply_setup_visibility() == want:
+            self._save_cfg()          # only persist if the click took effect
+        else:
+            messagebox.showinfo(
+                "Setup",
+                "The setup panel stays open until a repo folder is chosen — "
+                "it holds the 'point this at your project folder' field.")
 
     # ---------------------------------------------------------- v3.0 theme
     def on_theme_change(self, _event=None):
@@ -3976,8 +4642,8 @@ class App:
                  "next instruction you copy." % (f, which))
 
     def _tabs(self):
-        nb = ttk.Notebook(self.root); nb.pack(fill="both", expand=True,
-                                              pady=(2, 6))
+        nb = ttk.Notebook(self.root)
+        nb.grid(row=4, column=0, sticky="nsew", pady=(2, 6))
         f1, f2, f3 = ttk.Frame(nb), ttk.Frame(nb), ttk.Frame(nb)
         self._intake_tab(f1); self._session_tab(f2); self._owner_tab(f3)
         nb.add(f1, text="Intake"); nb.add(f2, text="Sessions")
@@ -3994,7 +4660,7 @@ class App:
         slug/repo edits, so agent-written changes (PROGRESS.md,
         VALIDATION.md, …) appear without any user action."""
         strip = ttk.Frame(self.root)
-        strip.pack(fill="x", padx=10, pady=(4, 0))
+        strip.grid(row=3, column=0, sticky="ew", padx=10, pady=(4, 0))
         self.strip_slug = ttk.Label(strip, text="Plan: —")
         self.strip_slug.pack(side="left")
         self.strip_state = ttk.Label(strip, text="")
@@ -4103,12 +4769,31 @@ class App:
         if snap["stage"] == "draft":
             fails = [g for g in snap["gates"]
                      if not g["ok"] and g["id"] not in ("draft", "frozen")]
-            self.strip_state.configure(
-                text="draft · %d question(s) · %d owner action(s) · "
-                     "%d parked · %d recon · validation %s"
-                     % (snap["questions"], snap["owner_actions"],
-                        snap["parked"], snap["recon"],
-                        "✓" if snap["validation"] == "ready" else "✗"))
+            # v3.9 — the owner-only recon share and any stranded escalation
+            # are named in the strip. Both were previously invisible here:
+            # an owner-only item read as an ordinary pending chore, and a
+            # stranded question block simply made the count look lower —
+            # which reads as PROGRESS, not as a lost item.
+            state_txt = ("draft · %d question(s) · %d owner action(s) · "
+                         "%d parked · %d recon%s · validation %s"
+                         % (snap["questions"], snap["owner_actions"],
+                            snap["parked"], snap["recon"],
+                            " (%d owner-only)" % snap["recon_owner_only"]
+                            if snap["recon_owner_only"] else "",
+                            "✓" if snap["validation"] == "ready" else "✗"))
+            if snap["stranded"]:
+                state_txt += (" · ⚠ %d escalation(s) not listed anywhere"
+                              % snap["stranded"])
+            self.strip_state.configure(text=state_txt)
+            if snap["stranded"]:
+                # a stranded block outranks a plain gate failure in the
+                # colour: the strip must not read green next to a hidden
+                # question
+                self._strip_fg(self.strip_state, "accent-orange")
+                self.strip_action.configure(text="Open Owner pass →")
+                self._strip_action_kind, self._strip_action_tab = "tab", 2
+                self._strip_fg(self.strip_action, "accent-cyan")
+                return
             if fails:
                 self._strip_fg(self.strip_state, "accent-orange")
                 _idx, text = _GATE_JUMP_TABS.get(fails[0]["id"],
@@ -4368,17 +5053,11 @@ class App:
         # wraplength in sync with the width left over after the other three
         # widgets so it folds instead of clipping. The >8px guard stops the
         # <Configure> -> configure -> <Configure> feedback loop.
-        def _fit_owner_status(event=None):
-            try:
-                others = (top.winfo_reqwidth()
-                          - self.owner_status.winfo_reqwidth())
-                avail = max(240, top.winfo_width() - others - 28)
-                cur = self.owner_status.cget("wraplength")
-                if not isinstance(cur, int) or abs(cur - avail) > 8:
-                    self.owner_status.configure(wraplength=avail)
-            except Exception:
-                pass
-        top.bind("<Configure>", _fit_owner_status)
+        # v3.9 — the two inline <Configure> trackers below are now the
+        # shared _autofit_wrap() helper, so every wrapping caption in the
+        # app follows ONE rule instead of three hand-rolled copies that
+        # could drift again.
+        _fit_to_own_column(self.owner_status, top, pad=16, floor=240)
         # v2.0 - flow hint so the next step is always visible
         self._flow_hint = ttk.Label(
             f, text="Flow: Refresh → answer every question (saved to "
@@ -4390,26 +5069,39 @@ class App:
         self._flow_hint.pack(anchor="w", padx=10, pady=(2, 0))
         # v3.8 - same clipping class as owner_status: a FIXED wraplength
         # (780) is itself a lower bound on the requested width, so this hint
-        # was cut off on any window narrower than ~800px. Track the tab width
-        # instead, with the same >8px change guard.
-        def _fit_flow_hint(event=None):
-            try:
-                avail = max(240, f.winfo_width() - 24)
-                cur = self._flow_hint.cget("wraplength")
-                if not isinstance(cur, int) or abs(cur - avail) > 8:
-                    self._flow_hint.configure(wraplength=avail)
-            except Exception:
-                pass
-        f.bind("<Configure>", _fit_flow_hint)
+        # was cut off on any window narrower than ~800px. It now uses the
+        # same shared tracker (v3.9) as owner_status.
+        _autofit_wrap(self._flow_hint, f, pad=24)
         body = ttk.Frame(f); body.pack(fill="both", expand=True, padx=10, pady=6)
+        # v3.9 — the three panes are GRIDded into equal columns rather than
+        # packed side by side. With pack, each pane took its full requested
+        # width (set by its button bar) and the entire deficit was carved out
+        # of the LAST one packed, which is how Owner actions lost "Mark done"
+        # at a perfectly ordinary window size. A uniform grid gives all three
+        # the same width by construction, so no pane can be starved by a
+        # sibling's content.
+        for col in (0, 1, 2):
+            body.columnconfigure(col, weight=1, uniform="ownerpanes")
+        body.rowconfigure(0, weight=1)
         # left: open questions
         lq = ttk.Labelframe(body, text="Open questions — select, type answer below")
-        lq.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        lq.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         # v3.6 — the answer box and the action bar are packed FIRST from the
         # bottom edge, so a tight window can only ever shrink the resizable
         # panes above them: the buttons can never be pushed off-screen
         barq = ttk.Frame(lq); barq.pack(side="bottom", fill="x", padx=6, pady=6)
-        self.answer = scrolledtext.ScrolledText(lq, height=3, wrap="word")
+        self.answer = scrolledtext.ScrolledText(lq, height=3, width=1, wrap="word")
+        # v3.9 — width=1 on the Text widgets is the fix for the pane
+        # imbalance, and it is NOT cosmetic. Tk's default width for
+        # Text/ScrolledText is 80 CHARACTERS (~657px at this font), so
+        # `answer` and `q_full` each demanded 657px of the row. The Open
+        # questions pane therefore reserved half the tab for itself and
+        # the two panes to its right were squeezed into what remained —
+        # which is exactly how Owner actions ended up with no room for
+        # "Mark done". width=1 means "only as wide as I must be"; with
+        # wrap="word" and fill="both" the widget still grows to fill its
+        # pane, so nothing is lost visually and the ROW stops being driven
+        # by an invisible 80-column minimum.
         self.answer.pack(side="bottom", fill="x", padx=6)
         # v3.6 — questions area is a vertical paned window (user-draggable
         # sash): question list on top, read-only full-question text below.
@@ -4431,7 +5123,7 @@ class App:
                                   exportselection=False)
         pw.add(self.oq_list, weight=1)
         qf = ttk.Frame(pw)
-        self.q_full = tk.Text(qf, height=6, wrap="word", relief="flat",
+        self.q_full = tk.Text(qf, height=6, width=1, wrap="word", relief="flat",
                               borderwidth=0, highlightthickness=0,
                               state="disabled", takefocus=0)
         qsb = ttk.Scrollbar(qf, orient="vertical", command=self.q_full.yview)
@@ -4442,18 +5134,18 @@ class App:
         self.oq_list.bind("<<ListboxSelect>>", self._show_full_question)
         self.btn_answer_save = ttk.Button(barq, text="Save answer → draft + remove",
                                           command=self.on_answer_save)
-        self.btn_answer_save.pack(side="left")
         # v2.5 — one-click accept of the selected block's RECOMMEND line
         self.btn_recommend = ttk.Button(barq, text="Accept recommendation",
                                         command=self.on_recommend_accept)
-        self.btn_recommend.pack(side="left", padx=6)
         # v2.1 — archives the WHOLE question block, never just the header
         self.btn_question_remove = ttk.Button(barq, text="Archive question (keep log)",
                                               command=self.on_question_remove)
-        self.btn_question_remove.pack(side="left", padx=6)
+        # v3.9 — these three are GRIDded by _flow_buttons() (see below), not
+        # packed: a packed row cannot wrap, so it can only ever demand its
+        # full width from the pane.
         # right: recon checklist
         rc = ttk.Labelframe(body, text="Recon checklist")
-        rc.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        rc.grid(row=0, column=1, sticky="nsew", padx=5)
         self.rc_list = tk.Listbox(rc, height=10, exportselection=False)
         self.rc_list.pack(fill="both", expand=True, padx=6, pady=6)
         # v3.8 — DOUBLE-click opens the item detail modal. Single-click is
@@ -4465,29 +5157,41 @@ class App:
         barr = ttk.Frame(rc); barr.pack(fill="x", padx=6, pady=6)
         self.btn_tick_toggle = ttk.Button(barr, text="Tick/untick selected",
                                           command=self.on_tick_toggle)
-        self.btn_tick_toggle.pack(side="left")
         self.btn_verify_exists = ttk.Button(barr, text="Verify EXISTS items",
                                             command=self.on_verify_exists)
-        self.btn_verify_exists.pack(side="left", padx=6)
+        # v3.9 — the missing route for an OWNER-ONLY recon item. Before
+        # this the only ways to clear one were ticking it (the forgery the
+        # intake ban forbids) or hand-editing DEFERRED into the file, so
+        # an owner-only item was an unresolvable Freeze blocker. This
+        # moves it to where owner work belongs — the Owner-actions list —
+        # where the owner can actually run it.
+        self.btn_escalate = ttk.Button(barr, text="Escalate to owner action →",
+                                       command=self.on_escalate_owner_only)
         # v3.5 — owner actions: commands only the owner may run, surfaced
         # here so they can never be silently skipped before Freeze
         oa = ttk.Labelframe(body, text="Owner actions")
-        oa.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        oa.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
         self.oa_list = tk.Listbox(oa, height=10, exportselection=False)
         self.oa_list.pack(fill="both", expand=True, padx=6, pady=6)
         self.oa_list.bind("<Double-Button-1>", self._on_oa_double_click)
         baro = ttk.Frame(oa); baro.pack(fill="x", padx=6, pady=6)
         self.btn_oa_run = ttk.Button(baro, text="Run (read-only)",
                                      command=self.on_owner_action_run)
-        self.btn_oa_run.pack(side="left")
         self.btn_oa_copy = ttk.Button(baro, text="Copy command",
                                       command=self.on_owner_action_copy)
-        self.btn_oa_copy.pack(side="left", padx=4)
         self.btn_oa_done = ttk.Button(baro, text="Mark done",
                                       command=self.on_owner_action_done)
-        self.btn_oa_done.pack(side="left")
-        # bottom: hand the rest to the agent
-        bar2 = ttk.Frame(f); bar2.pack(fill="x", padx=10, pady=(0, 4))
+        # bottom: hand the rest to the agent. v3.9 — packed with
+        # side="bottom" AND before=body: it must reserve its height from the
+        # bottom edge of the tab. `body` is packed earlier with expand=True,
+        # and expand is applied only AFTER every slave has taken its
+        # requested height — so with body first, the button row was pushed
+        # below the visible area and "Agent: finish owner pass" was clipped
+        # off the bottom of the window at small heights. `before=body` puts
+        # it ahead of body in the packing order (so it is served first)
+        # while side="bottom" keeps it visually at the bottom.
+        bar2 = ttk.Frame(f)
+        bar2.pack(side="bottom", fill="x", padx=10, pady=(0, 4), before=body)
         self.btn_owner_resolve = ttk.Button(bar2, text="Agent: finish owner pass",
                                             command=self.on_owner_resolve)
         self.btn_owner_resolve.pack(side="left")
@@ -4510,12 +5214,70 @@ class App:
                        "the whole item — the rows are cut off here.",
             wraplength=300, justify="right", style="SlugHint.TLabel")
         self._modal_hint.pack(side="right", padx=8)
+        # v3.9 — both captions in this row carried FIXED wraplengths
+        # (680 / 300) beside two buttons, so below roughly 1000px the
+        # tails were clipped rather than folded — the same defect already
+        # fixed for the flow hint and the owner status line. Both now
+        # track the row width instead; the row reserves the button and
+        # the sibling caption so each gets the width actually left.
+        _autofit_wrap(self._agent_hint, bar2, pad=24,
+                      siblings=(self.btn_owner_resolve, self._modal_hint))
+        _autofit_wrap(self._modal_hint, bar2, pad=16,
+                      siblings=(self.btn_owner_resolve, self._agent_hint))
+        # v3.9 — the three panes' button bars wrap to as many rows as each
+        # pane's fair share of the row allows (see _flow_buttons). The
+        # target width is derived from the ROW width divided by the pane
+        # count, never from a bar's own width — deriving it from the bar
+        # would be circular, since the bar is what sets the pane's width.
+        self._owner_body = body
+        self._owner_bars = (
+            (barq, (self.btn_answer_save, self.btn_recommend,
+                    self.btn_question_remove)),
+            (barr, (self.btn_tick_toggle, self.btn_verify_exists,
+                    self.btn_escalate)),
+            (baro, (self.btn_oa_run, self.btn_oa_copy, self.btn_oa_done)),
+        )
+        self._flow_busy = False
+        body.bind("<Configure>", self._reflow_owner_bars, add="+")
+        # lay them out once immediately so the buttons are never briefly
+        # unmanaged (e.g. if a <Configure> has not fired yet)
+        for bar, btns in self._owner_bars:
+            _flow_buttons(bar, btns, 10 ** 6)
         self._oq_items, self._rc_items = [], []
         self._oa_items = []     # v3.5 — parsed owner actions
         self._oq_file = self._rc_file = None
         self._oq_text = ""      # v2.1 — raw text for full-block display
 
     # ---------------------------------------------- v1.2.1 auto-reload
+    def _reflow_owner_bars(self, _event=None):
+        """v3.9 — re-wrap each pane's button bar for the pane's current
+        fair share of the row (see _flow_buttons).
+
+        Re-entrancy guard: a reflow changes the bars' requested heights,
+        which changes `body`, which fires <Configure> again. The guard
+        stops that second pass re-entering while the first is still
+        running; _flow_buttons itself only reports a change when the
+        per-row count actually differs, so the sequence converges after one
+        extra pass instead of oscillating.
+        """
+        if self._flow_busy:
+            return
+        self._flow_busy = True
+        try:
+            w = self._owner_body.winfo_width()
+            if w <= 1:
+                return              # not laid out yet; the next event retries
+            groups = self._owner_bars
+            # 12px of paddingx per pane + the two 5px gutters
+            share = max(140, (w - 12 * len(groups) - 10) // len(groups))
+            changed = False
+            for bar, btns in groups:
+                changed |= _flow_buttons(bar, btns, share)
+            if changed:
+                self._owner_body.update_idletasks()
+        finally:
+            self._flow_busy = False
+
     def _owner_file_stamp(self, pdir):
         """Cheap change fingerprint of the two agent-owned Owner-pass
         files. mtime+size, not a read: the strip's 3 s poll already reads
@@ -4622,8 +5384,17 @@ class App:
                 if state:
                     self._rc_items.append((i, line))
                     mark = "[x]" if state == "done" else "[ ]"
-                    self.rc_list.insert("end", "%s %s"
-                                        % (mark, line.strip().lstrip("- ").strip()[:108]))
+                    # v3.9 — an OWNER-ONLY item is marked in the list.
+                    # The intake contract forbids the agent from running
+                    # it, so a plain '[ ]' row gave the owner no signal
+                    # that this one is different in kind — it looked like
+                    # an agent chore the agent had merely not done yet.
+                    tag = " ⛔ owner-only" if is_owner_only(line) else ""
+                    # _item_text() drops BOTH the bullet and the checkbox,
+                    # so the row reads "[ ] OWNER-ONLY: …" rather than the
+                    # doubled "[ ] [ ] …" the old lstrip("- ") produced.
+                    self.rc_list.insert("end", "%s %s%s"
+                                        % (mark, _item_text(line)[:108], tag))
         # v3.5 — owner actions from the same OPEN-QUESTIONS.md body
         for a in parse_owner_actions(self._oq_text):
             self._oa_items.append(a)
@@ -4639,6 +5410,14 @@ class App:
         nu = sum(1 for _, l in self._rc_items
                  if recon_item_state(l) == "open"
                  and not is_deferred(l))
+        # v3.9 — the owner-only share of `nu`, split out so the status
+        # line can name it. These are the recon items the AGENT is barred
+        # from running, so "next: tick recon items" was actively wrong
+        # advice for them: ticking one is the forgery the intake ban
+        # exists to prevent, and no other route existed.
+        nu_owner = sum(1 for _, l in self._rc_items
+                       if recon_item_state(l) == "open"
+                       and not is_deferred(l) and is_owner_only(l))
         # v2.7 — answers parked in ## OWNER ANSWERS awaiting the
         # owner-resolve integration: the section is a TEMPORARY inbox,
         # not a final home, so the count is surfaced here explicitly
@@ -4673,16 +5452,31 @@ class App:
         elif noa:
             hint = (" — next: run/copy the owner actions (right-hand panel) "
                     "or mark them done")
+        elif nu_owner:
+            hint = (" — next: %d owner-only recon item(s) — the agent may "
+                    "NOT run those; run them from the Owner-actions panel "
+                    "or mark the checklist line DEFERRED" % nu_owner)
         elif nu:
             hint = " — next: tick recon items"
         elif vnote:
             hint = vnote
         else:
             hint = " — ready to Freeze"
+        # v3.9 — stranded escalations are surfaced here too, so the tab
+        # itself says "there is content the console is not listing" rather
+        # than relying on the owner opening the Freeze checklist.
+        orphans = unaccounted_escalations(self._oq_text)
+        if orphans:
+            hint += ("  ⚠ %d escalated question block(s) sit in a section "
+                     "this tab does not list — see 'What's blocking "
+                     "Freeze?'" % len(orphans))
+        recon_txt = "%d unchecked item(s)" % nu
+        if nu_owner:
+            recon_txt += " (%d owner-only)" % nu_owner
         self.owner_status.configure(
             text=("%d open question(s), %d answer(s) awaiting integration, "
-                  "%d owner action(s), %d unchecked item(s)%s"
-                  % (nq, na, noa, nu, hint)))
+                  "%d owner action(s), %s%s"
+                  % (nq, na, noa, recon_txt, hint)))
         if (nq == 0 and na == 0 and noa == 0 and nu == 0 and not vnote
                 and (self._oq_file.is_file() or self._rc_file.is_file())):
             self.say("intake", "owner pass: everything resolved — Freeze "
@@ -4787,7 +5581,10 @@ class App:
                 "OPEN-QUESTIONS.md changed since Refresh — click Refresh.")
             return False
         lines[ln] = flipped
-        self._oq_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        # v3.9 — atomic: this file is the audit subject of the owner pass
+        # (owner-pass.log + .bak), so a crash mid-write must not leave it
+        # truncated (R-08 discipline, previously applied only to Freeze).
+        atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
         self._log_owner_action(action, "marked done")
         return True
 
@@ -5028,7 +5825,7 @@ class App:
         if end < len(lines) and not lines[end].strip():
             end += 1          # take the block's separator blank line too
         del lines[lineno:end]
-        self._oq_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
         self.answer.delete("1.0", "end")
         self.say("intake", "owner pass: answer stored in PART-01.draft.md "
                  "(## OWNER ANSWERS — full question block kept with it); "
@@ -5103,7 +5900,7 @@ class App:
         if end < len(lines) and not lines[end].strip():
             end += 1
         del lines[lineno:end]
-        self._oq_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
         self.on_owner_refresh()
 
     # ------------------------------------------------- v2.0 owner helpers
@@ -5338,7 +6135,102 @@ class App:
                                  "(nothing was written).")
             return
         lines[lineno] = new
-        self._rc_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(self._rc_file, "\n".join(lines) + "\n")
+        self.on_owner_refresh()
+
+    def on_escalate_owner_only(self):
+        """v3.9 — move the selected OWNER-ONLY recon item into the
+        Owner-actions list, where the OWNER (not the agent) can run it.
+
+        Why this exists: the intake contract hard-bans the agent from
+        running an OWNER-ONLY item, and 'tick it in the Owner pass tab' —
+        the only remedy the console offered — is exactly the forgery that
+        ban exists to prevent. So an owner-only recon item was an
+        unresolvable Freeze blocker: the plan could not proceed and could
+        not honestly be unblocked. This is the missing route.
+
+        The item is MOVED, not copied: it is removed from the checklist
+        (so it stops double-counting as agent work) and appended under
+        '## Owner actions' as an unchecked bullet, preserving its command
+        so the existing Run/Copy/Mark-done panel can handle it. Both files
+        are written atomically, the checklist gets its .bak snapshot, and
+        the move is archived to owner-pass.log — nothing is ever lost."""
+        got = self._owner_paths()
+        if got is None: return
+        slug, pdir = got
+        sel = self.rc_list.curselection()
+        if not sel or sel[0] >= len(self._rc_items):
+            messagebox.showerror("Escalate",
+                                 "Select a checklist item first.")
+            return
+        if not self._rc_file or not self._rc_file.is_file():
+            messagebox.showerror("Escalate", "Click Refresh first.")
+            return
+        lineno, line = self._rc_items[sel[0]]
+        if not is_owner_only(line):
+            messagebox.showerror(
+                "Escalate",
+                "That item is not tagged OWNER-ONLY.\n\n"
+                "Only OWNER-ONLY items are escalated — a normal item is the "
+                "agent's to run or tick. To escalate a gap the agent found, "
+                "add it under '## Owner actions' in OPEN-QUESTIONS.md.")
+            return
+        rlines = self._rc_file.read_text(encoding="utf-8").splitlines()
+        if (not 0 <= lineno < len(rlines)
+                or rlines[lineno].strip() != line.strip()):
+            messagebox.showerror(
+                "Escalate",
+                "RECON-CHECKLIST.md changed since the last Refresh — click "
+                "Refresh and re-select (nothing was written).")
+            return
+        body = _item_text(line)
+        if not messagebox.askyesno(
+                "Escalate to owner action",
+                "Move this item to '## Owner actions' in OPEN-QUESTIONS.md?\n\n"
+                "%s\n\n"
+                "It will be removed from the checklist and added as an "
+                "unchecked owner action, so you can Run / Copy it there and "
+                "Mark it done. Both files are snapshotted first."
+                % line.strip()[:300]):
+            return
+        oq = pdir / "OPEN-QUESTIONS.md"
+        existed = oq.is_file()
+        text = oq.read_text(encoding="utf-8") if existed else \
+            "# OPEN QUESTIONS — %s\n" % slug
+        # keep the console's own label as a marker, so the escalated item
+        # is still recognisable as owner-only work
+        bullet = "- [ ] %s" % body
+        if "## Owner actions" not in text:
+            text = text.rstrip() + "\n\n## Owner actions\n\n%s\n" % bullet
+        else:
+            text = text.rstrip() + "\n\n%s\n" % bullet
+        # snapshot BEFORE both writes (R-10: a failed backup is data loss
+        # discovered at restore time)
+        self._oq_backup()
+        try:
+            atomic_write_text(oq, text)
+        except Exception as exc:
+            traceback.print_exc()
+            messagebox.showerror(
+                "Escalate",
+                "Could not write OPEN-QUESTIONS.md:\n\n%s\n\n"
+                "The checklist item was NOT removed — it is still there."
+                % exc)
+            return
+        del rlines[lineno]
+        try:
+            bak = self._rc_file.parent / (self._rc_file.name + ".bak")
+            bak.write_text(self._rc_file.read_text(encoding="utf-8"),
+                            encoding="utf-8")
+            atomic_write_text(self._rc_file, "\n".join(rlines) + "\n")
+        except Exception as exc:
+            traceback.print_exc()
+            self.say("owner", "WARN: RECON-CHECKLIST.md update failed (%s) — "
+                     "the item is now BOTH an owner action and a checklist "
+                     "row. Remove the duplicate by hand." % exc)
+        self._oq_archive(pdir, "ESCALATED (OWNER-ONLY from RECON-CHECKLIST)",
+                         line.strip())
+        self.say("owner", "escalated to owner action: %s" % body[:120])
         self.on_owner_refresh()
 
     def on_verify_exists(self):
@@ -5375,7 +6267,7 @@ class App:
             else:
                 remaining += 1
         if verified:
-            self._rc_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            atomic_write_text(self._rc_file, "\n".join(lines) + "\n")
         self.say("intake", "owner pass: EXISTS auto-verify — %d ticked, "
                  "%d not found" % (verified, remaining))
         self.on_owner_refresh()
@@ -5623,6 +6515,10 @@ class App:
                         kind=self.kind.get(),
                         theme=self.theme_setting,
                         last_slug=self.slug_var.get().strip(),
+                        # v3.9 — the collapsed state of the setup panel
+                        # persists, so the reclaimed vertical space survives
+                        # a restart instead of being re-lost every launch
+                        setup_collapsed=bool(self.cfg.get("setup_collapsed")),
                         recent_slugs=self._recent_slugs)
         self.cfg.pop("or_key", None)
         atomic_write_text(CFG, json.dumps(self.cfg, indent=2))   # R-08/R-26
@@ -5988,18 +6884,22 @@ class App:
                                           f.read_text(encoding="utf-8")))
                     jobs.append(("validate-plan.md", extra))
                 if jobs:
-                    if len(jobs) > 1:
-                        self.say("intake", "running recon + validate in "
-                                 "parallel …")
-                    threads = [threading.Thread(
-                        target=self._run_api,
-                        args=(repo, "intake", cmd, slug, slug, extra,
-                              ui["model"], ui["key"]), daemon=True)
-                        for cmd, extra in jobs]
-                    for t in threads:
-                        t.start()
-                    for t in threads:
-                        t.join()
+                    # v3.9 audit fix — these used to run in PARALLEL
+                    # threads. Both command files are told to emit
+                    # OPEN-QUESTIONS.md and RECON-CHECKLIST.md, and
+                    # _run_api ends in an unconditional write_text, so
+                    # two concurrent chains meant LAST WRITER WINS: one
+                    # reply could silently overwrite the other's whole
+                    # file, discarding recon's owner-action escalations
+                    # (or validate's findings) with no warning and no
+                    # backup. Serialized instead: the log line is also
+                    # corrected, since it claimed parallelism that no
+                    # longer happens.
+                    self.say("intake", "running %s in order …"
+                             % " then ".join(c for c, _ in jobs))
+                    for cmd, extra in jobs:
+                        self._run_api(repo, "intake", cmd, slug, slug, extra,
+                                      ui["model"], ui["key"])
                 if ui["validate"]:
                     self._echo_validation(pdir)
                     if ui["auto_fix"]:
@@ -6543,10 +7443,14 @@ class App:
             self.say(target, "Fix the cause if needed, then retry this step "
                      "(for intake: click Proceed again and answer Yes).")
             return False
+        # v3.9 — atomic_write_text, not write_text: an agent-written file
+        # must never be left truncated halfway (a crash mid-write used to
+        # destroy a whole OPEN-QUESTIONS.md / RECON-CHECKLIST.md). Same
+        # discipline the Freeze path already uses (R-08).
         for path, content in files:
             f = repo / path
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(content, encoding="utf-8")
+            atomic_write_text(f, content)
             self.say(target, "wrote %s" % path)
         if not files:
             self.say(target, "still no files — run this step manually in your "

@@ -227,20 +227,35 @@ touched by this.
 
 3.3 Window tour (text layout map)
 ---------------------------------
-The window title reads "Plan Console 1.1.0". The layout, top to
+The window title reads "Plan Console 3.9". The layout, top to
 bottom:
 
-  TOP BAR (always visible)
-    Row 1: Repo folder field + Browse... button
-           | Init starter repo | Update command files
-    Row 2: Model picker (combobox) | Reload models
-           | Agent orders...
-    Row 3: API key field + "Use API key" checkbox
-           (with the checkbox unticked, the key field is grayed out
-            and the link "How to use without a key (guide) »" is
-            shown; clicking it opens no-api-key-guide.html)
-    Row 4: Cancel API call | Theme (Light / Dark / Follow OS)
-           | About
+  SETUP BAR (collapsible — see "Setup ▸/▾" below)
+    Always visible: a "Setup ▾" toggle button plus a one-line summary
+    of the current configuration (repo folder, model, and whether the
+    API key is on or the app is in paste mode). Click the toggle to
+    collapse or expand the three setup rows. Collapsing is remembered
+    between sessions and gives the three tabs roughly 115 extra pixels
+    of vertical space — worth doing on a laptop screen. The panel
+    refuses to collapse until you have pointed it at a real folder,
+    because until then it holds the "Repo folder" field you need.
+
+    Expanded rows:
+      Row 1: Repo folder field + Browse... button
+             | Init starter repo | Update command files
+      Row 2: Model picker (combobox) | Reload models
+             | Agent orders...
+      Row 3: API key field + "Use API key" checkbox
+             (with the checkbox unticked, the key field is grayed out
+              and the link "How to use without a key (guide) »" is
+              shown; clicking it opens no-api-key-guide.html)
+
+  LIVE BAR (always visible — never collapses)
+    API progress text | Cancel API call | Theme (Light / Dark /
+    Follow OS) | About. This row stays on screen even when Setup is
+    collapsed, because Cancel is only meaningful while an API call is
+    running and the progress text is the only sign that anything is
+    happening at all.
 
   TABS (three, sharing one slug field concept)
     Intake      — paste source text, pick type, slug, Proceed,
@@ -248,6 +263,10 @@ bottom:
     Sessions    — session number, leg, +1 session, Copy session
                   instruction, Status, Session report, Plan health
     Owner pass  — open questions, owner actions, recon checklist
+
+  The three Owner-pass panes sit side by side and share the width
+  evenly. Their button bars re-wrap onto a second row when a pane is
+  too narrow, so no button is ever squeezed out of view.
 
   LOG (bottom)
     Everything the console does is printed here, newest last.
@@ -559,6 +578,11 @@ Owner actions (right panel)
     - Nothing runs or is written without your confirmation; every
       event is archived to owner-pass.log.
 
+Escalate to owner action ->
+    Moves the selected OWNER-ONLY recon item into the Owner
+    actions panel so you can run it there. Use this instead of
+    ticking an item only you can honestly tick.
+
 Recon checklist
     Shown with the questions. Items the agent could already check
     are ticked [x] for you. Items left for you: run the check, then
@@ -566,13 +590,35 @@ Recon checklist
     decide to skip). A line marked DEFERRED means a deliberate,
     documented decision to skip that item — it counts as settled
     and does not block Freeze, but the reason stays on the record.
+    DEFERRED only counts when it is a tag at the start of the item
+    (or a trailing note in brackets); a line that merely mentions the
+    word in passing stays open, so it can never quietly unblock Freeze.
+
+    OWNER-ONLY items
+    An item tagged OWNER-ONLY (needs credentials, a database, a
+    dashboard, SSH) is one the agent is forbidden to run. Those rows are
+    marked ⛔ owner-only, counted separately, and listed separately in
+    the Freeze check, so the console never tells you to tick something
+    only you can honestly tick. To clear one, either:
+
+      - press "Escalate to owner action →" to move it into the Owner
+        actions panel beside it, then Run / Copy it there and Mark it
+        done; or
+      - mark the checklist line DEFERRED if you are deliberately
+        deferring it.
+
+    Both files are snapshotted first, and the move is archived to
+    owner-pass.log.
 
 What's blocking Freeze? (top of the tab)
     A read-only dry-run that lists exactly what would block Freeze
     right now — open questions, unchecked owner actions, unchecked
     recon items, a missing or not-ready validation report — without
     changing anything. Use it any time you want to know why Freeze
-    is refusing.
+    is refusing. A ⚠ row is a warning, not a block: it flags something
+    you should confirm (for example an owner action that was ticked
+    outside the console, or an escalated question block the console
+    cannot list) without stranding an otherwise valid plan.
 
 6.6 Validate draft and the validation gap report
 ------------------------------------------------
@@ -715,7 +761,7 @@ apart also means no parser can ever hand an agent the wrong contract.
 
 6.12 API key and model selection
 --------------------------------
-The OpenRouter key is optional. Paste it in the top bar and tick
+The OpenRouter key is optional. Paste it in the Setup panel and tick
 "Use API key" (or set the OPENROUTER_API_KEY environment variable —
 the field stays empty and the env value is used instead; it is never
 persisted). Click Reload models to fetch the live model list — free
@@ -889,7 +935,7 @@ Privacy and security
 | The license dialog appears at every start | plan-console.json lacks the acceptance keys, or was reset | Click I Agree once. If it keeps returning, check the file is writable next to the script. To reset acceptance deliberately, delete the license_accepted key (or the whole file). |
 | plan-console.json.corrupt appeared | The settings file was undecodable (partial write, manual edit, encoding) | Nothing is lost except settings: the app restarted with defaults. Inspect the .corrupt file, salvage what you need, then delete it. |
 | Model list is empty | No internet, or OpenRouter unreachable | Type a model id by hand, or skip the key entirely (section 7). |
-| ERROR: OpenRouter HTTP 401 | Wrong API key | Re-paste the key in the top bar. |
+| ERROR: OpenRouter HTTP 401 | Wrong API key | Re-paste the key in the Setup panel. |
 | ERROR: OpenRouter HTTP 402 | No credits on your OpenRouter account | Top up, switch to a ":free" model, or use copy-paste mode. |
 | ERROR: OpenRouter HTTP 429 | Rate limited (common on free models) | Wait a minute or pick another model. |
 | "reply had no <<<FILE>>> blocks" | The model ignored the output format | The console retries once automatically; if it still fails, run that step in your agent instead (copy mode). |

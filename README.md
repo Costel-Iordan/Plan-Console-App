@@ -9,6 +9,8 @@
 
 It is built for **solo developers and small teams driving AI coding agents**. You stay the owner of the work: answer open questions, tick reconnaissance items, gate the freeze, run copy-paste sessions with standing orders, and track progress and health. The result is that ad-hoc AI-coding chaos becomes a disciplined **plan → owner pass → freeze → session** lifecycle with hard gates, machine-parseable progress records, and a complete audit trail (`HEALTH.md`) — all in a zero-dependency, offline desktop application.
 
+> **What's new in 3.9:** an audit batch whose theme is *nothing that reaches the owner may be invisible*. Escalated open questions can no longer be counted by neither panel and no Freeze gate (both section parsers now share one scanner, and a stranded escalation raises a visible warning gate); an `OWNER-ONLY` recon item is no longer an unresolvable blocker — it is counted separately, marked `⛔ owner-only`, and a new **"Escalate to owner action →"** button moves it where you can actually run it; a `DEFERRED` mention in prose no longer silently un-blocks Freeze; intake steps run in order instead of racing on the same files; the version string now matches the code; and the **Setup panel is collapsible** (`Setup ▸`), reclaiming ~115px of vertical space, with the API progress / Cancel / Theme / About row always visible.
+
 > **What's new in 1.2.0:** UI/UX batch 1 — a live **plan strip** under the top bar (stage, gate counts, next session, and a click-through action that jumps to the right tab), **Freeze shows all gates in one ✓/✗ checklist dialog** instead of one error per gate (and now enforces the owner-actions gate the dry run already used), a **"Next session →"** button that prefills the first not-done session/leg and copies its instruction in one click, and read-only tools (Status, Session report, validation report, Freeze check, Copy command) **stay live while an API chain runs**.
 
 > **What's new in 1.1.0:** split-deploy sessions (v3.6) — a deploy session marked `split` / `pre+post` / `pre-post` / `pre/post` in §A becomes two legs (Na pre-deploy, Nb post-deploy) with a DEPLOY WINDOW verdict; Plan health fixes for wrapped session-map row gates (v3.4.1) and finished-deploy verdicts (v3.4.2); owner-section regex hardening (v3.5.2).
@@ -108,7 +110,7 @@ python3 plan-console.py
 
 1. Clone this repository and launch the app (see [Installation](#installation)).
 2. Click **Open sample project…** and pick an empty folder to explore the bundled worked example.
-3. Or point **Repo folder** at your own project and click **Init starter repo** (creates `PART-00.md`, `templates/`, `commands/` in the target repo).
+3. Or click **Setup ▸** in the header to point **Repo folder** at your own project and click **Init starter repo** (creates `PART-00.md`, `templates/`, `commands/` in the target repo). Collapse the Setup panel again once configured — the header keeps a one-line summary (repo · model · API key or paste mode), so nothing is hidden while collapsed.
 4. Paste your plan or brainstorm on the **Intake** tab and generate a plan draft.
 5. Work the **Owner pass** tab until all gates are green, then **Freeze** the plan and start running **Sessions**.
 

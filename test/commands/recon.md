@@ -35,6 +35,18 @@ backticked command, plus `→ verifies §B "<exact §B line prefix>"` and
 `(expect: …)` tags when the command confirms an UNVERIFIED §B line (the
 console then offers one-click Run + VERIFIED write-back).
 
+SECTION PLACEMENT IS PART OF THE FORMAT (v3.9): "## Owner actions" is
+the LAST section of OPEN-QUESTIONS.md. Anything you append below that
+heading belongs to the owner-action list, so:
+- owner work goes there as a `- [ ]` BULLET with its command;
+- a QUESTION you still need answered goes ABOVE that heading (or into a
+  `## ` section of its own), in the numbered PROBLEM/QUESTION/RECOMMEND
+  block form.
+A numbered question block placed under "## Owner actions" is listed by
+NEITHER panel and counted by NO Freeze gate — the console reports it as
+a "stranded escalation" warning, but you must not rely on that to notice
+it. Write questions above the heading.
+
 Emit every file you changed (RECON-CHECKLIST.md, PART-01.draft.md,
 OPEN-QUESTIONS.md if touched). End with one line in your notes:
 verified X / pending-owner Y / failed Z.

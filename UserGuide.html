@@ -217,7 +217,7 @@ python -c "import tkinter"          (should print nothing = OK)</pre>
 "license_accepted_version": "Apache-2.0"
 "license_accepted_date":    &lt;ISO date, e.g. 2026-09-05&gt;</pre>
     <p>On every later launch a truthy <code>license_accepted</code> skips the dialog.</p>
-    <p>To see the license again at any time, click the <strong>About</strong> button in the top bar
+    <p>To see the license again at any time, click the <strong>About</strong> button in the live bar
     and then <strong>View License</strong>. The About box also shows a clickable link to
     <a href="https://www.apache.org/licenses/LICENSE-2.0">apache.org/licenses/LICENSE-2.0</a>.</p>
     <p>To reset acceptance (for example to review the license again), open
@@ -229,18 +229,33 @@ python -c "import tkinter"          (should print nothing = OK)</pre>
     again. Your plans in the repo are never touched by this.</p>
 
     <h3>3.3 Window tour (text layout map)</h3>
-    <p>The window title reads <strong>"Plan Console 1.1.0"</strong>. The layout, top to bottom:</p>
-    <pre class="terminal-code">TOP BAR (always visible)
-  Row 1: Repo folder field + Browse... button
-         | Init starter repo | Update command files
-  Row 2: Model picker (combobox) | Reload models
-         | Agent orders...
-  Row 3: API key field + "Use API key" checkbox
-         (with the checkbox unticked, the key field is grayed out
-          and the link "How to use without a key (guide) »" is
-          shown; clicking it opens no-api-key-guide.html)
-  Row 4: Cancel API call | Theme (Light / Dark / Follow OS)
-         | About
+    <p>The window title reads <strong>"Plan Console 3.9"</strong>. The layout, top to bottom:</p>
+    <pre class="terminal-code">SETUP BAR (collapsible)
+  Always visible: a "Setup ▾" toggle button plus a one-line summary
+  of the current configuration (repo folder, model, and whether the
+  API key is on or the app is in paste mode). Click the toggle to
+  collapse or expand the three setup rows. Collapsing is remembered
+  between sessions and gives the three tabs roughly 115 extra pixels
+  of vertical space — worth doing on a laptop screen. The panel
+  refuses to collapse until you have pointed it at a real folder,
+  because until then it holds the "Repo folder" field you need.
+
+  Expanded rows:
+    Row 1: Repo folder field + Browse... button
+           | Init starter repo | Update command files
+    Row 2: Model picker (combobox) | Reload models
+           | Agent orders...
+    Row 3: API key field + "Use API key" checkbox
+           (with the checkbox unticked, the key field is grayed out
+            and the link "How to use without a key (guide) »" is
+            shown; clicking it opens no-api-key-guide.html)
+
+LIVE BAR (always visible — never collapses)
+  API progress text | Cancel API call | Theme (Light / Dark /
+  Follow OS) | About. This row stays on screen even when Setup is
+  collapsed, because Cancel is only meaningful while an API call is
+  running and the progress text is the only sign that anything is
+  happening at all.
 
 TABS (three, sharing one slug field concept)
   Intake      — paste source text, pick type, slug, Proceed,
@@ -248,6 +263,10 @@ TABS (three, sharing one slug field concept)
   Sessions    — session number, Copy session instruction, Status,
                 Session report, Plan health
   Owner pass  — open questions, owner actions, recon checklist
+
+  The three Owner-pass panes sit side by side and share the width
+  evenly. Their button bars re-wrap onto a second row when a pane is
+  too narrow, so no button is ever squeezed out of view.
 
 LOG (bottom)
   Everything the console does is printed here, newest last.</pre>
@@ -433,7 +452,7 @@ LOG (bottom)
     <h2 id="features">6. Every major feature in depth</h2>
 
     <h3>6.1 Repo folder and Init starter repo</h3>
-    <p>The <strong>Repo folder</strong> field (top bar) is where all paperwork lives. Click
+    <p>The <strong>Repo folder</strong> field (Setup panel) is where all paperwork lives. Click
     <strong>Browse…</strong> to choose it; the choice is remembered. <strong>Init starter
     repo</strong> writes, without ever overwriting existing files:</p>
     <ul>
@@ -519,11 +538,30 @@ LOG (bottom)
     <code>[ ]</code> to <code>[x]</code> in <code>RECON-CHECKLIST.md</code> (or delete lines you
     decide to skip). A line marked <code>DEFERRED</code> means a deliberate, documented decision to
     skip that item — it counts as settled and does not block Freeze, but the reason stays on the
-    record.</p>
+    record. <code>DEFERRED</code> only counts when it is a tag at the start of the item (or a
+    trailing note in brackets); a line that merely mentions the word in passing stays open, so it
+    can never quietly unblock Freeze.</p>
+    <p><strong>OWNER-ONLY items</strong> — an item tagged <code>OWNER-ONLY</code> (needs
+    credentials, a database, a dashboard, SSH) is one the agent is forbidden to run. Those rows are
+    marked <strong>⛔ owner-only</strong>, counted separately, and listed separately in the Freeze
+    check, so the console never tells you to tick something only you can honestly tick. To clear
+    one, either:</p>
+    <ul>
+        <li>press <strong>Escalate to owner action →</strong> to move it into the Owner actions
+            panel beside it, then <strong>Run</strong> / <strong>Copy</strong> it there and
+            <strong>Mark it done</strong>; or</li>
+        <li>mark the checklist line <code>DEFERRED</code> if you are deliberately deferring
+            it.</li>
+    </ul>
+    <p>Both files are snapshotted first, and the move is archived to
+    <code>owner-pass.log</code>.</p>
     <p><strong>What's blocking Freeze?</strong> (top of the tab) — a read-only dry-run that lists
     exactly what would block Freeze right now — open questions, unchecked owner actions, unchecked
     recon items, a missing or not-ready validation report — without changing anything. Use it any
-    time you want to know why Freeze is refusing.</p>
+    time you want to know why Freeze is refusing. A <strong>⚠</strong> row is a warning, not a
+    block: it flags something you should confirm (for example an owner action that was ticked
+    outside the console, or an escalated question block the console cannot list) without stranding
+    an otherwise valid plan.</p>
 
     <h3>6.6 Validate draft and the validation gap report</h3>
     <p>Click <strong>Validate draft</strong>. With a key the console asks the model to write a
@@ -637,7 +675,7 @@ LOG (bottom)
         entries: <em>"always write tests", "never push to main", "match the existing code
         style"</em>.</li>
     </ul>
-    <p><strong>Agent orders…</strong> (top bar) opens the file for the tab you are currently on —
+    <p><strong>Agent orders…</strong> (Setup panel) opens the file for the tab you are currently on —
     Intake or Sessions. Both files are only created if missing, so your customized text is never
     overwritten by the app. Typing just <code>OFF</code> (or leaving a file empty) disables the
     orders <em>for that phase only</em>; the other phase keeps working.</p>
@@ -647,7 +685,7 @@ LOG (bottom)
     agent the wrong contract.</p>
 
     <h3>6.12 API key and model selection</h3>
-    <p>The OpenRouter key is optional. Paste it in the top bar and tick <strong>"Use API
+    <p>The OpenRouter key is optional. Paste it in the Setup panel and tick <strong>"Use API
     key"</strong> (or set the <code>OPENROUTER_API_KEY</code> environment variable — the field
     stays empty and the env value is used instead; it is never persisted). Click <strong>Reload
     models</strong> to fetch the live model list — free models end in <code>:free</code> — and
@@ -657,7 +695,7 @@ LOG (bottom)
     never written to disk.</p>
 
     <h3>6.13 Themes and window size</h3>
-    <p><strong>Theme</strong> (top bar): Light, Dark, or Follow OS. Follow OS matches your system
+    <p><strong>Theme</strong> (live bar): Light, Dark, or Follow OS. Follow OS matches your system
     personalization and switches automatically. On Windows high-contrast mode the app steps aside
     entirely and lets the OS colors rule. Your choice is saved in <code>plan-console.json</code>.
     The window <strong>starts maximized (full screen)</strong> and is freely resizable (smallest
@@ -674,15 +712,15 @@ LOG (bottom)
             </tr>
         </thead>
         <tbody>
-            <tr><td style="padding:0.4rem;">Browse…</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Chooses the repo folder</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">Init starter repo</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Creates PART-00.md, templates/, commands/ in the repo</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">Update command files</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Refreshes commands/ with the current built-in protocols</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">Reload models</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Refreshes the OpenRouter model list</td><td style="padding:0.4rem;">yes (for the list)</td></tr>
-            <tr><td style="padding:0.4rem;">Agent orders…</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Edits the standing orders for the active tab (Intake or Sessions)</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">Cancel API call</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Aborts a running model call</td><td style="padding:0.4rem;">n/a</td></tr>
-            <tr><td style="padding:0.4rem;">About</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Name, version, copyright, license link and viewer</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">Theme</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Light / Dark / Follow OS</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">How to use without a key (guide) »</td><td style="padding:0.4rem;">top</td><td style="padding:0.4rem;">Opens no-api-key-guide.html</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Browse…</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Chooses the repo folder</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Init starter repo</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Creates PART-00.md, templates/, commands/ in the repo</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Update command files</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Refreshes commands/ with the current built-in protocols</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Reload models</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Refreshes the OpenRouter model list</td><td style="padding:0.4rem;">yes (for the list)</td></tr>
+            <tr><td style="padding:0.4rem;">Agent orders…</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Edits the standing orders for the active tab (Intake or Sessions)</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Cancel API call</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Aborts a running model call</td><td style="padding:0.4rem;">n/a</td></tr>
+            <tr><td style="padding:0.4rem;">About</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Name, version, copyright, license link and viewer</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Theme</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Light / Dark / Follow OS</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">How to use without a key (guide) »</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Opens no-api-key-guide.html</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Open sample project…</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Copies samples/demo-project/ to a folder of your choice</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Proceed</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Saves your text, scaffolds the plan (+recon+validate if ticked)</td><td style="padding:0.4rem;">optional</td></tr>
             <tr><td style="padding:0.4rem;">Freeze</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Locks the draft into PART-01 v1.0.md after all gates pass</td><td style="padding:0.4rem;">no</td></tr>
@@ -695,7 +733,8 @@ LOG (bottom)
             <tr><td style="padding:0.4rem;">Session report</td><td style="padding:0.4rem;">Sessions</td><td style="padding:0.4rem;">Verdict for one session; on OK auto-advances, on ⚠ CHECK copies the fix hint</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Plan health</td><td style="padding:0.4rem;">Sessions</td><td style="padding:0.4rem;">Verdict for the whole plan + writes HEALTH.md</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Refresh</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Loads questions, owner actions and recon checklist</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">What's blocking Freeze?</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Read-only dry-run of the Freeze gates</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Escalate to owner action &rarr;</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Moves an OWNER-ONLY recon item into the Owner actions panel so you can run it there</td><td style="padding:0.4rem;">yes</td></tr>
+<tr><td style="padding:0.4rem;">What's blocking Freeze?</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Read-only dry-run of the Freeze gates</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Accept recommendation</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Confirmed one-click accept of the RECOMMEND line</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Save answer → draft + remove</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Saves your typed answer and removes the question</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Archive question (keep log)</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Removes the question without answering; keeps the log</td><td style="padding:0.4rem;">no</td></tr>
@@ -843,7 +882,7 @@ LOG (bottom)
             <tr><td style="padding:0.4rem;">The license dialog appears at every start</td><td style="padding:0.4rem;">plan-console.json lacks the acceptance keys, or was reset</td><td style="padding:0.4rem;">Click <strong>I Agree</strong> once. If it keeps returning, check the file is writable next to the script. To reset acceptance deliberately, delete the <code>license_accepted</code> key (or the whole file).</td></tr>
             <tr><td style="padding:0.4rem;"><code>plan-console.json.corrupt</code> appeared</td><td style="padding:0.4rem;">The settings file was undecodable (partial write, manual edit, encoding)</td><td style="padding:0.4rem;">Nothing is lost except settings: the app restarted with defaults. Inspect the .corrupt file, salvage what you need, then delete it.</td></tr>
             <tr><td style="padding:0.4rem;">Model list is empty</td><td style="padding:0.4rem;">No internet, or OpenRouter unreachable</td><td style="padding:0.4rem;">Type a model id by hand, or skip the key entirely (section 7).</td></tr>
-            <tr><td style="padding:0.4rem;">ERROR: OpenRouter HTTP 401</td><td style="padding:0.4rem;">Wrong API key</td><td style="padding:0.4rem;">Re-paste the key in the top bar.</td></tr>
+            <tr><td style="padding:0.4rem;">ERROR: OpenRouter HTTP 401</td><td style="padding:0.4rem;">Wrong API key</td><td style="padding:0.4rem;">Re-paste the key in the Setup panel.</td></tr>
             <tr><td style="padding:0.4rem;">ERROR: OpenRouter HTTP 402</td><td style="padding:0.4rem;">No credits on your OpenRouter account</td><td style="padding:0.4rem;">Top up, switch to a <code>:free</code> model, or use copy-paste mode.</td></tr>
             <tr><td style="padding:0.4rem;">ERROR: OpenRouter HTTP 429</td><td style="padding:0.4rem;">Rate limited (common on free models)</td><td style="padding:0.4rem;">Wait a minute or pick another model.</td></tr>
             <tr><td style="padding:0.4rem;">"reply had no &lt;&lt;&lt;FILE&gt;&gt;&gt; blocks"</td><td style="padding:0.4rem;">The model ignored the output format</td><td style="padding:0.4rem;">The console retries once automatically; if it still fails, run that step in your agent instead (copy mode).</td></tr>
