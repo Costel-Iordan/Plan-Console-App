@@ -1242,6 +1242,14 @@ def count_open_recon_owner_only(text):
 # continuation lines of a v2.1 question block: indented, or explicitly
 # labelled QUESTION:/RECOMMEND:/RECOMMENDATION:
 Q_CONT_RE = re.compile(r"^\s*(QUESTION|RECOMMEND(?:ATION)?)\s*:", re.I)
+# v3.10 — every label that opens a part OF a question block. A continuation
+# line carrying one of these starts a new part, so it ends the previous one
+# (used by recommend_line to know where a wrapped RECOMMEND stops).
+Q_PART_RE = re.compile(r"^\s*(PROBLEM|QUESTION|RECOMMEND(?:ATION)?)\s*:", re.I)
+# v3.10 — how much of a long text a confirm dialog shows. Named because
+# every use of it is a place where the owner approves an irreversible
+# write, and R-33 flags these lengths as unnamed magic numbers.
+DIALOG_PREVIEW_CHARS = 400
 
 
 def _is_continuation(line):
@@ -1254,6 +1262,25 @@ def _is_continuation(line):
             or Q_LINE_RE.match(line)):
         return False
     return line[:1] in (" ", "\t") or bool(Q_CONT_RE.match(line))
+
+
+def dialog_preview(text, limit=DIALOG_PREVIEW_CHARS):
+    """`text` shortened for a message box, never silently.
+
+    v3.10 — the confirm dialogs used to slice with a bare `[:400]`, which
+    cut mid-word and said nothing about it. On 'Accept recommendation'
+    that meant the owner could confirm a sentence they had not been able
+    to finish reading; on 'Archive question' and 'Escalate' it meant
+    approving a body of text that was only partly on screen. A preview
+    that admits it is a preview: the cut lands on a word boundary and the
+    remainder is counted, so what the owner approves is never longer than
+    what they were shown."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.-")
+    return "%s... [%d more characters — full text in the question pane]" \
+           % (cut, len(text) - len(cut))
 
 
 def _section_spans(text, opener):
@@ -1363,13 +1390,34 @@ def question_block(text, lineno):
 
 
 def recommend_line(text, lineno):
-    """The RECOMMEND: line of the question block at `lineno`, stripped of
-    its label, or "" when the block has none (legacy one-liners)."""
+    """The RECOMMEND: entry of the question block at `lineno`, stripped of
+    its label, or "" when the block has none (legacy one-liners).
+
+    v3.10 — the entry is its label line PLUS every continuation line that
+    follows it, flattened to one line. This used to return the first
+    physical line only, which was the one place in the app that treated a
+    wrapped RECOMMEND as shorter than it is: `_is_continuation` counts an
+    indented line as part of the block, so question_block, the question
+    pane, the archive and the draft all carried the wrapped text — and
+    then 'Accept recommendation' stored the label line alone as the
+    owner's answer. Since the mandated format is 'RECOMMEND: <the
+    recommended answer, and why>', that silently dropped the 'and why',
+    and the confirm dialog showed the same truncated text, so the loss was
+    invisible. A following line that opens another part (PROBLEM: /
+    QUESTION: / RECOMMEND:) ends the entry, and the first RECOMMEND in a
+    block still wins."""
+    parts, collecting = [], False
     for ln in question_block(text, lineno).splitlines():
         m = re.match(r"\s*RECOMMEND\s*:\s*(.*)$", ln, re.I)
         if m:
-            return m.group(1).strip()
-    return ""
+            if collecting:
+                break               # a second label ends the first entry
+            parts, collecting = [m.group(1).strip()], True
+        elif collecting:
+            if Q_PART_RE.match(ln):
+                break
+            parts.append(ln.strip())
+    return " ".join(p for p in parts if p)
 
 
 def count_owner_answers(text):
@@ -1399,6 +1447,63 @@ def count_owner_answers(text):
     if in_pair and not flagged:
         leftover += 1
     return leftover
+
+
+def owner_status_text(nq, na, noa, nu, nu_owner, validation):
+    """The Owner-pass status line: four counters, then ONE next-step clause.
+
+    `validation` is the content of VALIDATION.md, or None when the file is
+    absent (its third Freeze gate — see freeze_gate_report, so this line
+    and the Freeze button read one source).
+
+    v3.10 — extracted from App.on_owner_refresh so the string the owner
+    reads is reachable from the Tk-free tests, and so its shape is
+    stated once instead of per branch. The shape is the point: every
+    state renders as '<counters> — next: <imperative>', with supporting
+    detail in parentheses and NEVER behind a second em-dash. Two of the
+    six branches used to append one ("next: 'Agent: finish owner pass'
+    — integrates N answered question(s) into the draft"), so the line
+    read as two stacked messages and the trailing count looked like a
+    second instruction. Priority order is unchanged: open questions,
+    then answers awaiting integration (the owner has answered but the
+    plan body does not know yet), then owner actions, then owner-only
+    recon, then plain recon, then a stale VALIDATION.md, then
+    'ready to Freeze'."""
+    if nq:
+        hint = " — next: answer questions, then 'Agent: finish owner pass'"
+    elif na:
+        hint = (" — next: 'Agent: finish owner pass' (integrates %d answered "
+                "question(s) into the draft)" % na)
+    elif noa:
+        hint = (" — next: run/copy the owner actions (right-hand panel) "
+                "or mark them done")
+    elif nu_owner:
+        # the agent is barred from running these, so "tick recon items"
+        # would be advice it must not follow
+        hint = (" — next: run the %d owner-only recon item(s) the agent may "
+                "NOT run (use the Owner-actions panel, or mark the checklist "
+                "line DEFERRED)" % nu_owner)
+    elif nu:
+        hint = " — next: tick recon items"
+    elif not val_is_ready(validation):
+        # LAST, not first: a stale report is only the next step once
+        # nothing the owner can answer, run or tick is outstanding
+        hint = (" — next: click 'Validate draft' (VALIDATION.md not found)"
+                if validation is None else
+                " — next: re-validate (VALIDATION.md is not 'PART-01 READY')")
+    else:
+        hint = " — ready to Freeze"
+    recon = "%d unchecked item(s)" % nu
+    if nu_owner:
+        recon += " (%d owner-only)" % nu_owner
+    return ("%d open question(s), %d answer(s) awaiting integration, "
+            "%d owner action(s), %s%s" % (nq, na, noa, recon, hint))
+
+
+def val_is_ready(validation):
+    """True when VALIDATION.md's content is exactly the 'PART-01 READY'
+    marker Freeze requires. Shared by the status line and the gate."""
+    return validation is not None and validation.strip() == "PART-01 READY"
 
 
 # ----------------------------------------------------------------------------
@@ -1951,6 +2056,59 @@ def _leg_label(n, leg):
     return ("leg %d%s" % (n, leg)) if leg else ("session %d" % n)
 
 
+def map_row_cells(line):
+    """The non-empty cells of one §A session-map row.
+
+    Leading and trailing pipes are table punctuation, not cells: a
+    leading-pipe markdown row ('| 1 | scope | g1 | no |') splits into
+    ['', '1', 'scope', 'g1', 'no', ''], so a parser that keeps the blanks
+    reads the session number as the wrong cell and finds no row at all.
+    Both map parsers go through here (v3.10) for the same reason
+    _section_spans exists: two parsers reading one table must not be able
+    to disagree about where a row starts."""
+    return [c.strip() for c in line.split("|") if c.strip()]
+
+
+def map_row_number(cell):
+    """The session number a §A map row's first cell declares, or "" when
+    the cell is not one.
+
+    '1', '1.', '1)' and '1:' all mean session 1 — the shape tolerance
+    session_row_gates has always had. v3.10 shares it with _is_map_wrap
+    and session_map_rows, which each had their own idea (one demanded a
+    bare digit, the other accepted the dotted forms), so a '| 1. | … |'
+    row could yield gates from one parser and no row from the other."""
+    num = cell.strip().rstrip(".):")
+    return num if num.isdigit() else ""
+
+
+def _is_map_wrap(ln):
+    """True when `ln` continues the §A session-map row above it.
+
+    v3.10 — this used to be only 'nothing but whitespace before the first
+    |', which is ALSO true of every row of a leading-pipe markdown table:
+
+        | # | one-line scope | gates | deploy? |
+        | 1 | Stand up ingest | g1, g2 | no |
+
+    so the header swallowed row 1 and row 1 swallowed row 2: the entire
+    table folded into one line, session_map_rows() returned {}, and Plan
+    health printed 'no session rows in PART-01 §A' for a plan whose
+    PROGRESS.md plainly recorded the session as PASS. Only the shape the
+    template mandates (indented, NO leading pipe) ever worked, so the
+    sharp edge was documented in a test comment instead of closed.
+
+    What settles it: a row's FIRST cell is its session number, and a
+    continuation never opens a session. A session number there means the
+    line is a row, whatever else it looks like."""
+    if not ln.strip().startswith("|"):
+        return False
+    if ln.split("|", 1)[0].strip():
+        return False
+    parts = ln.split("|")
+    return not map_row_number(parts[1] if len(parts) > 1 else "")
+
+
 def fold_map_rows(lines):
     """PART-01 §A session-map rows wrapped across physical lines are
     folded back into single logical rows: a continuation line starts
@@ -1958,15 +2116,68 @@ def fold_map_rows(lines):
     belongs to the previous row's cell — the leading '|' is replaced
     by a space and the rest (including mid-line cell separators such
     as '| g1 | no' on the last wrap) is appended to the previous line.
-    Single-line rows and non-map lines pass through unchanged."""
+    Single-line rows and non-map lines pass through unchanged.
+
+    v3.10 — a line that opens a row never folds, so a leading-pipe
+    markdown table survives intact instead of collapsing into the line
+    above it (_is_map_wrap). The no-leading-pipe shape folds exactly as
+    before."""
     folded = []
     for ln in lines:
-        if (folded and ln.strip().startswith("|")
-                and ln.split("|", 1)[0].strip() == ""):
+        if folded and _is_map_wrap(ln):
             folded[-1] += " " + ln.split("|", 1)[1]
         else:
             folded.append(ln)
     return folded
+
+
+def complete_map_rows(lines):
+    """§A session-map rows whose cells were split by line wrapping.
+
+    fold_map_rows only folds a continuation that BEGINS with '|'. A plan
+    whose scope is long enough to wrap usually does not do that — it
+    indents the continuation and leaves the gates/deploy cells stranded at
+    the end of the last physical line:
+
+        1 | Router request-budget fix: thinkingBudget 0 in
+          callGemini (A1) and cut the default
+          timeoutMs 45 000 -> 20 000 (A6) ... | g1 | no
+
+    No line there begins with '|', so nothing folded. The row's first line
+    then carried 2 cells and was dropped for having fewer than 3, and the
+    last line's first cell was prose ('... | g1 | no' splits to
+    ['redeploy', 'g1', 'no']), so it was dropped for not naming a session.
+    session_map_rows() found NO rows and Plan health reported 'no session
+    rows in PART-01 §A' for a frozen plan with eight sessions and a
+    PROGRESS.md full of records — while the plan itself read perfectly well
+    to a person.
+
+    A continuation is absorbed only into a row that (a) opened with a
+    session number and (b) is still short of its three cells (# / scope /
+    gates), and only up to the next row start. That is deliberately NOT a
+    general 'fold every indented line' rule: all of §B, §C and §E are
+    indented too, and this must leave every one of them untouched."""
+    out = list(fold_map_rows(lines))
+    i = 0
+    while i < len(out):
+        cells = map_row_cells(out[i])
+        if not (cells and map_row_number(cells[0])) or len(cells) >= 3:
+            i += 1                    # not a row, or already complete
+            continue
+        j = i + 1
+        while j < len(out):
+            nxt = out[j].strip()
+            if not nxt or nxt.startswith("#"):
+                break                 # end of the block, not a wrap
+            nxt_cells = map_row_cells(out[j])
+            if nxt_cells and map_row_number(nxt_cells[0]):
+                break                 # the next session opens here
+            out[i] += " " + nxt
+            del out[j]
+            if len(map_row_cells(out[i])) >= 3:
+                break                 # the row is whole again
+        i += 1
+    return out
 
 
 def session_row_gates(plan_text, n):
@@ -1997,11 +2208,11 @@ def session_row_gates(plan_text, n):
                 end = j
                 break
         sec = lines[start:end]
-    sec = fold_map_rows(sec)
+    sec = complete_map_rows(sec)
     want = str(n)
     for line in sec:
-        cells = [c.strip() for c in line.split("|")]
-        if len(cells) >= 3 and cells[0].rstrip(".):") == want:
+        cells = map_row_cells(line)
+        if len(cells) >= 3 and map_row_number(cells[0]) == want:
             ids, _ = parse_gates_field(cells[2])
             if ids:
                 # v3.4.1 — wrapped gates cells: the fold appends a
@@ -2067,10 +2278,16 @@ def session_map_rows(pdir):
     part01 = find_frozen_file(pdir)
     if part01 is None:
         return rows
-    for line in fold_map_rows(
+    for line in complete_map_rows(
             part01.read_text(encoding="utf-8").splitlines()):
-        cells = [c.strip() for c in line.split("|") if c.strip()]
-        if len(cells) >= 3 and cells[0].isdigit():
+        cells = map_row_cells(line)
+        # v3.10 — map_row_number() so this parser accepts '1', '1.', '1)'
+        # and '1:' exactly as session_row_gates does. It used to test
+        # cells[0].isdigit(), so a dotted row yielded gates to one parser
+        # and NO row to the other: Plan health printed 'no session rows in
+        # PART-01 §A' while those sessions' gates sat right in the file.
+        num = map_row_number(cells[0]) if cells else ""
+        if len(cells) >= 3 and num:
             d = cells[3].lower() if len(cells) >= 4 else ""
             deploy = d.startswith(("y", "d")) or "deploy" in d or "supervis" in d
             # v3.6 — opt-in split marker (§C1): split / pre+post /
@@ -2082,7 +2299,7 @@ def session_map_rows(pdir):
                         ("split", "pre+post", "pre-post", "pre/post"))
             if split:
                 deploy = True
-            rows[int(cells[0])] = (cells[1], cells[2], deploy, split)
+            rows[int(num)] = (cells[1], cells[2], deploy, split)
     return rows
 
 
@@ -2125,15 +2342,32 @@ def next_pending_session(pdir, rows=None, records=None):
     'Next session →' prefill say exactly what Status says.
 
     Returns None when the plan is not frozen, else a dict:
-      n        int or None (None = every session recorded)
+      n        int or None (None = every session recorded, or the map
+               could not be read — see 'unreadable')
       leg      '' | 'a' | 'b' — the leg to run next ('' for plain rows)
       label    human wording, identical to the Status 'next:' value
+      unreadable True when the plan IS frozen but §A yielded no session
+               rows at all — never conflated with 'all done', see below
       copyable True when 'Next session →' may prefill + copy: False for
-               the leg-a-not-PASS deploy state (nothing to copy yet) and
-               for n=None (nothing left)."""
+               the leg-a-not-PASS deploy state (nothing to copy yet), for
+               n=None (nothing left) and when the map is unreadable."""
     if find_frozen_file(pdir) is None:
         return None
     rows = session_map_rows(pdir) if rows is None else rows
+    if not rows:
+        # v3.10 — an EMPTY map is not a finished plan. This used to fall
+        # straight through to the 'all sessions recorded' return below, so
+        # ANY §A parse failure turned the plan strip GREEN and told the
+        # owner 'next: all sessions recorded ✓' — nothing left to do —
+        # while Plan health, reading the same frozen file, said 'no
+        # session rows in PART-01 §A'. The two surfaces could not both be
+        # right and the confident green one was the dangerous direction: a
+        # plan with unreadable sessions read as a finished plan. A distinct
+        # state, not a shared n=None, is the only way to keep the parser
+        # failure visible.
+        return {"n": None, "leg": "", "unreadable": True,
+                "label": "session map unreadable — no session rows in §A",
+                "copyable": False}
     prog = pdir / "PROGRESS.md"
     recs = read_progress(prog) if prog.is_file() else (records or [])
     done = {(r["n"], r["leg"]) for r in recs}
@@ -2161,8 +2395,8 @@ def next_pending_session(pdir, rows=None, records=None):
         elif (n, "") not in done:
             return {"n": n, "leg": "", "label": "session %d" % n,
                     "copyable": True}
-    return {"n": None, "leg": "", "label": "all sessions recorded",
-            "copyable": False}
+    return {"n": None, "leg": "", "unreadable": False,
+            "label": "all sessions recorded", "copyable": False}
 
 
 def freeze_gate_report(pdir):
@@ -2311,8 +2545,10 @@ def freeze_gate_report(pdir):
             vbody = val.read_text(encoding="utf-8").strip()
         except OSError:
             vbody = ""
-        _add("validation", "Validation report", vbody == "PART-01 READY",
-             "PART-01 READY" if vbody == "PART-01 READY"
+        # v3.10 — val_is_ready() so this gate and the Owner-pass status
+        # line cannot drift on what "validated" means
+        _add("validation", "Validation report", val_is_ready(vbody),
+             "PART-01 READY" if val_is_ready(vbody)
              else "not 'PART-01 READY' — resolve the findings, re-validate")
     return gates
 
@@ -4848,6 +5084,21 @@ class App:
             self._strip_fg(self.strip_action, "accent-cyan")
             return
         nxt = snap["next"]
+        # v3.10 — the frozen plan's §A yielded no session rows. This is a
+        # PARSE failure, not a finished plan, and it used to share the
+        # n=None branch below: the strip went green and read 'all sessions
+        # recorded ✓' for a plan whose sessions had never been read at
+        # all. Orange, and the action goes to the one surface that says
+        # which file is at fault.
+        if nxt is not None and nxt.get("unreadable"):
+            self.strip_state.configure(
+                text="frozen (%s)" % snap["frozen_name"])
+            self.strip_next.configure(text="next: %s" % nxt["label"])
+            self._strip_fg(self.strip_next, "accent-orange")
+            self.strip_action.configure(text="Plan health →")
+            self._strip_action_kind, self._strip_action_tab = "tab", 1
+            self._strip_fg(self.strip_action, "accent-cyan")
+            return
         if nxt is None or nxt["n"] is None:
             self.strip_state.configure(
                 text="frozen (%s)" % snap["frozen_name"])
@@ -5446,53 +5697,24 @@ class App:
         # v2.6.4 — third Freeze gate surfaced here too: the status line
         # checks VALIDATION.md (missing or != "PART-01 READY") so it can
         # never say "ready to Freeze" while the Freeze button would fail
-        # on a stale validation report (the same third gate
-        # freeze_gate_report reports, so this line and the Freeze button
-        # read one source).
+        # on a stale validation report. v3.10 — the wording moved into
+        # owner_status_text(), which the Tk-free tests cover.
         val = pdir / "VALIDATION.md"
-        if not val.is_file():
-            vnote = " — VALIDATION.md not found — click 'Validate draft' first"
-        elif val.read_text(encoding="utf-8").strip() != "PART-01 READY":
-            vnote = " — VALIDATION.md is not 'PART-01 READY' — re-validate"
-        else:
-            vnote = ""
-        # v2.0 — the status line states the NEXT action; v2.7 — answers
-        # awaiting integration outrank recon ticks: the owner has
-        # answered, but the plan body does not know yet
-        if nq:
-            hint = " — next: answer questions, then 'Agent: finish owner pass'"
-        elif na:
-            hint = (" — next: 'Agent: finish owner pass' — integrates %d "
-                    "answered question(s) into the draft" % na)
-        elif noa:
-            hint = (" — next: run/copy the owner actions (right-hand panel) "
-                    "or mark them done")
-        elif nu_owner:
-            hint = (" — next: %d owner-only recon item(s) — the agent may "
-                    "NOT run those; run them from the Owner-actions panel "
-                    "or mark the checklist line DEFERRED" % nu_owner)
-        elif nu:
-            hint = " — next: tick recon items"
-        elif vnote:
-            hint = vnote
-        else:
-            hint = " — ready to Freeze"
+        validation = val.read_text(encoding="utf-8") if val.is_file() else None
         # v3.9 — stranded escalations are surfaced here too, so the tab
         # itself says "there is content the console is not listing" rather
-        # than relying on the owner opening the Freeze checklist.
+        # than relying on the owner opening the Freeze checklist. This is a
+        # WARNING, not a next step, so it keeps its own ⚠ marker and gap
+        # rather than joining the one next-step clause.
         orphans = unaccounted_escalations(self._oq_text)
+        text = owner_status_text(nq, na, noa, nu, nu_owner, validation)
         if orphans:
-            hint += ("  ⚠ %d escalated question block(s) sit in a section "
+            text += ("  ⚠ %d escalated question block(s) sit in a section "
                      "this tab does not list — see 'What's blocking "
                      "Freeze?'" % len(orphans))
-        recon_txt = "%d unchecked item(s)" % nu
-        if nu_owner:
-            recon_txt += " (%d owner-only)" % nu_owner
-        self.owner_status.configure(
-            text=("%d open question(s), %d answer(s) awaiting integration, "
-                  "%d owner action(s), %s%s"
-                  % (nq, na, noa, recon_txt, hint)))
-        if (nq == 0 and na == 0 and noa == 0 and nu == 0 and not vnote
+        self.owner_status.configure(text=text)
+        if (nq == 0 and na == 0 and noa == 0 and nu == 0
+                and val_is_ready(validation)
                 and (self._oq_file.is_file() or self._rc_file.is_file())):
             self.say("intake", "owner pass: everything resolved — Freeze "
                      "is unblocked.")
@@ -5569,10 +5791,25 @@ class App:
                     "match this action, so ticking it could hit the wrong "
                     "one. Click Refresh and re-select." % len(hits))
                 return False
+        # v3.10.1 audit fix — COMPARE THE PROSE PORTION, not the whole
+        # line. `prose` is the bullet text with the `- [ ] ` marker
+        # stripped, while `lines[target]` still carries that marker, so
+        # `lines[target].strip() != prose.strip()` was True for EVERY
+        # action and Mark Done refused unconditionally with "changed
+        # since Refresh" — Refresh could not clear it because the file was
+        # never stale. Compare the line's prose portion instead: strip the
+        # checkbox/bullet prefix off `lines[target]` and require identity
+        # with the prose Refresh read. Staleness is still caught, because a
+        # rewritten line no longer yields a matching prose portion (and the
+        # unique-hit search above already rejects 0 or >1 candidates).
+        def _prose_portion(line):
+            mm = RECON_ITEM_RE.match(line) or OA_PLAIN_BULLET_RE.match(line)
+            return line[mm.end():].strip() if mm else None
+
         if (not (0 <= ln < len(lines))
                 or not action["prose"]
                 or not (0 <= target < len(lines))
-                or lines[target].strip() != action["prose"].strip()):
+                or _prose_portion(lines[target]) != action["prose"].strip()):
             messagebox.showerror(
                 "Owner actions",
                 "OPEN-QUESTIONS.md changed since Refresh — click Refresh.")
@@ -5850,11 +6087,13 @@ class App:
 
     def on_recommend_accept(self):
         """v2.5 — one-click accept: prefill the answer box with the
-        block's RECOMMEND line + provenance, then run the normal save
+        block's RECOMMEND entry + provenance, then run the normal save
         path — every on_answer_save guard (stale-index, crash-window
         duplicate, draft refusal) applies unchanged. RECOMMEND is
         context only, never an owner answer (PART-01 §G), so this is
-        always an explicit, confirmed owner action."""
+        always an explicit, confirmed owner action. v3.10 — the whole
+        entry, so a RECOMMEND wrapped over several lines is accepted in
+        full instead of only its label line."""
         got = self._owner_paths()
         if got is None: return
         if not self._oq_file or not self._oq_file.is_file():
@@ -5875,7 +6114,7 @@ class App:
             return
         if not messagebox.askyesno("Owner pass",
                 "Accept this recommendation as the answer?\n\n%s"
-                % rec[:400]):
+                % dialog_preview(rec)):
             return
         self.answer.delete("1.0", "end")
         self.answer.insert("1.0", "%s [recommendation accepted %s]"
@@ -5907,7 +6146,7 @@ class App:
         qblock = question_block(qtext, lineno)
         if not messagebox.askyesno("Owner pass",
                 "Archive this whole question (kept in owner-pass.log, "
-                "snapshot .bak)?\n\n%s" % qblock.strip()[:400]):
+                "snapshot .bak)?\n\n%s" % dialog_preview(qblock)):
             return
         self._oq_backup()
         self._oq_archive(pdir, "REMOVED (no answer)", qblock)
@@ -6206,7 +6445,7 @@ class App:
                 "It will be removed from the checklist and added as an "
                 "unchecked owner action, so you can Run / Copy it there and "
                 "Mark it done. Both files are snapshotted first."
-                % line.strip()[:300]):
+                % dialog_preview(line, limit=300)):
             return
         oq = pdir / "OPEN-QUESTIONS.md"
         existed = oq.is_file()

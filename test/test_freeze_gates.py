@@ -37,8 +37,8 @@ _spec.loader.exec_module(pc)
 
 DRAFT = "# PART 01 — demo draft\n\n§A body\n"
 # §A session-map rows in the template's shape (templates/PART-01.md §A:
-# indented, NO leading pipe — a leading '|' would make fold_map_rows
-# treat the row as a wrap of the previous line)
+# indented, NO leading pipe). v3.10 — a leading-pipe markdown table is
+# now EQUALLY valid; see MAP_PIPE_ROWS and the session-map section below.
 FROZEN_ROWS = (
     "# PART 01 — demo | v1.0 frozen 2026-09-26\n\n"
     "    # | one-line scope | gates | deploy?\n"
@@ -50,6 +50,429 @@ FROZEN_ROWS = (
 def write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+# ------------------------------------------ v3.10 §A session-map shapes
+# The defect: fold_map_rows treated every leading-pipe line as a WRAP of
+# the row above it — both have only whitespace before the first '|' — so a
+# markdown table's header swallowed row 1 and row 1 swallowed row 2. The
+# whole table folded into one line, session_map_rows() returned {}, and
+# Plan health printed "no session rows in PART-01 §A" for a plan whose
+# PROGRESS.md recorded the session as PASS. The comment above used to warn
+# that a leading '|' was unsupported; it is supported now.
+
+MAP_PLAN = ("# PART 01 — demo | v1.0 frozen 2026-10-02\n"
+            "\nA. MISSION & SCOPE\n"
+            "   Session map:\n"
+            "{rows}"
+            "\nB. VERIFIED INFRASTRUCTURE FACTS\n"
+            "   x\n")
+TEMPLATE_MAP = ("     # | one-line scope | gates | deploy?\n"
+                "     1 | Implement the parser | g1, g2 | no\n"
+                "     2 | Deploy to production | g7 | split\n")
+PIPE_MAP = ("   | # | one-line scope | gates | deploy? |\n"
+            "   | 1 | Implement the parser | g1, g2 | no |\n"
+            "   | 2 | Deploy to production | g7 | split |\n")
+# two plain rows: a split row renders as legs, so it needs two PROGRESS
+# records per session before the plan counts as fully recorded
+PLAIN_MAP = ("     # | one-line scope | gates | deploy?\n"
+             "     1 | Implement the parser | g1, g2 | no\n"
+             "     2 | Wire the edge functions | g3 | no\n")
+EXPECTED_MAP = {1: ("Implement the parser", "g1, g2", False, False),
+                2: ("Deploy to production", "g7", True, True)}
+
+
+def frozen_with_map(tmp_path, rows):
+    pdir = tmp_path / "plans" / "demo"
+    write(pdir / "PART-01 v1.0.md", MAP_PLAN.format(rows=rows))
+    return pdir
+
+
+@pytest.mark.parametrize("rows", [TEMPLATE_MAP, PIPE_MAP],
+                         ids=["template-shape", "leading-pipe-table"])
+def test_session_map_reads_either_table_shape(tmp_path, rows):
+    assert pc.session_map_rows(frozen_with_map(tmp_path, rows)) == EXPECTED_MAP
+
+
+@pytest.mark.parametrize("rows", [TEMPLATE_MAP, PIPE_MAP],
+                         ids=["template-shape", "leading-pipe-table"])
+def test_row_count_and_gates_parsers_agree(tmp_path, rows):
+    """One table, one answer. session_map_rows() and session_row_gates()
+    reading different cell offsets is how a plan was told 'no session
+    rows' by one parser while the other found the gates."""
+    pdir = frozen_with_map(tmp_path, rows)
+    text = (pdir / "PART-01 v1.0.md").read_text(encoding="utf-8")
+    for n in pc.session_map_rows(pdir):
+        assert pc.session_row_gates(text, n), n
+
+
+def test_pipe_table_row_with_no_deploy_cell(tmp_path):
+    pdir = frozen_with_map(tmp_path, "   | 1 | Implement the parser | g1 |\n")
+    assert pc.session_map_rows(pdir) == {
+        1: ("Implement the parser", "g1", False, False)}
+
+
+def test_session_number_with_trailing_dot_is_a_row(tmp_path):
+    # session_row_gates has always accepted '1.' / '1)' / '1:'; the row
+    # parser tested cells[0].isdigit(), so a dotted row produced gates
+    # from one parser and no row from the other
+    pdir = frozen_with_map(tmp_path, "   | 1. | Implement | g1 | no |\n")
+    assert list(pc.session_map_rows(pdir)) == [1]
+
+
+def test_map_row_cells_drops_table_punctuation():
+    assert pc.map_row_cells("| 1 | do it | g1 | no |") == ["1", "do it",
+                                                           "g1", "no"]
+    assert pc.map_row_cells("  1 | do it | g1 | no") == ["1", "do it",
+                                                         "g1", "no"]
+
+
+# ------------------------- v3.10 a scope cell wrapped by plain indentation
+# The reported bug. fold_map_rows only folds a continuation that BEGINS with
+# '|'. This plan indents its continuations instead, so nothing folded: each
+# row's first line carried 2 cells and was dropped for having fewer than 3,
+# and the stranded '| gN | no' terminator sat on a line whose first cell was
+# prose ('redeploy', 'in scope'). All eight sessions vanished and Plan health
+# reported 'no session rows in PART-01 §A' for a plan whose PROGRESS.md
+# recorded session 1 as PASS.
+WRAPPED_MAP = (
+    "     # | one-line scope | gates | deploy?\n"
+    "     1 | Router request-budget fix: thinkingBudget 0 in\n"
+    "       callGemini (A1) and cut the default\n"
+    "       timeoutMs 45 000 -> 20 000 (A6). CONFIRMED 2026-10-03 |\n"
+    "       g1 | no\n"
+    "     2 | Deploy session, owner-supervised | g8 | yes\n")
+
+
+def test_wrapped_scope_row_is_one_row(tmp_path):
+    rows = pc.session_map_rows(frozen_with_map(tmp_path, WRAPPED_MAP))
+    assert sorted(rows) == [1, 2]
+    assert rows[1][1] == "g1"
+    assert rows[1][2] is False
+    assert rows[1][3] is False
+    # the whole scope, all three physical lines, space-joined (the trailing
+    # '|' opens an empty cell, and empty cells are not cells)
+    assert rows[1][0] == (
+        "Router request-budget fix: thinkingBudget 0 in callGemini (A1) "
+        "and cut the default timeoutMs 45 000 -> 20 000 (A6). "
+        "CONFIRMED 2026-10-03")
+    assert rows[2][2] is True
+
+
+def test_wrapped_scope_row_gates_resolve(tmp_path):
+    pdir = frozen_with_map(tmp_path, WRAPPED_MAP)
+    text = (pdir / "PART-01 v1.0.md").read_text(encoding="utf-8")
+    assert pc.session_row_gates(text, 1) == ["g1"]
+    assert pc.session_row_gates(text, 2) == ["g8"]
+
+
+def test_wrapping_does_not_reach_past_the_row(tmp_path):
+    """A row that never gets its third cell must not swallow the rest of
+    the plan — §B, §C and §E are all indented too. (session_map_rows
+    drops the unfinished row itself: a session row must declare gates.)"""
+    pdir = frozen_with_map(
+        tmp_path,
+        "     1 | a scope with no gates column at all, wrapping\n"
+        "       across several indented lines and never closing\n")
+    out = pc.complete_map_rows(
+        (pdir / "PART-01 v1.0.md").read_text(encoding="utf-8").splitlines())
+    row = next(l for l in out if l.lstrip().startswith("1 |"))
+    assert row.startswith("     1 | a scope with no gates column")
+    assert "across several indented lines" in row, row
+    assert "VERIFIED INFRASTRUCTURE" not in row
+    assert len(row) < 200
+    # and the plan below the map is still there, verbatim
+    assert "B. VERIFIED INFRASTRUCTURE FACTS" in out
+
+
+def test_prose_below_the_map_is_never_absorbed(tmp_path):
+    """The whole plan, checked directly: only continuation lines that belong
+    to an unfinished row may move, and no heading may disappear."""
+    body = ("     # | one-line scope | gates | deploy?\n"
+            "     1 | wrapped scope that keeps going\n"
+            "       and going | g1 | no\n"
+            "B. VERIFIED INFRASTRUCTURE FACTS\n"
+            "   every fact — verified 2026-10-04\n"
+            "   more indented prose that must survive\n"
+            "C. TARGET STRUCTURE\n"
+            "   src/app/api/thing/route.ts\n")
+    pdir = frozen_with_map(tmp_path, body)
+    out = pc.complete_map_rows(
+        (pdir / "PART-01 v1.0.md").read_text(encoding="utf-8").splitlines())
+    joined = "\n".join(out)
+    for must in ("B. VERIFIED INFRASTRUCTURE FACTS", "C. TARGET STRUCTURE",
+                 "every fact — verified 2026-10-04",
+                 "more indented prose that must survive",
+                 "src/app/api/thing/route.ts"):
+        assert must in joined, must
+
+
+def test_blank_line_ends_an_unfinished_row(tmp_path):
+    out = pc.complete_map_rows(
+        ["  1 | scope with no gates", "", "  unrelated | text | here"])
+    assert "unrelated" not in out[0]
+
+
+def test_real_plan_shape_end_to_end(tmp_path):
+    """The exact failure, as reported: 8 wrapped rows, session 1 recorded."""
+    pdir = frozen_with_map(
+        tmp_path,
+        "   Session budget: 8 sessions (7 + deploy).\n"
+        "   Session map (standing gates every session):\n"
+        "     # | one-line scope | gates | deploy?\n"
+        "     1 | fix the router budget, which takes a lot of prose to\n"
+        "       describe across more than one line because it is a big\n"
+        "       change | g1 | no\n"
+        "     1a | OWNER-ONLY, no gate: retained for numbering only\n"
+        "       | g1a: void | no\n"
+        "     2 | deploy, owner-supervised | g8 | yes\n")
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1 | status: PASS | P00 v1.0\n")
+
+    class _App(pc.App):
+        def __init__(self):
+            pass
+        _frozen_file = staticmethod(pc.find_frozen_file)
+        _ip_summary = staticmethod(lambda p: (None, 0, "", ""))
+        _git_dirty = staticmethod(lambda r: None)
+
+    rows = pc.session_map_rows(pdir)
+    assert sorted(rows) == [1, 2], rows
+    assert "1a" not in rows, "a void sub-row authorizes nothing"
+    lines = pc.App._mkhealth(_App(), tmp_path, pdir.name)
+    assert "no session rows" not in lines[0], lines
+    assert "1  OK" in lines[1], lines
+    assert "2 sessions" in lines[0], lines
+
+
+def test_fold_map_rows_still_folds_a_wrapped_gates_cell():
+    assert pc.fold_map_rows(
+        ["  1 | scope | g1, g2, g4,", "    | g5 | no"]
+    ) == ["  1 | scope | g1, g2, g4,  g5 | no"]
+
+
+def test_fold_map_rows_still_folds_a_wrapped_scope_cell():
+    assert pc.fold_map_rows(
+        ["  1 | stand up the ingest across", "    | three regions | g1 | no"]
+    ) == ["  1 | stand up the ingest across  three regions | g1 | no"]
+
+
+def test_fold_map_rows_leaves_a_following_row_alone():
+    assert pc.fold_map_rows(
+        ["  1 | scope | g1, g4,", "    | g5 | no", "  2 | next | g6 | no"]
+    ) == ["  1 | scope | g1, g4,  g5 | no", "  2 | next | g6 | no"]
+
+
+# ------------------------------- v3.10 an unreadable map is not a done plan
+# next_pending_session() looped over sorted(rows) and fell through to the
+# 'all sessions recorded' return when rows was EMPTY — so any §A parse
+# failure made the plan strip GREEN and read 'next: all sessions recorded
+# ✓' for a plan whose sessions had never been read, while Plan health on
+# the same frozen file said 'no session rows in PART-01 §A'. Two surfaces,
+# one file, and the confident one was wrong in the dangerous direction.
+
+NO_ROWS_MAP = "   Session map: to be written by the owner.\n"
+
+
+def _next(pdir):
+    return pc.next_pending_session(pdir)
+
+
+def test_unreadable_map_is_not_reported_as_all_done(tmp_path):
+    pdir = frozen_with_map(tmp_path, NO_ROWS_MAP)
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n")
+    nxt = _next(pdir)
+    assert nxt["unreadable"] is True
+    assert nxt["label"] != "all sessions recorded"
+    assert "no session rows" in nxt["label"]
+    assert nxt["copyable"] is False, "nothing may be prefilled from a map " \
+                                    "the console could not read"
+
+
+def test_a_genuinely_finished_plan_is_still_all_done(tmp_path):
+    pdir = frozen_with_map(tmp_path, PLAIN_MAP)
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n"
+          "SESSION 2 | 2026-10-04 | gates: g3 | status: PASS | P00 v1.0\n")
+    nxt = _next(pdir)
+    assert nxt["unreadable"] is False
+    assert nxt["label"] == "all sessions recorded"
+
+
+def test_every_row_recorded_reads_as_done_not_unreadable(tmp_path):
+    """The distinction that matters: an empty map and a fully-recorded map
+    are different facts and must never produce the same answer."""
+    pdir = frozen_with_map(tmp_path, PLAIN_MAP)
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n"
+          "SESSION 2 | 2026-10-04 | gates: g3 | status: PASS | P00 v1.0\n")
+    assert pc.session_map_rows(pdir) != {}
+    assert _next(pdir)["label"] == "all sessions recorded"
+
+
+def test_a_partly_run_plan_offers_the_next_session(tmp_path):
+    pdir = frozen_with_map(tmp_path, PLAIN_MAP)
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n")
+    nxt = _next(pdir)
+    assert nxt["n"] == 2 and nxt["copyable"] is True
+    assert nxt.get("unreadable") is not True
+
+
+def test_unfrozen_plan_still_has_no_next(tmp_path):
+    pdir = tmp_path / "plans" / "demo"
+    pdir.mkdir(parents=True)
+    assert _next(pdir) is None
+
+
+def test_strip_does_not_go_green_on_an_unreadable_map(tmp_path):
+    """The strip is the surface that misled: accent-green + a tick meant
+    'nothing left to do'."""
+    pdir = frozen_with_map(tmp_path, NO_ROWS_MAP)
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n")
+
+    class _W:
+        def __init__(self):
+            self.out = {}
+
+        def configure(self, **k):
+            self.out.update(k)
+
+        def pack(self, **k):
+            pass
+
+    class _App(pc.App):
+        def __init__(self):
+            self.strip_state, self.strip_next = _W(), _W()
+            self.strip_action, self.strip_slug = _W(), _W()
+            self.colors = []
+            self._strip_fg = lambda w, c: self.colors.append(c)
+            self.repo_path = lambda: tmp_path
+            self.slug_var = type("V", (), {"get": staticmethod(
+                lambda: "demo")})()
+
+        _frozen_file = staticmethod(pc.find_frozen_file)
+        _ip_summary = staticmethod(lambda p: (None, 0, "", ""))
+        _git_dirty = staticmethod(lambda r: None)
+
+    app = _App()
+    pc.App._strip_render(app)
+    assert "all sessions recorded" not in app.strip_next.out["text"]
+    assert app.strip_next.out["text"].startswith("next: session map")
+    assert "accent-green" not in app.colors, app.colors
+    assert app.strip_action.out["text"].startswith("Plan health")
+
+
+def test_health_reports_the_session_that_progress_records(tmp_path):
+    """The reported bug end to end: a plan whose PROGRESS.md says
+    SESSION 1 PASS, but whose §A is a markdown table, was reported as
+    'no session rows in PART-01 §A'."""
+    pdir = frozen_with_map(
+        tmp_path,
+        "   | # | one-line scope | gates | deploy? |\n"
+        "   | 1 | Implement the parser | g1, g2 | no |\n"
+        "   | 2 | Wire the edge functions | g3 | no |\n")
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n")
+
+    class _App(pc.App):
+        def __init__(self):            # no Tk: stub the two GUI reads
+            pass
+        _frozen_file = staticmethod(pc.find_frozen_file)
+        _ip_summary = staticmethod(lambda p: (None, 0, "", ""))
+        _git_dirty = staticmethod(lambda r: None)
+
+    lines = _App()._mkhealth(tmp_path, pdir.name)
+    assert "no session rows" not in lines[0], lines
+    assert "1  OK" in lines[1], lines
+    assert "passed: 1/2" in lines[-2], lines
+
+
+# ------------------------------------------------- owner-pass status line
+READY = "PART-01 READY"
+# (nq, na, noa, nu, nu_owner, validation) -> the next step the label must
+# name. Every row must produce a line whose ONLY em-dash clause is the
+# next step, whatever else is outstanding.
+STATES = [
+    ((3, 0, 1, 4, 0, READY), "answer questions"),
+    ((0, 2, 0, 0, 0, READY), "'Agent: finish owner pass'"),
+    ((0, 0, 1, 0, 0, READY), "owner actions"),
+    ((0, 0, 0, 5, 2, READY), "owner-only recon item"),
+    ((0, 0, 0, 3, 0, READY), "tick recon items"),
+    ((0, 0, 0, 0, 0, "3 findings"), "re-validate"),
+    ((0, 0, 0, 0, 0, None), "'Validate draft'"),
+    ((0, 0, 0, 0, 0, READY), "ready to Freeze"),
+]
+
+
+@pytest.mark.parametrize("state,expected", STATES)
+def test_status_line_names_the_next_step(state, expected):
+    assert expected in pc.owner_status_text(*state)
+
+
+@pytest.mark.parametrize("state,expected", STATES)
+def test_status_line_never_stacks_a_second_clause(state, expected):
+    """v3.10 — the defect: two branches appended a SECOND em-dash clause
+    ("next: 'Agent: finish owner pass' — integrates 2 answered
+    question(s) into the draft"), so the line read as two stacked
+    messages and the trailing count looked like another instruction.
+    Counters first, then exactly one ' — ', then the advice."""
+    text = pc.owner_status_text(*state)
+    assert text.count(" — ") == 1, text
+    counters, _, advice = text.partition(" — ")
+    assert counters.count("—") == 0, counters
+    assert advice.startswith("next: ") or advice == "ready to Freeze", text
+
+
+def test_status_line_counts_are_always_present():
+    text = pc.owner_status_text(1, 2, 3, 4, 2, READY)
+    assert text.startswith("1 open question(s), 2 answer(s) awaiting "
+                           "integration, 3 owner action(s), 4 unchecked "
+                           "item(s) (2 owner-only)")
+
+
+def test_status_line_open_questions_outrank_everything():
+    # a stale report must never become the advice while questions wait
+    assert "answer questions" in pc.owner_status_text(
+        1, 0, 0, 0, 0, None)
+    assert "answer questions" in pc.owner_status_text(
+        1, 0, 0, 0, 0, "stale")
+
+
+def test_status_line_validation_is_the_last_resort():
+    # ...and once nothing else is outstanding it IS the next step, so the
+    # label can never say "ready to Freeze" over a stale report
+    assert "re-validate" in pc.owner_status_text(0, 0, 0, 0, 0, "stale")
+    assert "ready to Freeze" in pc.owner_status_text(0, 0, 0, 0, 0, READY)
+
+
+def test_val_is_ready_needs_the_exact_marker():
+    assert pc.val_is_ready("PART-01 READY") is True
+    assert pc.val_is_ready("  PART-01 READY\n") is True
+    assert pc.val_is_ready("PART-01 READY\n2 findings") is False
+    assert pc.val_is_ready(None) is False
+    assert pc.val_is_ready("") is False
+
+
+def test_gate_and_status_line_agree_on_validated(tmp_path):
+    """One rule for 'validated', so the label cannot say ready to Freeze
+    while the Freeze button would refuse."""
+    pdir = tmp_path / "plans" / "v"
+    write(pdir / "PART-01.draft.md", DRAFT)
+    write(pdir / "RECON-CHECKLIST.md", "- [x] done\n")
+    for body, ready in ((READY, True), ("findings\n", False), (None, False)):
+        target = pdir / "VALIDATION.md"
+        if body is None:
+            target.unlink(missing_ok=True)
+        else:
+            write(target, body)
+        gate = {g["id"]: g for g in pc.freeze_gate_report(pdir)}
+        assert gate["validation"]["ok"] is ready, body
+        label = pc.owner_status_text(0, 0, 0, 0, 0,
+                                     None if body is None else body)
+        assert ("ready to Freeze" in label) is ready, body
 
 
 # ---------------------------------------------------------- freeze gates

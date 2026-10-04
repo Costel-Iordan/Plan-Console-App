@@ -92,7 +92,84 @@ def test_recommend_line_wrapped_continuation():
             "   QUESTION: do we migrate?\n"
             "   RECOMMEND: yes, in one pass\n"
             "     because the schema is small\n")
+    # v3.10 — the wrapped line is part of the entry. This used to assert
+    # the label line alone, which is how 'Accept recommendation' came to
+    # store a truncated answer: _is_continuation counts the indented line
+    # as part of the block, so every other consumer carried it and only
+    # recommend_line dropped it.
+    assert pc.recommend_line(text, 0) == \
+        "yes, in one pass because the schema is small"
+
+
+def test_recommend_line_keeps_every_continuation_line():
+    text = ("1. PROBLEM: the gap\n"
+            "   QUESTION: do we migrate?\n"
+            "   RECOMMEND: yes, in two passes\n"
+            "     because the schema is small\n"
+            "     and the cutover stays reversible\n"
+            "\n"
+            "2. PROBLEM: the next gap\n"
+            "   QUESTION: and after that?\n"
+            "   RECOMMEND: ship it\n")
+    assert pc.recommend_line(text, 0) == (
+        "yes, in two passes because the schema is small "
+        "and the cutover stays reversible")
+
+
+def test_recommend_line_stops_at_the_next_part():
+    # a labelled line opens a new part, so it must not be swallowed as
+    # continuation prose of the RECOMMEND above it
+    text = ("1. PROBLEM: the gap\n"
+            "   QUESTION: do we migrate?\n"
+            "   RECOMMEND: yes, in one pass\n"
+            "   QUESTION: and who signs it off?\n")
     assert pc.recommend_line(text, 0) == "yes, in one pass"
+
+
+def test_recommend_line_first_entry_wins():
+    text = ("1. PROBLEM: the gap\n"
+            "   QUESTION: do we migrate?\n"
+            "   RECOMMEND: yes, in one pass\n"
+            "   RECOMMEND: no, in two\n")
+    assert pc.recommend_line(text, 0) == "yes, in one pass"
+
+
+def test_recommend_line_empty_label_is_still_absent():
+    # nothing usable after the label -> no recommendation, so the button
+    # reports 'no RECOMMEND line' instead of accepting an empty answer
+    text = "1. PROBLEM: the gap\n   RECOMMEND:\n"
+    assert pc.recommend_line(text, 0) == ""
+
+
+# --------------------------------------------------------- dialog_preview
+def test_dialog_preview_short_text_untouched():
+    assert pc.dialog_preview("  yes, in one pass  ") == "yes, in one pass"
+
+
+def test_dialog_preview_never_silent():
+    # the defect: a bare [:400] cut mid-word with no indication that
+    # anything was dropped, on a dialog the owner confirms an
+    # irreversible write from
+    long = "word " * 200
+    out = pc.dialog_preview(long)
+    assert len(out) < len(long)
+    assert "more characters" in out
+    kept = out.split("... [")[0]
+    assert kept.split() == long.split()[:len(kept.split())]   # no partial word
+
+
+def test_dialog_preview_count_is_the_real_remainder():
+    text = "a" * 380 + " " + "b" * 400
+    out = pc.dialog_preview(text)
+    kept = out.split("... [")[0]
+    assert int(out.split("[")[1].split(" more")[0]) == len(text) - len(kept)
+
+
+def test_dialog_preview_custom_limit():
+    text = "x" * 100 + " " + "y" * 100
+    out = pc.dialog_preview(text, limit=50)
+    assert out.startswith("x" * 50)
+    assert "more characters" in out
 
 
 # ------------------------------------------------------- parse_gates_field
