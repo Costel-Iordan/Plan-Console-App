@@ -9,7 +9,7 @@
 |   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝          |
 |_______________________________________________|
 
-PLAN CONSOLE 3.10 — USER GUIDE
+PLAN CONSOLE 3.12 — USER GUIDE
 Paste-to-plan intake + session lifecycle manager
 
 Copyright © Costel Iordan (costel.iordan@gmail.com)
@@ -185,7 +185,7 @@ Python from python.org (Windows/macOS) or your package manager
 3.1 The splash screen
 ---------------------
 At launch a small borderless splash window appears for a moment,
-showing the app name (Plan Console), the version (3.10), the tagline
+showing the app name (Plan Console), the version (3.12), the tagline
 ("Paste-to-plan intake + session lifecycle manager"), the copyright
 line, and the Apache 2.0 licensing note. It disappears by itself when
 the main window is ready. If anything goes wrong with the splash, the
@@ -227,7 +227,7 @@ touched by this.
 
 3.3 Window tour (text layout map)
 ---------------------------------
-The window title reads "Plan Console 3.10". The layout, top to
+The window title reads "Plan Console 3.12". The layout, top to
 bottom:
 
   SETUP BAR (collapsible — see "Setup ▸/▾" below)
@@ -524,6 +524,25 @@ click Proceed:
 - audit — an audit report; the agent also writes TRIAGE.md sorting
   every finding into fix-now / fix-later / accept.
 
+Instead of pasting, click "Load from file…" beside the box to
+fill it straight from a markdown (or text) file — the usual
+case for a whole audit report. The loaded file fills this
+session's box only; it is not saved to settings. The binding
+happens when you click Proceed: the console writes
+plans/<slug>/SOURCE.md and the box is linked to THAT file
+(remembered in plan-console.json as "intake_file"). On the
+next launch the SOURCE.md content is reloaded into the box —
+without the console's own header, so clicking Proceed again
+never wraps it twice — and only if the file still exists;
+otherwise the box starts empty.
+
+Load is refused (with an error naming the two ways out) when
+the slug is already used in this repo: either the plan exists
+(Proceed already ran — continue it via the Owner pass and
+Sessions tabs) or it is frozen (re-intake is blocked
+entirely). In both cases, type a slug that has not been used
+before in this repo to intake a new report.
+
 Your text is saved as plans/<slug>/SOURCE.md (permanent record).
 The draft scaffolding then runs: with a key, the console calls the
 model itself; without one, a popup gives you a ready-made
@@ -795,6 +814,7 @@ start.
 | Theme                         | top        | Light / Dark / Follow OS                                       | no             |
 | How to use without a key (guide) » | top   | Opens no-api-key-guide.html                                    | no             |
 | Open sample project...        | Intake     | Copies samples/demo-project/ to a folder of your choice        | no             |
+| Load from file…            | Intake     | Fills the paste box from a markdown/text file (this session only) | no             |
 | Proceed                       | Intake     | Saves your text, scaffolds the plan (+recon+validate if ticked)| optional       |
 | Freeze                        | Intake     | Locks the draft into PART-01 v1.0.md after all gates pass      | no             |
 | Run recon                     | Intake     | Hands the recon checklist to the agent                         | optional       |
@@ -1068,7 +1088,7 @@ keys restores their defaults on the next save.
 
 13. LICENSE & CREDITS
 =====================
-Plan Console 3.10
+Plan Console 3.12
 Paste-to-plan intake + session lifecycle manager
 Copyright © Costel Iordan (costel.iordan@gmail.com)
 

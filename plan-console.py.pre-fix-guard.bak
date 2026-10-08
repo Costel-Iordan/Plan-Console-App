@@ -327,48 +327,6 @@ v3.9 — audit batch: nothing that reaches the owner may be INVISIBLE.
     hint, the no-key hint) still had fixed wraplengths and clipped on a
     narrow window, next to the two that had already been fixed.
   * APP_VERSION reported 1.2.0 while the code was v3.8/v3.9.
-v3.11 — declared CHECKS (a gate the owner cannot run is a wish):
-  * A '## Checks' block in the FROZEN plan makes the standing
-    gates first-class: one "ID: `command`" bullet each, the ID
-    required so a failure names the gate instead of quoting a
-    command line. The console runs them on the owner's click
-    (Sessions → Run checks), bounds every command with a
-    timeout, and composes a failure into a one-click
-    instruction for the agent. A malformed check is reported
-    INVALID and never runs; a timeout or crash reads as FAIL,
-    never PASS. The console only ever WRITES the result
-    (CHECKS.last.md and the HEALTH.md audit line) — it never
-    ticks a recon item and never claims a gate passed.
-v3.12 — load-from-file on the Intake tab, bound to SOURCE.md:
-  * "Load from file…" beside the paste box opens a markdown
-    (or any) file and fills the intake box with its content —
-    no more copy-paste for a whole audit, plan or brainstorm
-    report. The loaded file is a SESSION-ONLY link: it is
-    never written to plan-console.json.
-  * The binding happens at Proceed: the moment SOURCE.md is
-    written, the pane is linked to plans/<slug>/SOURCE.md
-    (cfg "intake_file"), not to the file it was loaded from.
-  * On launch, that SOURCE.md is reloaded into the pane —
-    unwrapped (source_body strips the console's own
-    header/footer, so re-Proceeding never double-wraps) —
-    and only if it exists; otherwise the pane starts empty.
-    A missing or unreadable file just leaves the box empty —
-    restoring must never crash the launch.
-  * Load refuses a slug whose plans/<slug>/SOURCE.md
-    already exists in the repo (the top-bar folder):
-    Proceed already ran for it and the pane is bound to
-    that file. A FROZEN slug is refused first, with its
-    own message — re-intake is blocked entirely, the
-    same ban on_proceed enforces. Both errors name the
-    two ways out — continue the existing plan, or type
-    a slug that has not been used before in the repo.
-  * The load refusals are THEMED windows
-    (error_dialog): a native messagebox is OS-drawn
-    and cannot carry the palette, so the frozen /
-    already-proceeded / unreadable-file errors get
-    a themed window — red ✗ accent, wrapped text,
-    OK button. The rest of the app's errors keep
-    the native box until the rollout.
 
 Works with ANY coding agent (e.g. Zoo Code in VS Codium):
   - Intake scaffolding runs via the OpenRouter API if you tick
@@ -444,7 +402,7 @@ APP_NAME = "Plan Console"
 # the About box both read it, so the app reported a version its own
 # behavior no longer matched — which makes any bug report ("does 1.2.0
 # have this?") unanswerable. It now tracks the feature version.
-APP_VERSION = "3.12"              # public release
+APP_VERSION = "3.10"              # public release
 COPYRIGHT_HOLDER = "Costel Iordan"
 COPYRIGHT_EMAIL = "costel.iordan@gmail.com"
 COPYRIGHT_LINE = f"Copyright © {COPYRIGHT_HOLDER} ({COPYRIGHT_EMAIL})"
@@ -1284,14 +1242,6 @@ def count_open_recon_owner_only(text):
 # continuation lines of a v2.1 question block: indented, or explicitly
 # labelled QUESTION:/RECOMMEND:/RECOMMENDATION:
 Q_CONT_RE = re.compile(r"^\s*(QUESTION|RECOMMEND(?:ATION)?)\s*:", re.I)
-# v3.10 — every label that opens a part OF a question block. A continuation
-# line carrying one of these starts a new part, so it ends the previous one
-# (used by recommend_line to know where a wrapped RECOMMEND stops).
-Q_PART_RE = re.compile(r"^\s*(PROBLEM|QUESTION|RECOMMEND(?:ATION)?)\s*:", re.I)
-# v3.10 — how much of a long text a confirm dialog shows. Named because
-# every use of it is a place where the owner approves an irreversible
-# write, and R-33 flags these lengths as unnamed magic numbers.
-DIALOG_PREVIEW_CHARS = 400
 
 
 def _is_continuation(line):
@@ -1304,25 +1254,6 @@ def _is_continuation(line):
             or Q_LINE_RE.match(line)):
         return False
     return line[:1] in (" ", "\t") or bool(Q_CONT_RE.match(line))
-
-
-def dialog_preview(text, limit=DIALOG_PREVIEW_CHARS):
-    """`text` shortened for a message box, never silently.
-
-    v3.10 — the confirm dialogs used to slice with a bare `[:400]`, which
-    cut mid-word and said nothing about it. On 'Accept recommendation'
-    that meant the owner could confirm a sentence they had not been able
-    to finish reading; on 'Archive question' and 'Escalate' it meant
-    approving a body of text that was only partly on screen. A preview
-    that admits it is a preview: the cut lands on a word boundary and the
-    remainder is counted, so what the owner approves is never longer than
-    what they were shown."""
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.-")
-    return "%s... [%d more characters — full text in the question pane]" \
-           % (cut, len(text) - len(cut))
 
 
 def _section_spans(text, opener):
@@ -1432,34 +1363,13 @@ def question_block(text, lineno):
 
 
 def recommend_line(text, lineno):
-    """The RECOMMEND: entry of the question block at `lineno`, stripped of
-    its label, or "" when the block has none (legacy one-liners).
-
-    v3.10 — the entry is its label line PLUS every continuation line that
-    follows it, flattened to one line. This used to return the first
-    physical line only, which was the one place in the app that treated a
-    wrapped RECOMMEND as shorter than it is: `_is_continuation` counts an
-    indented line as part of the block, so question_block, the question
-    pane, the archive and the draft all carried the wrapped text — and
-    then 'Accept recommendation' stored the label line alone as the
-    owner's answer. Since the mandated format is 'RECOMMEND: <the
-    recommended answer, and why>', that silently dropped the 'and why',
-    and the confirm dialog showed the same truncated text, so the loss was
-    invisible. A following line that opens another part (PROBLEM: /
-    QUESTION: / RECOMMEND:) ends the entry, and the first RECOMMEND in a
-    block still wins."""
-    parts, collecting = [], False
+    """The RECOMMEND: line of the question block at `lineno`, stripped of
+    its label, or "" when the block has none (legacy one-liners)."""
     for ln in question_block(text, lineno).splitlines():
         m = re.match(r"\s*RECOMMEND\s*:\s*(.*)$", ln, re.I)
         if m:
-            if collecting:
-                break               # a second label ends the first entry
-            parts, collecting = [m.group(1).strip()], True
-        elif collecting:
-            if Q_PART_RE.match(ln):
-                break
-            parts.append(ln.strip())
-    return " ".join(p for p in parts if p)
+            return m.group(1).strip()
+    return ""
 
 
 def count_owner_answers(text):
@@ -1489,63 +1399,6 @@ def count_owner_answers(text):
     if in_pair and not flagged:
         leftover += 1
     return leftover
-
-
-def owner_status_text(nq, na, noa, nu, nu_owner, validation):
-    """The Owner-pass status line: four counters, then ONE next-step clause.
-
-    `validation` is the content of VALIDATION.md, or None when the file is
-    absent (its third Freeze gate — see freeze_gate_report, so this line
-    and the Freeze button read one source).
-
-    v3.10 — extracted from App.on_owner_refresh so the string the owner
-    reads is reachable from the Tk-free tests, and so its shape is
-    stated once instead of per branch. The shape is the point: every
-    state renders as '<counters> — next: <imperative>', with supporting
-    detail in parentheses and NEVER behind a second em-dash. Two of the
-    six branches used to append one ("next: 'Agent: finish owner pass'
-    — integrates N answered question(s) into the draft"), so the line
-    read as two stacked messages and the trailing count looked like a
-    second instruction. Priority order is unchanged: open questions,
-    then answers awaiting integration (the owner has answered but the
-    plan body does not know yet), then owner actions, then owner-only
-    recon, then plain recon, then a stale VALIDATION.md, then
-    'ready to Freeze'."""
-    if nq:
-        hint = " — next: answer questions, then 'Agent: finish owner pass'"
-    elif na:
-        hint = (" — next: 'Agent: finish owner pass' (integrates %d answered "
-                "question(s) into the draft)" % na)
-    elif noa:
-        hint = (" — next: run/copy the owner actions (right-hand panel) "
-                "or mark them done")
-    elif nu_owner:
-        # the agent is barred from running these, so "tick recon items"
-        # would be advice it must not follow
-        hint = (" — next: run the %d owner-only recon item(s) the agent may "
-                "NOT run (use the Owner-actions panel, or mark the checklist "
-                "line DEFERRED)" % nu_owner)
-    elif nu:
-        hint = " — next: tick recon items"
-    elif not val_is_ready(validation):
-        # LAST, not first: a stale report is only the next step once
-        # nothing the owner can answer, run or tick is outstanding
-        hint = (" — next: click 'Validate draft' (VALIDATION.md not found)"
-                if validation is None else
-                " — next: re-validate (VALIDATION.md is not 'PART-01 READY')")
-    else:
-        hint = " — ready to Freeze"
-    recon = "%d unchecked item(s)" % nu
-    if nu_owner:
-        recon += " (%d owner-only)" % nu_owner
-    return ("%d open question(s), %d answer(s) awaiting integration, "
-            "%d owner action(s), %s%s" % (nq, na, noa, recon, hint))
-
-
-def val_is_ready(validation):
-    """True when VALIDATION.md's content is exactly the 'PART-01 READY'
-    marker Freeze requires. Shared by the status line and the gate."""
-    return validation is not None and validation.strip() == "PART-01 READY"
 
 
 # ----------------------------------------------------------------------------
@@ -1691,259 +1544,6 @@ def count_open_owner_actions(text):
     number the Freeze gate and the Owner-pass tab report, matching the
     validate-plan check."""
     return sum(1 for a in parse_owner_actions(text) if not a["checked"])
-
-
-# v3.11 — declared CHECKS. A gate the owner cannot run is a wish: the
-# agent asserts 'status: PASS' in PROGRESS.md and the console never
-# checks. When a lint or typecheck failure surfaced, the only route was
-# for the owner to run the tool, read the output and copy it into the
-# agent by hand. A '## Checks' block in the FROZEN plan makes the same
-# commands first-class: the console runs them, shows the output, and
-# composes the failure into an instruction the owner sends with one
-# click.
-CHECKS_HEADING_RE = re.compile(r"^#{2,}\s*checks\b", re.I)
-# `LINT: \`npm run lint\`` — the id is what Plan health and the log name,
-# so a failure says WHICH gate broke instead of quoting a command line.
-CHECKS_ID_RE = re.compile(r"^\s*[-*+]\s*([A-Za-z][A-Za-z0-9_.-]*)\s*:\s*(.*)$")
-# a bullet with no id at all: malformed, and named as such rather than
-# skipped — a check that silently never runs is the failure mode this
-# whole feature exists to remove
-CHECKS_PLAIN_BULLET_RE = re.compile(r"^\s*[-*+]\s+\S")
-
-
-def parse_checks(text):
-    """[{lineno, id, command, expect, error}] from a '## Checks' block.
-
-    The block lives in the FROZEN plan, beside the session map it gates:
-    a mutable sidecar could drift from the contract it is meant to
-    enforce, and the session map is already read from the frozen file.
-
-    Format — one bullet per check, mirroring the owner-action convention
-    the console already parses:
-
-        ## Checks
-        - LINT: `npm run lint`
-        - TYPES: `npm run typecheck`
-        - DENO-LINT: `npm run lint:deno`
-
-    The id is required. `expect:` is accepted but only 'exit 0' is
-    implemented (every gate this replaces — eslint, tsc --noEmit, deno
-    check/lint — reports findings through its exit code), and any other
-    value comes back with `error` set rather than being silently treated
-    as a pass. A bullet that is not recognised AT ALL comes back with
-    `error` too, so a malformed block surfaces as a named failure the
-    owner can see instead of a check that quietly never runs.
-
-    Code fences never contribute, and the region is located by
-    _section_spans() so this parser and parse_owner_actions() cannot
-    disagree about where a section ends."""
-    out = []
-    lines = text.splitlines()
-    spans = _section_spans(text, CHECKS_HEADING_RE)
-    if not spans:
-        return out
-    cur, fence = None, False
-    for i, line in enumerate(lines):
-        if not _in_spans(i, spans):
-            if cur is not None:
-                out.append(cur)
-                cur = None
-            continue
-        if line.strip().startswith("```"):
-            fence = not fence
-            continue
-        if fence:
-            continue
-        m = CHECKS_ID_RE.match(line)
-        if m:
-            if cur is not None:
-                out.append(cur)
-            body = m.group(2).strip()
-            cm = OA_CMD_RE.search(body)
-            em = OA_EXPECT_RE.search(body)
-            cur = {"lineno": i, "id": m.group(1), "command":
-                   cm.group(1).strip() if cm else None,
-                   "expect": em.group(1).strip() if em else None,
-                   "error": None}
-        elif CHECKS_PLAIN_BULLET_RE.match(line):
-            if cur is not None:
-                out.append(cur)
-            body = line.strip()
-            cm = OA_CMD_RE.search(body)
-            cur = {"lineno": i, "id": None,
-                   "command": cm.group(1).strip() if cm else None,
-                   "expect": None,
-                   "error": "no id — a check must be written 'ID: `command`'"}
-        elif cur is not None and line.startswith((" ", "\t")):
-            s = line.strip()
-            if cur["command"] is None:
-                cm = OA_CMD_RE.search(s)
-                if cm:
-                    cur["command"] = cm.group(1).strip()
-            if cur["expect"] is None:
-                em = OA_EXPECT_RE.search(s)
-                if em:
-                    cur["expect"] = em.group(1).strip()
-        elif cur is not None and line.strip():
-            out.append(cur)           # flush-left prose ends the bullet
-            cur = None
-    if cur is not None:
-        out.append(cur)
-    for c in out:
-        if c["error"]:
-            continue
-        if not c["command"]:
-            c["error"] = "no command — put it in backticks"
-        elif c["expect"] and c["expect"].strip().lower() != "exit 0":
-            c["error"] = ("unsupported expect: %r — only 'exit 0' is "
-                          "implemented" % c["expect"])
-    return out
-
-
-# A declared check is the ONE place the console runs a command the plan
-# chose rather than the owner typing it. It is bounded three ways:
-#   - it never runs on refresh, only from the button, behind a consent
-#     dialog that lists every command verbatim;
-#   - every command is bounded by a timeout, so a watch-mode or
-#     interactive command cannot wedge the app;
-#   - the console only ever WRITES the result (CHECKS.last.md and the
-#     HEALTH.md audit line). It never writes source, never ticks a recon
-#     item and never claims a gate PASSED — a green tick the agent never
-#     earned is the forgery the intake contract bans, and this feature
-#     deliberately does not reintroduce it.
-CHECKS_LAST_FILE = "CHECKS.last.md"   # console-owned; the agent never edits
-CHECK_DEFAULT_TIMEOUT = 300
-CHECK_OUTPUT_LINES = 40          # per check, kept for the agent instruction
-CHECK_MARKS = {"True": "✓ PASS", "False": "✖ FAIL", "None": "⚠ INVALID"}
-CHECKS_RESULT_RE = re.compile(r"^-\s+(?P<id>[^\s:]+):\s*(?P<ok>PASS|FAIL|"
-                              r"INVALID)\s*(?:\(exit\s+(?P<code>-?\d+)\))?",
-                              re.I)
-
-
-def render_check_results(results):
-    """One line per check, shared by the log, the HEALTH.md audit block
-    and Plan health so the three can never word the same run differently.
-
-    INVALID is kept visually distinct from FAIL on purpose. 'The block is
-    malformed and this never ran' and 'the tool ran and found problems'
-    are different facts, and collapsing them would let an unrunnable gate
-    read as a red one — or worse, as a green one."""
-    out = []
-    for r in results:
-        mark = CHECK_MARKS[str(r["ok"])]
-        if r["error"]:
-            out.append("  %-14s %-10s %s" % (r["id"] or "(no id)", mark,
-                                             r["error"]))
-        else:
-            out.append("  %-14s %-10s %s (exit %s)"
-                       % (r["id"] or "(no id)", mark, r["command"],
-                          r["code"]))
-    npass = sum(1 for r in results if r["ok"] is True)
-    nfail = sum(1 for r in results if r["ok"] is False)
-    nbad = sum(1 for r in results if r["ok"] is None)
-    out.append("checks: %d passed, %d failed, %d not run"
-               % (npass, nfail, nbad))
-    return "\n".join(out)
-
-
-def declared_checks(pdir):
-    """The checks the FROZEN plan declares, or [] when the plan is not
-    frozen or declares none. Reads the frozen file, so the enforced set is
-    the contract the owner approved — never the mutable draft."""
-    part01 = find_frozen_file(pdir)
-    if part01 is None:
-        return []
-    return parse_checks(part01.read_text(encoding="utf-8"))
-
-
-def last_check_results(pdir):
-    """{id: 'PASS'|'FAIL'|'INVALID'} from the last console run, or {}.
-    Plan health reports what the LAST run found, never a guess: with no
-    record it says the checks are unrun rather than implying green."""
-    f = Path(pdir) / CHECKS_LAST_FILE
-    if not f.is_file():
-        return {}
-    got = {}
-    for line in f.read_text(encoding="utf-8").splitlines():
-        m = CHECKS_RESULT_RE.match(line.strip())
-        if m:
-            got[m.group("id")] = m.group("ok").upper()
-    return got
-
-
-def write_check_results(pdir, slug, results):
-    """Persist the last run to CHECKS.last.md. Console-owned, overwritten
-    each run (the full history lives in HEALTH.md, which is append-only).
-    Returns None, or the error if the write failed — the caller must not
-    claim a record exists when it does not."""
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    body = ["# CHECKS — %s | last console run (console-written; the agent "
-            "never edits)" % slug, "", "Run: %s" % stamp, ""]
-    for r in results:
-        if r["error"]:
-            mark, note = "INVALID", r["error"]
-        elif r["ok"]:
-            mark, note = "PASS", "exit 0"
-        else:
-            mark, note = "FAIL", "exit %s" % r["code"]
-        body.append("- %s: %s (%s)" % (r["id"] or "(no id)", mark, note))
-    try:
-        atomic_write_text(Path(pdir) / CHECKS_LAST_FILE,
-                          "\n".join(body) + "\n")
-        return None
-    except Exception as exc:
-        traceback.print_exc()
-        return str(exc)
-
-
-def run_checks(repo, checks, timeout=CHECK_DEFAULT_TIMEOUT, runner=None):
-    """[{id, command, ok, code, output, error}] — one entry per declared
-    check, in declaration order.
-
-    `runner` is the subprocess seam (tests pass a stub; production passes
-    None and gets subprocess.run). A check whose `error` is set is NOT
-    executed — it comes back with ok=None, which is deliberately neither
-    True nor False: 'the block is malformed' and 'the tool failed' must
-    never render the same way.
-
-    Output is trimmed to CHECK_OUTPUT_LINES from the END: a lint failure
-    lists its findings at the bottom, and the tail is what the agent
-    needs. The full text still reaches the instruction file."""
-    if runner is None:
-        def runner(cmd, **kw):
-            return subprocess.run(cmd, **kw)
-    out = []
-    for c in checks:
-        row = {"id": c.get("id"), "command": c.get("command"),
-               "ok": None, "code": None, "output": "", "error": c.get("error")}
-        if row["error"] or not row["command"]:
-            out.append(row)
-            continue
-        try:
-            r = runner([powershell_exe(), "-NoProfile", "-Command",
-                        row["command"]],
-                       cwd=str(repo), capture_output=True, text=True,
-                       timeout=timeout)
-            row["code"] = r.returncode
-            combined = "\n".join(x for x in ((r.stdout or "").strip(),
-                                             (r.stderr or "").strip()) if x)
-            tail = combined.splitlines()
-            if len(tail) > CHECK_OUTPUT_LINES:
-                tail = (["... (%d earlier lines omitted)"
-                         % (len(tail) - CHECK_OUTPUT_LINES)]
-                        + tail[-CHECK_OUTPUT_LINES:])
-            row["output"] = "\n".join(tail)
-            row["ok"] = r.returncode == 0
-        except subprocess.TimeoutExpired:
-            row["ok"] = False
-            row["error"] = "timed out after %ds — a gate must terminate" \
-                           % timeout
-        except Exception as exc:
-            # R-10 — a check that could not run must never read as a pass
-            row["ok"] = False
-            row["error"] = "could not run: %s" % exc
-        out.append(row)
-    return out
 
 
 def unaccounted_escalations(text):
@@ -2351,59 +1951,6 @@ def _leg_label(n, leg):
     return ("leg %d%s" % (n, leg)) if leg else ("session %d" % n)
 
 
-def map_row_cells(line):
-    """The non-empty cells of one §A session-map row.
-
-    Leading and trailing pipes are table punctuation, not cells: a
-    leading-pipe markdown row ('| 1 | scope | g1 | no |') splits into
-    ['', '1', 'scope', 'g1', 'no', ''], so a parser that keeps the blanks
-    reads the session number as the wrong cell and finds no row at all.
-    Both map parsers go through here (v3.10) for the same reason
-    _section_spans exists: two parsers reading one table must not be able
-    to disagree about where a row starts."""
-    return [c.strip() for c in line.split("|") if c.strip()]
-
-
-def map_row_number(cell):
-    """The session number a §A map row's first cell declares, or "" when
-    the cell is not one.
-
-    '1', '1.', '1)' and '1:' all mean session 1 — the shape tolerance
-    session_row_gates has always had. v3.10 shares it with _is_map_wrap
-    and session_map_rows, which each had their own idea (one demanded a
-    bare digit, the other accepted the dotted forms), so a '| 1. | … |'
-    row could yield gates from one parser and no row from the other."""
-    num = cell.strip().rstrip(".):")
-    return num if num.isdigit() else ""
-
-
-def _is_map_wrap(ln):
-    """True when `ln` continues the §A session-map row above it.
-
-    v3.10 — this used to be only 'nothing but whitespace before the first
-    |', which is ALSO true of every row of a leading-pipe markdown table:
-
-        | # | one-line scope | gates | deploy? |
-        | 1 | Stand up ingest | g1, g2 | no |
-
-    so the header swallowed row 1 and row 1 swallowed row 2: the entire
-    table folded into one line, session_map_rows() returned {}, and Plan
-    health printed 'no session rows in PART-01 §A' for a plan whose
-    PROGRESS.md plainly recorded the session as PASS. Only the shape the
-    template mandates (indented, NO leading pipe) ever worked, so the
-    sharp edge was documented in a test comment instead of closed.
-
-    What settles it: a row's FIRST cell is its session number, and a
-    continuation never opens a session. A session number there means the
-    line is a row, whatever else it looks like."""
-    if not ln.strip().startswith("|"):
-        return False
-    if ln.split("|", 1)[0].strip():
-        return False
-    parts = ln.split("|")
-    return not map_row_number(parts[1] if len(parts) > 1 else "")
-
-
 def fold_map_rows(lines):
     """PART-01 §A session-map rows wrapped across physical lines are
     folded back into single logical rows: a continuation line starts
@@ -2411,68 +1958,15 @@ def fold_map_rows(lines):
     belongs to the previous row's cell — the leading '|' is replaced
     by a space and the rest (including mid-line cell separators such
     as '| g1 | no' on the last wrap) is appended to the previous line.
-    Single-line rows and non-map lines pass through unchanged.
-
-    v3.10 — a line that opens a row never folds, so a leading-pipe
-    markdown table survives intact instead of collapsing into the line
-    above it (_is_map_wrap). The no-leading-pipe shape folds exactly as
-    before."""
+    Single-line rows and non-map lines pass through unchanged."""
     folded = []
     for ln in lines:
-        if folded and _is_map_wrap(ln):
+        if (folded and ln.strip().startswith("|")
+                and ln.split("|", 1)[0].strip() == ""):
             folded[-1] += " " + ln.split("|", 1)[1]
         else:
             folded.append(ln)
     return folded
-
-
-def complete_map_rows(lines):
-    """§A session-map rows whose cells were split by line wrapping.
-
-    fold_map_rows only folds a continuation that BEGINS with '|'. A plan
-    whose scope is long enough to wrap usually does not do that — it
-    indents the continuation and leaves the gates/deploy cells stranded at
-    the end of the last physical line:
-
-        1 | Router request-budget fix: thinkingBudget 0 in
-          callGemini (A1) and cut the default
-          timeoutMs 45 000 -> 20 000 (A6) ... | g1 | no
-
-    No line there begins with '|', so nothing folded. The row's first line
-    then carried 2 cells and was dropped for having fewer than 3, and the
-    last line's first cell was prose ('... | g1 | no' splits to
-    ['redeploy', 'g1', 'no']), so it was dropped for not naming a session.
-    session_map_rows() found NO rows and Plan health reported 'no session
-    rows in PART-01 §A' for a frozen plan with eight sessions and a
-    PROGRESS.md full of records — while the plan itself read perfectly well
-    to a person.
-
-    A continuation is absorbed only into a row that (a) opened with a
-    session number and (b) is still short of its three cells (# / scope /
-    gates), and only up to the next row start. That is deliberately NOT a
-    general 'fold every indented line' rule: all of §B, §C and §E are
-    indented too, and this must leave every one of them untouched."""
-    out = list(fold_map_rows(lines))
-    i = 0
-    while i < len(out):
-        cells = map_row_cells(out[i])
-        if not (cells and map_row_number(cells[0])) or len(cells) >= 3:
-            i += 1                    # not a row, or already complete
-            continue
-        j = i + 1
-        while j < len(out):
-            nxt = out[j].strip()
-            if not nxt or nxt.startswith("#"):
-                break                 # end of the block, not a wrap
-            nxt_cells = map_row_cells(out[j])
-            if nxt_cells and map_row_number(nxt_cells[0]):
-                break                 # the next session opens here
-            out[i] += " " + nxt
-            del out[j]
-            if len(map_row_cells(out[i])) >= 3:
-                break                 # the row is whole again
-        i += 1
-    return out
 
 
 def session_row_gates(plan_text, n):
@@ -2503,11 +1997,11 @@ def session_row_gates(plan_text, n):
                 end = j
                 break
         sec = lines[start:end]
-    sec = complete_map_rows(sec)
+    sec = fold_map_rows(sec)
     want = str(n)
     for line in sec:
-        cells = map_row_cells(line)
-        if len(cells) >= 3 and map_row_number(cells[0]) == want:
+        cells = [c.strip() for c in line.split("|")]
+        if len(cells) >= 3 and cells[0].rstrip(".):") == want:
             ids, _ = parse_gates_field(cells[2])
             if ids:
                 # v3.4.1 — wrapped gates cells: the fold appends a
@@ -2573,16 +2067,10 @@ def session_map_rows(pdir):
     part01 = find_frozen_file(pdir)
     if part01 is None:
         return rows
-    for line in complete_map_rows(
+    for line in fold_map_rows(
             part01.read_text(encoding="utf-8").splitlines()):
-        cells = map_row_cells(line)
-        # v3.10 — map_row_number() so this parser accepts '1', '1.', '1)'
-        # and '1:' exactly as session_row_gates does. It used to test
-        # cells[0].isdigit(), so a dotted row yielded gates to one parser
-        # and NO row to the other: Plan health printed 'no session rows in
-        # PART-01 §A' while those sessions' gates sat right in the file.
-        num = map_row_number(cells[0]) if cells else ""
-        if len(cells) >= 3 and num:
+        cells = [c.strip() for c in line.split("|") if c.strip()]
+        if len(cells) >= 3 and cells[0].isdigit():
             d = cells[3].lower() if len(cells) >= 4 else ""
             deploy = d.startswith(("y", "d")) or "deploy" in d or "supervis" in d
             # v3.6 — opt-in split marker (§C1): split / pre+post /
@@ -2594,7 +2082,7 @@ def session_map_rows(pdir):
                         ("split", "pre+post", "pre-post", "pre/post"))
             if split:
                 deploy = True
-            rows[int(num)] = (cells[1], cells[2], deploy, split)
+            rows[int(cells[0])] = (cells[1], cells[2], deploy, split)
     return rows
 
 
@@ -2637,32 +2125,15 @@ def next_pending_session(pdir, rows=None, records=None):
     'Next session →' prefill say exactly what Status says.
 
     Returns None when the plan is not frozen, else a dict:
-      n        int or None (None = every session recorded, or the map
-               could not be read — see 'unreadable')
+      n        int or None (None = every session recorded)
       leg      '' | 'a' | 'b' — the leg to run next ('' for plain rows)
       label    human wording, identical to the Status 'next:' value
-      unreadable True when the plan IS frozen but §A yielded no session
-               rows at all — never conflated with 'all done', see below
       copyable True when 'Next session →' may prefill + copy: False for
-               the leg-a-not-PASS deploy state (nothing to copy yet), for
-               n=None (nothing left) and when the map is unreadable."""
+               the leg-a-not-PASS deploy state (nothing to copy yet) and
+               for n=None (nothing left)."""
     if find_frozen_file(pdir) is None:
         return None
     rows = session_map_rows(pdir) if rows is None else rows
-    if not rows:
-        # v3.10 — an EMPTY map is not a finished plan. This used to fall
-        # straight through to the 'all sessions recorded' return below, so
-        # ANY §A parse failure turned the plan strip GREEN and told the
-        # owner 'next: all sessions recorded ✓' — nothing left to do —
-        # while Plan health, reading the same frozen file, said 'no
-        # session rows in PART-01 §A'. The two surfaces could not both be
-        # right and the confident green one was the dangerous direction: a
-        # plan with unreadable sessions read as a finished plan. A distinct
-        # state, not a shared n=None, is the only way to keep the parser
-        # failure visible.
-        return {"n": None, "leg": "", "unreadable": True,
-                "label": "session map unreadable — no session rows in §A",
-                "copyable": False}
     prog = pdir / "PROGRESS.md"
     recs = read_progress(prog) if prog.is_file() else (records or [])
     done = {(r["n"], r["leg"]) for r in recs}
@@ -2690,8 +2161,8 @@ def next_pending_session(pdir, rows=None, records=None):
         elif (n, "") not in done:
             return {"n": n, "leg": "", "label": "session %d" % n,
                     "copyable": True}
-    return {"n": None, "leg": "", "unreadable": False,
-            "label": "all sessions recorded", "copyable": False}
+    return {"n": None, "leg": "", "label": "all sessions recorded",
+            "copyable": False}
 
 
 def freeze_gate_report(pdir):
@@ -2840,10 +2311,8 @@ def freeze_gate_report(pdir):
             vbody = val.read_text(encoding="utf-8").strip()
         except OSError:
             vbody = ""
-        # v3.10 — val_is_ready() so this gate and the Owner-pass status
-        # line cannot drift on what "validated" means
-        _add("validation", "Validation report", val_is_ready(vbody),
-             "PART-01 READY" if val_is_ready(vbody)
+        _add("validation", "Validation report", vbody == "PART-01 READY",
+             "PART-01 READY" if vbody == "PART-01 READY"
              else "not 'PART-01 READY' — resolve the findings, re-validate")
     return gates
 
@@ -2991,41 +2460,6 @@ LOG_MAX_LINES = 2000   # R-16 — per-widget log cap (trimmed on write)
 
 class _Cancelled(Exception):
     pass
-
-
-# v3.12 — the exact separator on_proceed writes between the
-# SOURCE.md header and the pasted body. The pane is BOUND to
-# plans/<slug>/SOURCE.md once Proceed has run (the link to the
-# file it was loaded from is severed at that moment), so a
-# launch must restore the BODY, not the wrapper — re-Proceeding
-# a restored plan would otherwise wrap the wrap.
-SOURCE_SEP = "\n\n---\n\n"
-
-
-def source_body(text):
-    """The pasted body inside a SOURCE.md — the console's own
-    header/footer stripped. The first separator is always the
-    wrapper's (the fixed two-line header precedes any user
-    content), so a report that itself contains '---' survives.
-    Text with no wrapper (a plain report, or a SOURCE.md from
-    before the wrapper existed) passes through unchanged."""
-    i = text.find(SOURCE_SEP)
-    if i == -1:
-        return text.strip()
-    return text[i + len(SOURCE_SEP):].rstrip("\n")
-
-
-def slug_is_taken(repo, slug):
-    """True when plans/<slug>/SOURCE.md exists in `repo` —
-    the definitive marker that Proceed already ran for that
-    slug (v3.12: "Load from file…" refuses to fill the
-    pane over a plan that exists; the owner either continues
-    that plan or types a slug that has not been used before
-    in the repo). An empty or malformed slug is never
-    "taken" — Proceed is the one that refuses those."""
-    if not slug or not SLUG_RE.match(slug):
-        return False
-    return (Path(repo) / "plans" / slug / "SOURCE.md").is_file()
 
 
 FILE_RULES = """
@@ -3538,28 +2972,6 @@ Read-only commands (Select-String, Test-Path, Get-Content, git
 status/diff/log) get a Run button in the console; anything else is
 copy-only. The console ticks `- [x]` and marks the linked §B line
 VERIFIED only after the owner confirms the result in the dialog.
-
-CHECKS format (PART-01, so the enforced set is the FROZEN contract):
-one `## Checks` section, one bullet per gate the console can run:
-
-## Checks
-- LINT: 'npm run lint'
-- TYPES: 'npm run typecheck'
-- DENO-LINT: 'npm run lint:deno'
-
-Rules: the ID is REQUIRED and must be the first thing on the bullet
-(ID: `command`) so a failure names the gate instead of quoting a
-command line; the command goes in backticks, on ONE line; list the
-standing gates ONCE here rather than repeating them on every section-A
-row. Pass = exit
-code 0, which is how eslint, `tsc --noEmit` and deno check/lint all
-report findings, so no `expect:` tag is needed — `(expect: exit 0)` is
-accepted and any other value is REFUSED BY NAME rather than quietly
-treated as a pass. A bullet that is malformed (no id, no command, an
-unknown expect) is reported as INVALID and does NOT run: a gate that
-never executes must never look like a gate that passed. The agent NEVER
-EDITS this section after the freeze — it belongs to the owner, because the
-console executes these commands on the owner's click.
 
 TYPE=plan (a ready-made, already-structured plan):
 - Normalize the plan into the template §A–G structure: map its own
@@ -4374,58 +3786,6 @@ def _wrap_para(text, width=88):
     return "\n".join(out)
 
 
-def error_dialog(parent, tokens, title, text):
-    """A themed error window. Native messagebox dialogs
-    are drawn by the OS and cannot carry the app
-    palette, so an error the owner must READ (the v3.12
-    load refusals) gets its own window instead: main
-    background, red ✗ accent, wrapped text, one OK
-    button. Focus-modal like the native box it replaces
-    — it grabs the pointer until dismissed. Tk is not
-    thread-safe: worker threads must log via App.say,
-    not call this."""
-    dlg = tk.Toplevel(parent)
-    dlg.title(title)
-    dlg.transient(parent)
-    _fit_dialog_to_screen(dlg, 560, 300)
-    if tokens:
-        try:
-            dlg.configure(bg=tokens["bg-main"])
-        except tk.TclError:
-            pass
-    frm = ttk.Frame(dlg, padding=14)
-    frm.pack(fill="both", expand=True)
-    head = ttk.Frame(frm)
-    head.pack(anchor="w", fill="x")
-    tk.Label(head, text="✗", font=("", 11, "bold"),
-             **({"foreground": tokens["accent-red"]}
-                if tokens else {}))\
-        .pack(side="left")
-    ttk.Label(head, text=title, font=("", 10, "bold"))\
-        .pack(side="left", padx=(6, 0))
-    ttk.Label(frm, text=text, wraplength=520,
-              justify="left")\
-        .pack(anchor="w", pady=(10, 0))
-    btn = ttk.Button(frm, text="OK")
-    btn.pack(anchor="e", pady=(12, 0))
-    btn.focus_set()
-
-    def _close():
-        try:
-            dlg.grab_release()
-        except tk.TclError:
-            pass
-        dlg.destroy()
-
-    btn.configure(command=_close)
-    dlg.protocol("WM_DELETE_WINDOW", _close)
-    try:
-        dlg.grab_set()
-    except tk.TclError:
-        pass
-    dlg.lift()
-
-
 def item_detail_dialog(parent, tokens, title, subtitle, sections,
                        footer_hint=None):
     """Screen-centred, focus-modal item detail window.
@@ -4768,7 +4128,6 @@ class App:
         self._topbar()
         self._plan_strip()          # v1.2.0 — live plan-state line
         self._tabs()
-        self._restore_intake_source()   # v3.12 — the remembered file
         # v3.4 — one shared slug var: typing in any tab refreshes the
         # helper lines of ALL three slug fields, not just the edited one
         self.slug_var.trace_add("write", self._on_slug_var_changed)
@@ -5489,21 +4848,6 @@ class App:
             self._strip_fg(self.strip_action, "accent-cyan")
             return
         nxt = snap["next"]
-        # v3.10 — the frozen plan's §A yielded no session rows. This is a
-        # PARSE failure, not a finished plan, and it used to share the
-        # n=None branch below: the strip went green and read 'all sessions
-        # recorded ✓' for a plan whose sessions had never been read at
-        # all. Orange, and the action goes to the one surface that says
-        # which file is at fault.
-        if nxt is not None and nxt.get("unreadable"):
-            self.strip_state.configure(
-                text="frozen (%s)" % snap["frozen_name"])
-            self.strip_next.configure(text="next: %s" % nxt["label"])
-            self._strip_fg(self.strip_next, "accent-orange")
-            self.strip_action.configure(text="Plan health →")
-            self._strip_action_kind, self._strip_action_tab = "tab", 1
-            self._strip_fg(self.strip_action, "accent-cyan")
-            return
         if nxt is None or nxt["n"] is None:
             self.strip_state.configure(
                 text="frozen (%s)" % snap["frozen_name"])
@@ -5626,18 +4970,10 @@ class App:
         self.btn_sample = ttk.Button(rowb, text="Open sample project…",
                                      command=self.on_open_sample)
         self.btn_sample.pack(side="left", padx=(12, 0))
-        # v3.12 — the label row carries "Load from file…": the
-        # button sits on the line the content goes into, so it is
-        # discoverable exactly where a paste would land
-        rowl = ttk.Frame(f); rowl.pack(fill="x", padx=10, pady=(2, 0))
-        ttk.Label(rowl, text="Paste a plan, brainstorm, or audit "
-                             "report below — or click 'Open sample "
-                             "project…' to explore a finished "
-                             "example first:")\
-            .pack(side="left", anchor="w")
-        self.btn_load_src = ttk.Button(rowl, text="Load from file…",
-                                       command=self.on_load_source)
-        self.btn_load_src.pack(side="right")
+        ttk.Label(f, text="Paste a plan, brainstorm, or audit report below — "
+                          "or click 'Open sample project…' to explore a "
+                          "finished example first:")\
+            .pack(anchor="w", padx=10, pady=(2, 0))
         self.src = scrolledtext.ScrolledText(f, height=8, wrap="word")
         self.src.pack(fill="x", padx=10, pady=4)
         self._mklog(f, "intake", 14)
@@ -5680,15 +5016,6 @@ class App:
         self.btn_health = ttk.Button(top, text="Plan health",
                                      command=self.on_health)
         self.btn_health.grid(row=0, column=10, padx=4)
-        # v3.11 — run the checks the frozen plan declares. Sits beside Plan
-        # health because the two answer one question from opposite ends:
-        # Plan health reports what the agent CLAIMED, this produces the
-        # evidence for it. Without it a lint/typecheck failure could only
-        # reach the agent by the owner running the tool and pasting the
-        # output by hand.
-        self.btn_checks = ttk.Button(top, text="Run checks",
-                                     command=self.on_run_checks)
-        self.btn_checks.grid(row=0, column=11, padx=4)
         self._mklog(f, "sessions", 22)
         # v3.6 — keep the Leg selector in step with slug edits too
         self.slug_var.trace_add("write", lambda *a: self._leg_sync())
@@ -6119,24 +5446,53 @@ class App:
         # v2.6.4 — third Freeze gate surfaced here too: the status line
         # checks VALIDATION.md (missing or != "PART-01 READY") so it can
         # never say "ready to Freeze" while the Freeze button would fail
-        # on a stale validation report. v3.10 — the wording moved into
-        # owner_status_text(), which the Tk-free tests cover.
+        # on a stale validation report (the same third gate
+        # freeze_gate_report reports, so this line and the Freeze button
+        # read one source).
         val = pdir / "VALIDATION.md"
-        validation = val.read_text(encoding="utf-8") if val.is_file() else None
+        if not val.is_file():
+            vnote = " — VALIDATION.md not found — click 'Validate draft' first"
+        elif val.read_text(encoding="utf-8").strip() != "PART-01 READY":
+            vnote = " — VALIDATION.md is not 'PART-01 READY' — re-validate"
+        else:
+            vnote = ""
+        # v2.0 — the status line states the NEXT action; v2.7 — answers
+        # awaiting integration outrank recon ticks: the owner has
+        # answered, but the plan body does not know yet
+        if nq:
+            hint = " — next: answer questions, then 'Agent: finish owner pass'"
+        elif na:
+            hint = (" — next: 'Agent: finish owner pass' — integrates %d "
+                    "answered question(s) into the draft" % na)
+        elif noa:
+            hint = (" — next: run/copy the owner actions (right-hand panel) "
+                    "or mark them done")
+        elif nu_owner:
+            hint = (" — next: %d owner-only recon item(s) — the agent may "
+                    "NOT run those; run them from the Owner-actions panel "
+                    "or mark the checklist line DEFERRED" % nu_owner)
+        elif nu:
+            hint = " — next: tick recon items"
+        elif vnote:
+            hint = vnote
+        else:
+            hint = " — ready to Freeze"
         # v3.9 — stranded escalations are surfaced here too, so the tab
         # itself says "there is content the console is not listing" rather
-        # than relying on the owner opening the Freeze checklist. This is a
-        # WARNING, not a next step, so it keeps its own ⚠ marker and gap
-        # rather than joining the one next-step clause.
+        # than relying on the owner opening the Freeze checklist.
         orphans = unaccounted_escalations(self._oq_text)
-        text = owner_status_text(nq, na, noa, nu, nu_owner, validation)
         if orphans:
-            text += ("  ⚠ %d escalated question block(s) sit in a section "
+            hint += ("  ⚠ %d escalated question block(s) sit in a section "
                      "this tab does not list — see 'What's blocking "
                      "Freeze?'" % len(orphans))
-        self.owner_status.configure(text=text)
-        if (nq == 0 and na == 0 and noa == 0 and nu == 0
-                and val_is_ready(validation)
+        recon_txt = "%d unchecked item(s)" % nu
+        if nu_owner:
+            recon_txt += " (%d owner-only)" % nu_owner
+        self.owner_status.configure(
+            text=("%d open question(s), %d answer(s) awaiting integration, "
+                  "%d owner action(s), %s%s"
+                  % (nq, na, noa, recon_txt, hint)))
+        if (nq == 0 and na == 0 and noa == 0 and nu == 0 and not vnote
                 and (self._oq_file.is_file() or self._rc_file.is_file())):
             self.say("intake", "owner pass: everything resolved — Freeze "
                      "is unblocked.")
@@ -6213,25 +5569,10 @@ class App:
                     "match this action, so ticking it could hit the wrong "
                     "one. Click Refresh and re-select." % len(hits))
                 return False
-        # v3.10.1 audit fix — COMPARE THE PROSE PORTION, not the whole
-        # line. `prose` is the bullet text with the `- [ ] ` marker
-        # stripped, while `lines[target]` still carries that marker, so
-        # `lines[target].strip() != prose.strip()` was True for EVERY
-        # action and Mark Done refused unconditionally with "changed
-        # since Refresh" — Refresh could not clear it because the file was
-        # never stale. Compare the line's prose portion instead: strip the
-        # checkbox/bullet prefix off `lines[target]` and require identity
-        # with the prose Refresh read. Staleness is still caught, because a
-        # rewritten line no longer yields a matching prose portion (and the
-        # unique-hit search above already rejects 0 or >1 candidates).
-        def _prose_portion(line):
-            mm = RECON_ITEM_RE.match(line) or OA_PLAIN_BULLET_RE.match(line)
-            return line[mm.end():].strip() if mm else None
-
         if (not (0 <= ln < len(lines))
                 or not action["prose"]
                 or not (0 <= target < len(lines))
-                or _prose_portion(lines[target]) != action["prose"].strip()):
+                or lines[target].strip() != action["prose"].strip()):
             messagebox.showerror(
                 "Owner actions",
                 "OPEN-QUESTIONS.md changed since Refresh — click Refresh.")
@@ -6509,13 +5850,11 @@ class App:
 
     def on_recommend_accept(self):
         """v2.5 — one-click accept: prefill the answer box with the
-        block's RECOMMEND entry + provenance, then run the normal save
+        block's RECOMMEND line + provenance, then run the normal save
         path — every on_answer_save guard (stale-index, crash-window
         duplicate, draft refusal) applies unchanged. RECOMMEND is
         context only, never an owner answer (PART-01 §G), so this is
-        always an explicit, confirmed owner action. v3.10 — the whole
-        entry, so a RECOMMEND wrapped over several lines is accepted in
-        full instead of only its label line."""
+        always an explicit, confirmed owner action."""
         got = self._owner_paths()
         if got is None: return
         if not self._oq_file or not self._oq_file.is_file():
@@ -6536,7 +5875,7 @@ class App:
             return
         if not messagebox.askyesno("Owner pass",
                 "Accept this recommendation as the answer?\n\n%s"
-                % dialog_preview(rec)):
+                % rec[:400]):
             return
         self.answer.delete("1.0", "end")
         self.answer.insert("1.0", "%s [recommendation accepted %s]"
@@ -6568,7 +5907,7 @@ class App:
         qblock = question_block(qtext, lineno)
         if not messagebox.askyesno("Owner pass",
                 "Archive this whole question (kept in owner-pass.log, "
-                "snapshot .bak)?\n\n%s" % dialog_preview(qblock)):
+                "snapshot .bak)?\n\n%s" % qblock.strip()[:400]):
             return
         self._oq_backup()
         self._oq_archive(pdir, "REMOVED (no answer)", qblock)
@@ -6867,7 +6206,7 @@ class App:
                 "It will be removed from the checklist and added as an "
                 "unchecked owner action, so you can Run / Copy it there and "
                 "Mark it done. Both files are snapshotted first."
-                % dialog_preview(line, limit=300)):
+                % line.strip()[:300]):
             return
         oq = pdir / "OPEN-QUESTIONS.md"
         existed = oq.is_file()
@@ -6985,13 +6324,6 @@ class App:
                  "report' → Freeze." % na)
 
     # ------------------------------------------------------- small helpers
-    def _error_dialog(self, title, text):
-        """Themed error window (see error_dialog): the
-        native messagebox is OS-drawn and cannot carry
-        the palette. Main-thread callers only — worker
-        threads report via self.say, never Tk."""
-        error_dialog(self.root, self._tokens, title, text)
-
     def _browse_repo(self):
         d = filedialog.askdirectory(title="Choose your repo folder")
         if d:
@@ -7459,112 +6791,6 @@ class App:
         return repo
 
     # -------------------------------------------------------------- intake
-    def on_load_source(self):
-        """v3.12 — fill the intake box from a file instead of
-        the clipboard. Audits and plans are authored as
-        markdown elsewhere, and copy-pasting a whole report is
-        slow (and a clipboard can hold less than the report).
-
-        The loaded file is a SESSION-ONLY link — it is never
-        written to plan-console.json. The binding happens at
-        Proceed (see on_proceed): once SOURCE.md exists, the
-        pane is linked to THAT file, and a launch restores it
-        (unwrapped) rather than the file the report came from.
-
-        A slug whose plans/<slug>/SOURCE.md already exists in
-        the repo (top-bar folder) is REFUSED: Proceed already
-        ran for it and the pane is bound to that file. A
-        FROZEN slug is refused first, with its own message:
-        re-intake is blocked entirely (the same ban on_proceed
-        enforces). The owner either continues the existing
-        plan or types a slug that has not been used before.
-        The checks run before the dialog, so a refused slug
-        never even opens the picker."""
-        repo = self.repo_path()
-        slug = self.slug_var.get().strip()
-        pdir = repo / "plans" / slug
-        frozen = (find_frozen_file(pdir)
-                  if SLUG_RE.match(slug) else None)
-        if frozen is not None:
-            self._error_dialog(
-                "Load from file",
-                "plans/%s is already frozen (%s) — a frozen "
-                "plan is locked and re-intake is blocked "
-                "entirely.\n\n"
-                "To intake a new report, type a slug that "
-                "has not been used before in this repo and "
-                "load the file again.\n\n"
-                "The file was not loaded." % (slug, frozen.name))
-            self.say("intake", "load refused — plans/%s is "
-                     "frozen" % slug)
-            return
-        if slug_is_taken(repo, slug):
-            self._error_dialog(
-                "Load from file",
-                "plans/%s/SOURCE.md already exists in this "
-                "repo — Proceed has already run for this "
-                "slug, so the intake box is bound to that "
-                "file and cannot be re-loaded over it.\n\n"
-                "Either continue with the existing plan (its "
-                "SOURCE.md is loaded into the box on launch — "
-                "use the Owner pass and Sessions tabs), or "
-                "type a slug that has not been used before in "
-                "this repo and load the file again.\n\n"
-                "The file was not loaded." % slug)
-            self.say("intake", "load refused — plans/%s/"
-                     "SOURCE.md already exists" % slug)
-            return
-        p = filedialog.askopenfilename(
-            title="Load a plan, brainstorm, or audit report",
-            filetypes=(("Markdown", "*.md"),
-                       ("Text", "*.txt"),
-                       ("All files", "*.*")))
-        if not p:
-            return
-        try:
-            text = Path(p).read_text(encoding="utf-8",
-                                     errors="replace")
-        except OSError as e:
-            # convention §1/§4: a failed READ is named, not
-            # swallowed — an empty box would read as an empty
-            # report, which is the worse failure
-            self._error_dialog("Load from file",
-                               "Could not read %s\n\n%s" % (p, e))
-            return
-        self.src.delete("1.0", "end")
-        self.src.insert("1.0", text)
-        self.say("intake", "loaded %s (%s chars) into the intake "
-                           "box — bound to plans/%s/SOURCE.md "
-                           "when you click Proceed"
-                 % (Path(p).name, "{:,}".format(len(text)),
-                    self.slug_var.get().strip() or "<slug>"))
-
-    def _restore_intake_source(self):
-        """v3.12 — reload the SOURCE.md the pane is bound to.
-        The slug already survived a restart; the content did
-        not, so every launch meant re-pasting the same report.
-        The stored path is plans/<slug>/SOURCE.md (bound at
-        Proceed), and only the BODY is restored — source_body
-        strips the console's own wrapper so re-Proceeding never
-        double-wraps. A missing or unreadable file just leaves
-        the box empty — restoring must never crash the launch."""
-        p = self.cfg.get("intake_file")
-        if not isinstance(p, str) or not p:
-            return
-        try:
-            text = Path(p).read_text(encoding="utf-8",
-                                     errors="replace")
-        except OSError:
-            return
-        body = source_body(text)
-        if not body.strip():
-            return
-        self.src.delete("1.0", "end")
-        self.src.insert("1.0", body)
-        self.say("intake", "restored %s (%s chars) from the "
-                           "last session"
-                 % (Path(p).name, "{:,}".format(len(body))))
-
     def on_proceed(self):
         # R-38 — disable synchronously at the top, before any scheduling:
         # the queued __busy__ message only lands on the main loop ~100ms
@@ -7595,10 +6821,6 @@ class App:
         (pdir / "SOURCE.md").write_text(
             "# SOURCE — %s\nType: %s | Captured: %s (plan-console)\n\n---\n\n%s\n"
             % (slug, self.kind.get(), date.today(), text), encoding="utf-8")
-        # v3.12 — the pane is now BOUND to this file: the link
-        # to whatever it was loaded from is severed here, and
-        # the next launch restores this SOURCE.md (unwrapped)
-        self.cfg["intake_file"] = str(pdir / "SOURCE.md")
         self._save_cfg()
         self.say("intake", "[%s] plans/%s/SOURCE.md written (%s)"
                  % (date.today(), slug, self.kind.get()))
@@ -9109,118 +8331,6 @@ class App:
         for line in lines:
             self.say("sessions", line)
 
-    # ------------------------------------------------------ v3.11 checks
-    def _checks_paths(self):
-        """(repo, slug, pdir) for the Sessions tab, or None after telling
-        the owner what is missing."""
-        repo = self._preflight()
-        if repo is None: return None
-        slug = self._get_slug("sessions")
-        if not SLUG_RE.match(slug):
-            messagebox.showerror("Slug", "kebab-case slug required.")
-            return None
-        return repo, slug, repo / "plans" / slug
-
-    def on_run_checks(self):
-        """Run the checks the FROZEN plan declares, record the result, and
-        hand any failure to the agent in one click.
-
-        The consent dialog is the whole safety story for this feature, so
-        it is not a formality: it lists every command VERBATIM, says they
-        come from the frozen plan, says they execute in the repo, and
-        reports how many are malformed and will NOT run. A plan is
-        agent-authored until the owner freezes it, so the freeze is the
-        authorisation — and this dialog is where the owner sees what they
-        authorised.
-
-        The console writes only CHECKS.last.md and one HEALTH.md audit
-        block. It never writes source, never ticks a recon item and never
-        marks a gate PASSED (see run_checks)."""
-        got = self._checks_paths()
-        if got is None: return
-        repo, slug, pdir = got
-        checks = declared_checks(pdir)
-        if not checks:
-            messagebox.showerror(
-                "Checks",
-                "No checks declared for %s.\n\nAdd a '## Checks' section to the "
-                "frozen plan, one bullet per check:\n\n"
-                "## Checks\n"
-                "- LINT: `npm run lint`\n"
-                "- TYPES: `npm run typecheck`" % slug)
-            return
-        bad = [c for c in checks if c["error"]]
-        runnable = [c for c in checks if not c["error"]]
-        body = ["The frozen plan declares %d check(s). Each will run in:"
-                % len(runnable), "", "  %s" % repo, ""]
-        for c in runnable:
-            body.append("  %-12s %s" % (c["id"], c["command"]))
-        if bad:
-            body += ["", "NOT RUN — malformed, fix these in the plan:"]
-            body += ["  %-12s %s" % (c["id"] or "(no id)", c["error"])
-                     for c in bad]
-        body += ["", "The console records the result only. It writes "
-                "CHECKS.last.md and one HEALTH.md audit line; it never "
-                "edits source and never ticks anything for you."]
-        if not messagebox.askyesno("Run checks — %s" % slug,
-                                   "\n".join(body)):
-            return
-        self.say("sessions", "checks: running %d declared check(s) in %s ..."
-                 % (len(runnable), repo))
-        results = run_checks(repo, checks)
-        lines = [render_check_results(results)]
-        # HEALTH.md is the console-appended audit trail, so the run is on
-        # record even if the plan dir is later replaced.
-        self._log_health(pdir, slug, ["CHECKS — %s" % slug] + lines)
-        for line in lines:
-            self.say("sessions", line)
-        err = write_check_results(pdir, slug, results)
-        if err:
-            self.say("sessions", "WARN: CHECKS.last.md write failed (%s) — "
-                     "this run is in HEALTH.md only." % err)
-        failed = [r for r in results if r["ok"] is False]
-        if failed:
-            self._send_check_failures(repo, slug, pdir, results, failed)
-        elif bad:
-            messagebox.showwarning(
-                "Checks",
-                "%d check(s) passed, but %d declared check(s) are malformed "
-                "and did NOT run: %s\n\nA gate that never runs is not a gate "
-                "— fix the '## Checks' block in the frozen plan."
-                % (len(runnable), len(bad),
-                   ", ".join(c["id"] or "(no id)" for c in bad)))
-
-    def _send_check_failures(self, repo, slug, pdir, results, failed):
-        """The step this feature exists for: turn a failing check into a
-        ready-to-send agent instruction, so the output never has to be
-        copied and pasted by hand."""
-        body = ["Working directory: %s" % repo, "",
-                "The Plan Console ran the checks this plan declares in its "
-                "frozen PART-01 '## Checks' block. %d of %d FAILED. Fix the "
-                "causes and re-run them; do NOT weaken a gate to make it "
-                "pass, and do NOT edit PART-01, PROGRESS.md, HEALTH.md or "
-                "CHECKS.last.md." % (len(failed), len(results)), ""]
-        for r in failed:
-            body.append("=== %s: %s ===" % (r["id"] or "(no id)", r["command"]))
-            if r["error"]:
-                body.append("could not run: %s" % r["error"])
-            else:
-                body.append("exit code: %s" % r["code"])
-            if r["output"]:
-                body += ["", r["output"]]
-            body.append("")
-        ok = [r for r in results if r["ok"] is True]
-        if ok:
-            body.append("Passing, leave alone: %s"
-                        % ", ".join(r["id"] for r in ok))
-            body.append("")
-        self._show_instruction("Check failures — %s" % slug,
-                               "\n".join(body).rstrip() + "\n",
-                               pdir / "instructions" / "check-failures.txt")
-        self.say("sessions", "checks: %d failure(s) — instruction copied; "
-                 "paste it into your agent (repo open as workspace)."
-                 % len(failed))
-
     def _mkhealth(self, repo, slug):
         pdir = repo / "plans" / slug
         part01 = self._frozen_file(pdir)   # v2.0 — any frozen name
@@ -9346,35 +8456,6 @@ class App:
                        "clear every ⚠ / ✖ / ◔ line above first" % next_n)
         else:
             out.append("VERDICT: NEXT = %s" % _leg_label(next_n, next_leg))
-        # v3.11 — the DECLARED checks and what the last console run found.
-        # Surface only: nothing here blocks Freeze or changes a session's
-        # reported state. A gate the console can fail but not enforce would
-        # make the console a second, competing source of truth, and a slow
-        # or flaky check would then wedge the owner's Freeze. It reports;
-        # the owner decides. The one thing it will not do is imply green:
-        # with no CHECKS.last.md it says the checks are UNRUN.
-        checks = declared_checks(pdir)
-        if checks:
-            last = last_check_results(pdir)
-            out.append("— declared checks (%d, from PART-01 '## Checks') —"
-                       % len(checks))
-            for c in checks:
-                name = c["id"] or "(no id)"
-                if c["error"]:
-                    state = "⚠ INVALID — %s" % c["error"]
-                elif name in last:
-                    state = {"PASS": "✓ PASS (last run)",
-                             "FAIL": "✖ FAIL (last run)"}.get(
-                                 last[name], last[name])
-                else:
-                    state = "— not run yet"
-                out.append("  %-14s %s" % (name, state))
-            if not last:
-                out.append("  (click 'Run checks' to produce evidence for "
-                           "these gates)")
-            elif any(v == "FAIL" for v in last.values()):
-                out.append("  a FAIL above is a gate the console observed "
-                           "failing; it does not block Freeze on its own")
         # v2.2 — marker sanity notes (unparsable / outside map / stale)
         if ip_f is not None:
             if ip_n is None or not (1 <= ip_n <= N):

@@ -64,6 +64,28 @@ status/diff/log) get a Run button in the console; anything else is
 copy-only. The console ticks `- [x]` and marks the linked §B line
 VERIFIED only after the owner confirms the result in the dialog.
 
+CHECKS format (PART-01, so the enforced set is the FROZEN contract):
+one `## Checks` section, one bullet per gate the console can run:
+
+## Checks
+- LINT: 'npm run lint'
+- TYPES: 'npm run typecheck'
+- DENO-LINT: 'npm run lint:deno'
+
+Rules: the ID is REQUIRED and must be the first thing on the bullet
+(ID: `command`) so a failure names the gate instead of quoting a
+command line; the command goes in backticks, on ONE line; list the
+standing gates ONCE here rather than repeating them on every section-A
+row. Pass = exit
+code 0, which is how eslint, `tsc --noEmit` and deno check/lint all
+report findings, so no `expect:` tag is needed — `(expect: exit 0)` is
+accepted and any other value is REFUSED BY NAME rather than quietly
+treated as a pass. A bullet that is malformed (no id, no command, an
+unknown expect) is reported as INVALID and does NOT run: a gate that
+never executes must never look like a gate that passed. The agent NEVER
+EDITS this section after the freeze — it belongs to the owner, because the
+console executes these commands on the owner's click.
+
 TYPE=plan (a ready-made, already-structured plan):
 - Normalize the plan into the template §A–G structure: map its own
   sections onto the template sections (mission/scope → §A, stated

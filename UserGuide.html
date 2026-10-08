@@ -33,7 +33,7 @@
         </div>
         <span class="pill">User Guide</span>
         <h1>Plan Console — User Guide</h1>
-        <p class="text-muted text-lg">Plan Console 3.10 — paste-to-plan intake + session lifecycle manager.
+        <p class="text-muted text-lg">Plan Console 3.12 — paste-to-plan intake + session lifecycle manager.
         Everything you need to install, understand and drive the app, from first launch to
         <code>PLAN COMPLETE</code>.</p>
         <p class="text-muted">Copyright © Costel Iordan (costel.iordan@gmail.com). Licensed under the
@@ -229,7 +229,7 @@ python -c "import tkinter"          (should print nothing = OK)</pre>
     again. Your plans in the repo are never touched by this.</p>
 
     <h3>3.3 Window tour (text layout map)</h3>
-    <p>The window title reads <strong>"Plan Console 3.10"</strong>. The layout, top to bottom:</p>
+    <p>The window title reads <strong>"Plan Console 3.12"</strong>. The layout, top to bottom:</p>
     <pre class="terminal-code">SETUP BAR (collapsible)
   Always visible: a "Setup ▾" toggle button plus a one-line summary
   of the current configuration (repo folder, model, and whether the
@@ -483,6 +483,19 @@ LOG (bottom)
         <li><code>audit</code> — an audit report; the agent also writes <code>TRIAGE.md</code>
             sorting every finding into fix-now / fix-later / accept.</li>
     </ul>
+    <p>Instead of pasting, click <strong>Load from file…</strong> beside the box to fill it
+    straight from a markdown (or text) file — the usual case for a whole audit report. The
+    loaded file fills this session's box only; it is not saved to settings. The binding
+    happens when you click <strong>Proceed</strong>: the console writes
+    <code>plans/&lt;slug&gt;/SOURCE.md</code> and the box is linked to THAT file (remembered in
+    <code>plan-console.json</code> as <code>"intake_file"</code>). On the next launch the
+    SOURCE.md content is reloaded into the box — without the console's own header, so clicking
+    Proceed again never wraps it twice — and only if the file still exists; otherwise the box
+    starts empty.</p>
+    <p>Load is refused (with an error naming the two ways out) when the slug is already used in
+    this repo: either the plan exists (Proceed already ran — continue it via the Owner pass and
+    Sessions tabs) or it is frozen (re-intake is blocked entirely). In both cases, type a slug
+    that has not been used before in this repo to intake a new report.</p>
     <p>Your text is saved as <code>plans/&lt;slug&gt;/SOURCE.md</code> (permanent record). The draft
     scaffolding then runs: with a key, the console calls the model itself; without one, a popup
     gives you a ready-made instruction to paste into your agent (a backup of every instruction is
@@ -722,6 +735,7 @@ LOG (bottom)
             <tr><td style="padding:0.4rem;">Theme</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Light / Dark / Follow OS</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">How to use without a key (guide) »</td><td style="padding:0.4rem;">live bar</td><td style="padding:0.4rem;">Opens no-api-key-guide.html</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Open sample project…</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Copies samples/demo-project/ to a folder of your choice</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Load from file…</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Fills the paste box from a markdown/text file (this session only)</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Proceed</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Saves your text, scaffolds the plan (+recon+validate if ticked)</td><td style="padding:0.4rem;">optional</td></tr>
             <tr><td style="padding:0.4rem;">Freeze</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Locks the draft into PART-01 v1.0.md after all gates pass</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Run recon</td><td style="padding:0.4rem;">Intake</td><td style="padding:0.4rem;">Hands the recon checklist to the agent</td><td style="padding:0.4rem;">optional</td></tr>
@@ -1004,7 +1018,7 @@ LOG (bottom)
     <hr>
 
     <h2 id="license">13. License & credits</h2>
-    <p><strong>Plan Console 3.10</strong><br>
+    <p><strong>Plan Console 3.12</strong><br>
     Paste-to-plan intake + session lifecycle manager<br>
     Copyright © Costel Iordan (costel.iordan@gmail.com)</p>
     <p>Licensed under the <strong>Apache License, Version 2.0</strong> — see the

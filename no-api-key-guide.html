@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Working Without an API Key — Plan Console 3.10</title>
+    <title>Working Without an API Key — Plan Console 3.12</title>
     <link rel="stylesheet" href="assets/console.css">
     <script src="assets/theme.js" defer></script>
 </head>
@@ -14,7 +14,7 @@
     <header>
         <span class="pill">No-API-Key Workflow</span>
         <h1>Working Without an API Key</h1>
-        <p class="text-muted text-lg">Plan Console 3.10 — the complete copy-paste workflow for people who
+        <p class="text-muted text-lg">Plan Console 3.12 — the complete copy-paste workflow for people who
         do not have (or do not want) an OpenRouter API key. Everything below works fully offline,
         costs nothing, and uses no external services.</p>
     </header>
@@ -88,9 +88,15 @@
             <code>templates/</code> and <code>commands/</code> into your repo. Existing files are
             never overwritten.</li>
         <li><strong>Open the Intake tab.</strong> Paste your plan, brainstorm or audit report into the
-            big text box. Pick the <strong>Type</strong> (<code>plan</code>, <code>brainstorm</code> or
+            big text box — or click <strong>Load from file…</strong> beside the box to fill it
+            straight from a markdown file (this session only). Pick the <strong>Type</strong>
+            (<code>plan</code>, <code>brainstorm</code> or
             <code>audit</code>) and type a short <strong>Slug</strong> — lowercase-with-dashes, e.g.
-            <code>payments-v2</code>.</li>
+            <code>payments-v2</code>. When you click <strong>Proceed</strong>, the box becomes
+            linked to the <code>plans/&lt;slug&gt;/SOURCE.md</code> the console writes, and that
+            file is reloaded into the box on your next launch. Load is refused for a slug already
+            used in this repo (an existing or a frozen plan) — type a slug that has not been
+            used before to intake a new report.</li>
         <li><strong>Click Proceed.</strong> Your text is saved as <code>plans/&lt;slug&gt;/SOURCE.md</code>
             and a popup appears with a ready-made instruction. <strong>Copy it</strong> (there is a
             copy button; a backup also lands in <code>plans/&lt;slug&gt;/instructions/</code>).</li>
@@ -383,7 +389,7 @@
     <hr>
 
     <footer>
-        <p class="text-muted mb-1"><strong>Plan Console</strong> 3.10 — offline copy-paste guide.</p>
+        <p class="text-muted mb-1"><strong>Plan Console</strong> 3.12 — offline copy-paste guide.</p>
         <p class="text-muted mb-1">Copyright © Costel Iordan (costel.iordan@gmail.com)</p>
         <p class="text-muted mb-0">Licensed under the Apache License, Version 2.0. You may obtain a copy
         of the License at <a href="https://www.apache.org/licenses/LICENSE-2.0">https://www.apache.org/licenses/LICENSE-2.0</a>

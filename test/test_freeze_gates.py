@@ -390,6 +390,268 @@ def test_health_reports_the_session_that_progress_records(tmp_path):
     assert "passed: 1/2" in lines[-2], lines
 
 
+# ------------------------------------- v3.11 declared checks ('## Checks')
+# A gate the owner cannot run is a wish: the agent asserts 'status: PASS'
+# in PROGRESS.md and the console never checks. A lint or typecheck failure
+# could therefore only reach the agent by the owner running the tool and
+# pasting the output by hand. '## Checks' in the FROZEN plan makes those
+# commands first-class.
+CHECKS_PLAN = (
+    "# PART 01 — demo | v1.0 frozen 2026-10-04\n\n"
+    "A. MISSION & SCOPE\n"
+    "     # | one-line scope | gates | deploy?\n"
+    "     1 | do it | g1 | no\n"
+    "B. VERIFIED INFRASTRUCTURE FACTS\n"
+    "   a fact\n"
+    "\n## Checks\n"
+    "- LINT: `npm run lint`\n"
+    "- TYPES: `npm run typecheck`\n"
+    "- EXPLICIT: `npm test` (expect: exit 0)\n"
+    "\n## Owner actions\n"
+    "- [ ] unrelated `git status`\n")
+
+
+def test_parse_checks_reads_id_and_command():
+    got = pc.parse_checks(CHECKS_PLAN)
+    assert [c["id"] for c in got] == ["LINT", "TYPES", "EXPLICIT"]
+    assert got[0]["command"] == "npm run lint"
+    assert got[2]["expect"] == "exit 0"
+    assert [c["error"] for c in got] == [None, None, None]
+
+
+def test_checks_section_does_not_disturb_owner_actions():
+    got = pc.parse_owner_actions(CHECKS_PLAN)
+    assert [a["command"] for a in got] == ["git status"]
+
+
+def test_checks_absent_is_empty_not_an_error():
+    assert pc.parse_checks("# PART 01\n\nA. SCOPE\n   x\n") == []
+
+
+def test_check_without_an_id_is_invalid_not_skipped():
+    """A check that silently never runs is the failure mode this feature
+    exists to remove, so it comes back NAMED."""
+    got = pc.parse_checks("## Checks\n- `npm run orphan`\n")
+    assert len(got) == 1
+    assert got[0]["id"] is None
+    assert got[0]["command"] == "npm run orphan"
+    assert "no id" in got[0]["error"]
+
+
+def test_check_without_a_command_is_invalid():
+    got = pc.parse_checks("## Checks\n- LINT: nothing in backticks\n")
+    assert "no command" in got[0]["error"]
+
+
+def test_unsupported_expect_is_refused_by_name():
+    """Never silently downgraded to 'exit 0': the owner asked for a
+    criterion the console does not implement."""
+    got = pc.parse_checks("## Checks\n- X: `npm run x` (expect: no matches)\n")
+    assert got[0]["command"] == "npm run x"
+    assert "no matches" in got[0]["error"]
+
+
+def test_check_command_is_the_backticked_span_only():
+    """Same rule the owner-action parser uses: the command is the
+    backticked span, on one line. Trailing prose on the bullet is NOT
+    guessed at as part of the command — silently appending it would run
+    something the owner never wrote."""
+    got = pc.parse_checks(
+        "## Checks\n- LINT: `npx eslint src` --max-warnings 0\n")
+    assert got[0]["command"] == "npx eslint src"
+    assert got[0]["error"] is None
+    # a command wrapped onto the continuation line is not completed either
+    got = pc.parse_checks(
+        "## Checks\n- LINT: `npx eslint src`\n  --max-warnings 0\n")
+    assert got[0]["command"] == "npx eslint src"
+
+
+def test_checks_in_a_code_fence_never_count():
+    assert pc.parse_checks(
+        "## Checks\n```\n- LINT: `npm run lint`\n```\n") == []
+
+
+class _R:
+    def __init__(self, code, out="", err=""):
+        self.returncode, self.stdout, self.stderr = code, out, err
+
+
+def _stub(code=0, out="", err=""):
+    def runner(cmd, **kw):
+        runner.calls.append(kw)
+        return _R(code, out, err)
+    runner.calls = []
+    return runner
+
+
+def test_run_checks_reports_exit_code_as_the_verdict():
+    checks = pc.parse_checks("## Checks\n- LINT: `npm run lint`\n")
+    ok = pc.run_checks(".", checks, runner=_stub(0))
+    assert ok[0]["ok"] is True and ok[0]["code"] == 0
+    bad = pc.run_checks(".", checks, runner=_stub(1, out="88:11  error  any"))
+    assert bad[0]["ok"] is False and bad[0]["code"] == 1
+    assert "88:11  error  any" in bad[0]["output"]
+
+
+def test_run_checks_never_executes_an_invalid_check():
+    checks = pc.parse_checks("## Checks\n- X: `npm run x` (expect: nope)\n")
+    stub = _stub(0)
+    got = pc.run_checks(".", checks, runner=stub)
+    assert got[0]["ok"] is None            # neither pass nor fail
+    assert stub.calls == []                # and nothing was executed
+
+
+def test_run_checks_bounds_every_command_with_a_timeout():
+    stub = _stub(0)
+    pc.run_checks(".", pc.parse_checks(CHECKS_PLAN), timeout=42, runner=stub)
+    assert stub.calls and all(c["timeout"] == 42 for c in stub.calls)
+
+
+def test_run_checks_merges_stderr_and_trims_from_the_end():
+    # a lint failure lists findings at the BOTTOM; the tail is what the
+    # agent needs, so the head is what gets dropped
+    checks = [{"id": "LINT", "command": "npm run lint", "expect": None,
+               "error": None}]
+    stub = _stub(1, out="".join("noise %d\n" % i for i in range(1, 60))
+                 + "99:1  error  the real finding")
+    got = pc.run_checks(".", checks, runner=stub)[0]
+    assert "the real finding" in got["output"]
+    assert "noise 1" not in got["output"]
+    assert "earlier lines omitted" in got["output"]
+
+
+def test_a_timeout_or_a_crash_never_reads_as_a_pass():
+    import subprocess
+
+    checks = [{"id": "LINT", "command": "npm run lint", "expect": None,
+               "error": None}]
+
+    def timeout(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 300)
+
+    def crash(cmd, **kw):
+        raise OSError("no such file")
+
+    for runner, needle in ((timeout, "timed out"), (crash, "could not run")):
+        got = pc.run_checks(".", checks, runner=runner)[0]
+        assert got["ok"] is False
+        assert needle in got["error"]
+
+
+def test_render_separates_invalid_from_fail():
+    checks = pc.parse_checks("## Checks\n"
+                              "- LINT: `npm run lint`\n"
+                              "- X: `npm run x` (expect: nope)\n")
+    text = pc.render_check_results(
+        pc.run_checks(".", checks, runner=_stub(1)))
+    assert "INVALID" in text and "FAIL" in text
+    assert "0 passed, 1 failed, 1 not run" in text
+
+
+def test_declared_checks_reads_the_frozen_plan_not_the_draft(tmp_path):
+    pdir = tmp_path / "plans" / "demo"
+    write(pdir / "PART-01.draft.md", "## Checks\n- DRAFT: `npm run draft`\n")
+    assert pc.declared_checks(pdir) == [], "a mutable sidecar must not gate"
+    write(pdir / "PART-01 v1.0.md",
+          "# PART 01 — demo | v1.0 frozen\n\n"
+          "## Checks\n- LINT: `npm run lint`\n")
+    assert [c["id"] for c in pc.declared_checks(pdir)] == ["LINT"]
+
+
+def test_check_results_round_trip_through_the_last_run_file(tmp_path):
+    pdir = tmp_path / "plans" / "demo"
+    pdir.mkdir(parents=True)
+    results = pc.run_checks(tmp_path, pc.parse_checks(CHECKS_PLAN),
+                            runner=_stub(0))
+    assert pc.write_check_results(pdir, "demo", results) is None
+    assert pc.last_check_results(pdir) == {"LINT": "PASS", "TYPES": "PASS",
+                                           "EXPLICIT": "PASS"}
+
+
+def test_no_last_run_means_unrun_never_green(tmp_path):
+    pdir = tmp_path / "plans" / "demo"
+    pdir.mkdir(parents=True)
+    assert pc.last_check_results(pdir) == {}
+
+
+class _HealthApp(pc.App):
+    """_mkhealth with the two GUI reads stubbed — no Tk, no subprocess."""
+
+    def __init__(self):
+        pass
+
+    _frozen_file = staticmethod(pc.find_frozen_file)
+    _ip_summary = staticmethod(lambda p: (None, 0, "", ""))
+    _git_dirty = staticmethod(lambda r: None)
+
+
+def _frozen_with_checks(tmp_path, checks="- LINT: `npm run lint`\n",
+                        rows=TEMPLATE_MAP):
+    pdir = frozen_with_map(tmp_path, rows)
+    f = pdir / "PART-01 v1.0.md"
+    write(f, f.read_text(encoding="utf-8") + "\n## Checks\n" + checks)
+    return pdir
+
+
+def test_health_surfaces_checks_without_blocking_anything(tmp_path):
+    pdir = _frozen_with_checks(tmp_path, rows=PLAIN_MAP)
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n")
+    body = "\n".join(pc.App._mkhealth(_HealthApp(), tmp_path, pdir.name))
+    assert "declared checks (1" in body
+    assert "not run yet" in body
+    assert "PASS" not in body, body          # never implies a pass
+    assert "VERDICT: NEXT = session 2" in body, "a check must not gate Freeze"
+    assert "passed: 1/2" in body
+
+
+def test_health_reports_a_failed_check_from_the_last_run(tmp_path):
+    pdir = _frozen_with_checks(tmp_path)
+    results = pc.run_checks(
+        tmp_path, pc.parse_checks("## Checks\n- LINT: `npm run lint`\n"),
+        runner=_stub(1))
+    pc.write_check_results(pdir, pdir.name, results)
+    body = "\n".join(pc.App._mkhealth(_HealthApp(), tmp_path, pdir.name))
+    assert "FAIL (last run)" in body
+    assert "does not block Freeze on its own" in body
+
+
+def test_health_stays_quiet_when_no_checks_are_declared(tmp_path):
+    pdir = frozen_with_map(tmp_path, TEMPLATE_MAP)
+    write(pdir / "PROGRESS.md",
+          "SESSION 1 | 2026-10-04 | gates: g1, g2 | status: PASS | P00 v1.0\n")
+    body = "\n".join(pc.App._mkhealth(_HealthApp(), tmp_path, pdir.name))
+    assert "declared checks" not in body
+
+
+def test_console_never_writes_source_on_a_check_run(tmp_path):
+    """The boundary that keeps this feature out of forgery territory: a run
+    may only create CHECKS.last.md. Nothing under src/ may be created or
+    changed."""
+    pdir = _frozen_with_checks(tmp_path)
+    src = tmp_path / "src"
+    write(src / "a.ts", "export const a = 1\n")
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    results = pc.run_checks(
+        tmp_path, pc.parse_checks("## Checks\n- LINT: `npm run lint`\n"),
+        runner=_stub(0))
+    pc.write_check_results(pdir, pdir.name, results)
+    after = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    changed = [p for p in after if p not in before or after[p] != before[p]]
+    assert [p.name for p in changed] == [pc.CHECKS_LAST_FILE], changed
+    assert (src / "a.ts").read_bytes() == before[src / "a.ts"]
+
+
+def test_a_failing_run_never_ticks_a_recon_item(tmp_path):
+    pdir = _frozen_with_checks(tmp_path)
+    rc = pdir / "RECON-CHECKLIST.md"
+    write(rc, "- [ ] EXISTS: src/a.ts\n")
+    pc.run_checks(tmp_path,
+                  pc.parse_checks("## Checks\n- LINT: `npm run lint`\n"),
+                  runner=_stub(1))
+    assert "- [ ] EXISTS: src/a.ts" in rc.read_text(encoding="utf-8")
+
+
 # ------------------------------------------------- owner-pass status line
 READY = "PART-01 READY"
 # (nq, na, noa, nu, nu_owner, validation) -> the next step the label must
