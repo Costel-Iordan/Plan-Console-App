@@ -4028,10 +4028,13 @@ class DropOldestQueue(queue.Queue):
     def put_nowait(self, item):
         # mirrors queue.Queue.put_nowait (whose base implementation
         # calls back into self.put — do NOT delegate to it), but drops
-        # the OLDEST event instead of raising Full at capacity
+        # the OLDEST event instead of raising Full at capacity.
+        # Audit fix: release the dropped item's task ticket so
+        # queue.join() accounting stays consistent after a drop.
         with self.not_full:
             if self.maxsize > 0 and self._qsize() >= self.maxsize:
                 self._get()
+                self.unfinished_tasks -= 1   # release the dropped item's ticket
             self._put(item)
             self.unfinished_tasks += 1
             self.not_empty.notify()
