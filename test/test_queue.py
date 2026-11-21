@@ -103,3 +103,8 @@ def test_unbounded_queue_never_drops():
     for i in range(50):
         q.put(i)
     assert q.qsize() == 50
+
+
+if __name__ == "__main__":
+    import pytest
+    sys.exit(pytest.main([__file__, "-q"]))

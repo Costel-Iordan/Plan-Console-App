@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plan-console"
-version = "3.12"
+version = "3.13"
 description = "Paste-to-plan intake + session lifecycle manager"
 readme = "README.md"
 license = { text = "Apache-2.0" }

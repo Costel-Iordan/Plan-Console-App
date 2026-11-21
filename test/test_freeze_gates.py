@@ -883,15 +883,19 @@ def test_next_pending_session_deploy_window(tmp_path):
     assert "DEPLOY WINDOW" in nxt["label"], "leg a PASS → owner deploys now"
 
 
-def test_next_pending_session_leg_a_not_pass_blocks_copy(tmp_path):
+def test_next_pending_session_leg_a_not_pass_reruns_leg_a(tmp_path):
     pdir = tmp_path / "plans" / "notpass"
     write(pdir / "PART-01 v1.0.md", FROZEN_ROWS)
     write(pdir / "PROGRESS.md",
           "SESSION 1 | 2026-09-26 | gates: g1, g2 | status: PASS | P00 v1.0\n"
           "SESSION 2a | 2026-09-26 | gates: g7 | status: FAIL | P00 v1.0\n")
     nxt = pc.next_pending_session(pdir)
-    assert nxt["copyable"] is False, "leg a not PASS → nothing to copy yet"
-    assert "not PASS yet" in nxt["label"]
+    # R-71 — a FAILed leg a is NOT done: the next unit is a fresh 2a,
+    # and it IS copyable (re-running a failed leg is the correct move).
+    # The old code treated the FAIL record as done and offered 2b with
+    # copyable=False, which pointed at the wrong leg.
+    assert (nxt["n"], nxt["leg"], nxt["copyable"]) == (2, "a", True)
+    assert "leg 2a" in nxt["label"]
 
 
 # ------------------------------------------------------ plan snapshot

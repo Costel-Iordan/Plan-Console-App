@@ -33,7 +33,7 @@
         </div>
         <span class="pill">User Guide</span>
         <h1>Plan Console — User Guide</h1>
-        <p class="text-muted text-lg">Plan Console 3.12 — paste-to-plan intake + session lifecycle manager.
+        <p class="text-muted text-lg">Plan Console 3.13 — paste-to-plan intake + session lifecycle manager.
         Everything you need to install, understand and drive the app, from first launch to
         <code>PLAN COMPLETE</code>.</p>
         <p class="text-muted">Copyright © Costel Iordan (costel.iordan@gmail.com). Licensed under the
@@ -229,7 +229,7 @@ python -c "import tkinter"          (should print nothing = OK)</pre>
     again. Your plans in the repo are never touched by this.</p>
 
     <h3>3.3 Window tour (text layout map)</h3>
-    <p>The window title reads <strong>"Plan Console 3.12"</strong>. The layout, top to bottom:</p>
+    <p>The window title reads <strong>"Plan Console 3.13"</strong>. The layout, top to bottom:</p>
     <pre class="terminal-code">SETUP BAR (collapsible)
   Always visible: a "Setup ▾" toggle button plus a one-line summary
   of the current configuration (repo folder, model, and whether the
@@ -546,6 +546,15 @@ LOG (bottom)
         <li>Nothing runs or is written without your confirmation; every event is archived to
             <code>owner-pass.log</code>.</li>
     </ul>
+    <p><strong>Declared checks (Sessions → Run checks)</strong> — a frozen plan may carry a
+    <code>## Checks</code> section with one bullet per standing gate, for example
+    <code>- LINT: `npm run lint`</code>. <strong>Run checks</strong> lists every command verbatim and
+    asks once; commands that download, chain, or spawn another interpreter get a second, dedicated
+    confirmation. Each command is bounded by a timeout and runs in the repo. The console records the
+    result only — it writes <code>CHECKS.last.md</code> and one <code>HEALTH.md</code> audit line,
+    never source, never a recon tick, and it never claims a gate passed. A malformed check is reported
+    <code>INVALID</code> and does <em>not</em> run; a timeout or crash reads <code>FAIL</code>, never
+    <code>PASS</code>. A failing run becomes a ready-to-send agent instruction in one click.</p>
     <p><strong>Recon checklist</strong> — shown with the questions. Items the agent could already
     check are ticked <code>[x]</code> for you. Items left for you: run the check, then change
     <code>[ ]</code> to <code>[x]</code> in <code>RECON-CHECKLIST.md</code> (or delete lines you
@@ -746,8 +755,9 @@ LOG (bottom)
             <tr><td style="padding:0.4rem;">Status</td><td style="padding:0.4rem;">Sessions</td><td style="padding:0.4rem;">One-line where-am-I</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Session report</td><td style="padding:0.4rem;">Sessions</td><td style="padding:0.4rem;">Verdict for one session; on OK auto-advances, on ⚠ CHECK copies the fix hint</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Plan health</td><td style="padding:0.4rem;">Sessions</td><td style="padding:0.4rem;">Verdict for the whole plan + writes HEALTH.md</td><td style="padding:0.4rem;">no</td></tr>
+            <tr><td style="padding:0.4rem;">Run checks</td><td style="padding:0.4rem;">Sessions</td><td style="padding:0.4rem;">Runs the frozen plan's ## Checks block, records CHECKS.last.md + HEALTH.md</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Refresh</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Loads questions, owner actions and recon checklist</td><td style="padding:0.4rem;">no</td></tr>
-            <tr><td style="padding:0.4rem;">Escalate to owner action &rarr;</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Moves an OWNER-ONLY recon item into the Owner actions panel so you can run it there</td><td style="padding:0.4rem;">yes</td></tr>
+            <tr><td style="padding:0.4rem;">Escalate to owner action &rarr;</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Moves an OWNER-ONLY recon item into the Owner actions panel so you can run it there</td><td style="padding:0.4rem;">no</td></tr>
 <tr><td style="padding:0.4rem;">What's blocking Freeze?</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Read-only dry-run of the Freeze gates</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Accept recommendation</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Confirmed one-click accept of the RECOMMEND line</td><td style="padding:0.4rem;">no</td></tr>
             <tr><td style="padding:0.4rem;">Save answer → draft + remove</td><td style="padding:0.4rem;">Owner pass</td><td style="padding:0.4rem;">Saves your typed answer and removes the question</td><td style="padding:0.4rem;">no</td></tr>
@@ -1018,7 +1028,7 @@ LOG (bottom)
     <hr>
 
     <h2 id="license">13. License & credits</h2>
-    <p><strong>Plan Console 3.12</strong><br>
+    <p><strong>Plan Console 3.13</strong><br>
     Paste-to-plan intake + session lifecycle manager<br>
     Copyright © Costel Iordan (costel.iordan@gmail.com)</p>
     <p>Licensed under the <strong>Apache License, Version 2.0</strong> — see the

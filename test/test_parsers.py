@@ -1155,19 +1155,30 @@ def test_starter_files_byte_identity():
 
 
 def main():
+    import tempfile
     fns = [(k, v) for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]
     failed = 0
     for name, fn in fns:
+        tmp = None
         try:
             if "tmp_path" in fn.__code__.co_varnames:
-                fn(tmp_path=__import__("tempfile").mkdtemp())
+                # R-92 — tests use pathlib.Path; a str mkdtemp() made the
+                # hand-rolled runner abort with TypeError. TemporaryDirectory
+                # also cleans up the ~90 leaked dirs per direct run.
+                tmp = tempfile.TemporaryDirectory()
+                fn(tmp_path=Path(tmp.name))
             else:
                 fn()
             print("PASS %s" % name)
-        except AssertionError as exc:
+        except Exception as exc:
             failed += 1
             print("FAIL %s — %s" % (name, exc))
+            import traceback
+            traceback.print_exc()
+        finally:
+            if tmp is not None:
+                tmp.cleanup()
     print("---")
     print("%d/%d passed" % (len(fns) - failed, len(fns)))
     return 1 if failed else 0

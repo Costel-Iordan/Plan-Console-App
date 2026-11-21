@@ -16,6 +16,7 @@ Desktop.ini
 
 # scratch / temp files
 *.tmp
+*.bak
 
 # internal development artifacts (never committed; excluded from rel/)
 audits/

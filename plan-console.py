@@ -382,9 +382,13 @@ One-time: point "Repo folder" at your project folder and click
 "Init starter repo" to create PART-00.md, templates/ and commands/.
 Existing repo: "Update command files" refreshes commands/ only.
 
-Public release: version 3.10 (APP_VERSION). The public release started
+Public release: version 3.13 (APP_VERSION). The public release started
 at 1.0.0, continuing the former internal v3.6 lineage; the historical
-v2.x–v3.10 changelog above is kept intact for reference.
+v2.x–v3.10 changelog above is kept intact for reference. v3.13 is the
+rev-6 audit batch: fixed-argv read-only git execution, context-pack
+path/symlink hardening, safe git environment, worker-threaded checks and
+owner actions, PASS-only session sequencing, read-error gates, and
+crash-safe persistence (see the audit reports in audits/).
 
 Settings are stored in plan-console.json next to this script.
 """
@@ -444,7 +448,7 @@ APP_NAME = "Plan Console"
 # the About box both read it, so the app reported a version its own
 # behavior no longer matched — which makes any bug report ("does 1.2.0
 # have this?") unanswerable. It now tracks the feature version.
-APP_VERSION = "3.12"              # public release
+APP_VERSION = "3.13"              # public release
 COPYRIGHT_HOLDER = "Costel Iordan"
 COPYRIGHT_EMAIL = "costel.iordan@gmail.com"
 COPYRIGHT_LINE = f"Copyright © {COPYRIGHT_HOLDER} ({COPYRIGHT_EMAIL})"
@@ -688,8 +692,9 @@ maximum extent permitted by applicable law:
 
 """
 
-import fnmatch, json, os, queue, re, shutil, socket, subprocess, threading, time, traceback
+import fnmatch, json, os, queue, re, shlex, shutil, socket, subprocess, tempfile, threading, time, traceback
 import urllib.request, urllib.error
+import urllib.parse
 from datetime import date, datetime
 from pathlib import Path
 import tkinter as tk
@@ -701,9 +706,21 @@ except ImportError:                  # non-Windows: guarded fallbacks below
 
 HERE = Path(__file__).resolve().parent
 CFG = HERE / "plan-console.json"
+_CFG_LOAD_NOTE = ""
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MODELS_URL = "https://openrouter.ai/api/v1/models"
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# R-33/R-96 — named timeouts and intervals. Literal 60/360/300/10 values
+# were scattered across the API, owner-action, checks and git lanes; naming
+# them makes the policy reviewable and keeps the tests off magic numbers.
+API_CONNECT_TIMEOUT = 60          # socket/connect timeout per request
+API_TOTAL_TIMEOUT = 360           # whole streamed reply (checked per chunk)
+OWNER_ACTION_TIMEOUT = 60         # one read-only owner command
+GIT_TIMEOUT = 10                  # one git query (status/diff)
+STRIP_POLL_MS = 3000              # plan-strip poll interval
+DRAIN_INTERVAL_MS = 100           # GUI event queue drain interval
+SLUG_SCAN_TTL = 1.0               # seconds a plans/ scan may be reused
 
 
 # v3.3.1 — cross-repo slug leakage fix. recent_slugs is a GLOBAL list
@@ -725,6 +742,24 @@ PLAN_MARKER_FILES = ("SOURCE.md", "OPEN-QUESTIONS.md", "RECON-CHECKLIST.md",
                      "TRIAGE.md", "HEALTH.md", "VALIDATION.md")
 
 
+def _legacy_part01_is_frozen(path):
+    """True when a legacy PART-01.md carries a freeze header.
+
+    R-89 — this rule used to be copy-pasted in is_plan_dir() and
+    find_frozen_file(). Both now call this one function, so the dropdown
+    and every execution surface cannot disagree about whether a legacy
+    file is frozen. An unreadable file is treated as not frozen (the
+    historical behaviour) rather than crashing a directory scan."""
+    try:
+        if not path.is_file():
+            return False
+        head = "\n".join(path.read_text(encoding="utf-8")
+                         .splitlines()[:3]).lower()
+        return "frozen" in head
+    except OSError:
+        return False
+
+
 def is_plan_dir(path):
     """True when <path> is a directory holding a recognized plan file.
     PART-01.draft.md / PART-01 v*.md always qualify; a legacy bare
@@ -742,21 +777,41 @@ def is_plan_dir(path):
             return True
         if (path / "PART-01.draft.md").is_file():
             return True
-        legacy = path / "PART-01.md"
-        if legacy.is_file():
-            head = "\n".join(legacy.read_text(encoding="utf-8")
-                             .splitlines()[:3]).lower()
-            if "frozen" in head:
-                return True
+        if _legacy_part01_is_frozen(path / "PART-01.md"):
+            return True
         return False
     except Exception:
         return False
 
 
+_SLUG_SCAN_CACHE = {}
+
+
+def invalidate_slug_cache():
+    """Drop every cached plans/ scan (R-90). Called after Proceed, sample
+    copy and any other action that creates a plan directory, so the
+    dropdown cannot show a 1-second-stale list at the one moment the
+    owner is looking for the new slug."""
+    _SLUG_SCAN_CACHE.clear()
+
+
 def scan_plan_slugs(repo):
     """Sorted kebab-case plan directories under <repo>/plans/ — a
     directory qualifies only when SLUG_RE matches AND it holds a
-    recognized plan marker file (is_plan_dir)."""
+    recognized plan marker file (is_plan_dir).
+
+    R-90 — FocusIn/FocusOut and every KeyRelease used to walk plans/
+    synchronously. A short TTL cache keeps the dropdown responsive on a
+    large repo; explicit actions that create a plan call
+    invalidate_slug_cache() so the new slug is visible immediately."""
+    try:
+        key = str(Path(repo).resolve())
+    except OSError:
+        key = str(repo)
+    now = time.monotonic()
+    hit = _SLUG_SCAN_CACHE.get(key)
+    if hit is not None and now - hit[0] < SLUG_SCAN_TTL:
+        return list(hit[1])
     found = []
     try:
         plans = Path(repo) / "plans"
@@ -766,6 +821,7 @@ def scan_plan_slugs(repo):
                     found.append(p.name)
     except Exception:
         pass
+    _SLUG_SCAN_CACHE[key] = (time.monotonic(), list(found))
     return found
 
 
@@ -834,6 +890,13 @@ OWNER_SECTION_RE = re.compile(
 # no longer be visible to one and invisible to the other.
 OWNER_ACTIONS_HEADING_RE = re.compile(
     r"^#{2,}\s*owner\s+actions\b", re.I)
+# R-73 — the owner-answer inbox was located by a case-SENSITIVE
+# text.find("## OWNER ANSWERS"), so a legal lowercase heading made every
+# parked answer invisible to the Freeze gate and let new pairs be
+# appended outside the section. One case-insensitive heading regex,
+# read through _section_spans() like every other section.
+OWNER_ANSWERS_HEADING_RE = re.compile(
+    r"^#{2,}\s*owner\s+answers\b", re.I)
 # a heading of ANY depth closes the region for BOTH parsers. They used
 # to disagree here: parse_questions reset on every '#' line while
 # parse_owner_actions only broke on a literal '## ' prefix, so a '###'
@@ -1145,6 +1208,15 @@ def _item_text(line):
     same thing for DEFERRED and for OWNER-ONLY."""
     m = RECON_ITEM_RE.match(line)
     return line[m.end():].strip() if m else line.strip()
+
+
+def line_still_matches(lines, lineno, expected):
+    """True when `lines[lineno]` is still the line Refresh read (R-17).
+
+    The four owner-pass handlers each hand-rolled this exact-index guard
+    (v2.1/v3.5.1). One helper keeps the rule identical everywhere."""
+    return (0 <= lineno < len(lines)
+            and lines[lineno].strip() == expected.strip())
 
 
 def _leading_tag(rest, start_re, mention_re):
@@ -1471,24 +1543,89 @@ def count_owner_answers(text):
     'NEEDS CLARIFICATION' exempts it. Pairs outside the section never
     count. Console-side twin of the validate-plan leftover check, so
     the Freeze gate and the Owner-pass tab see the same number the
-    validator reports."""
-    pos = text.find("## OWNER ANSWERS")
-    if pos == -1:
+    validator reports.
+
+    R-73 — the section is located case-insensitively through the shared
+    _section_spans() scanner. It used to be a case-sensitive
+    text.find("## OWNER ANSWERS"), so a legal lowercase heading made
+    every parked answer invisible to this counter and to the Freeze
+    gate."""
+    spans = _section_spans(text, OWNER_ANSWERS_HEADING_RE)
+    if not spans:
         return 0
-    leftover, in_pair, flagged = 0, False, False
-    for line in text[pos:].splitlines()[1:]:
-        s = line.strip()
-        if s.startswith("#"):
-            break                      # a later heading ends the section
-        if line.startswith("- Q:"):
-            if in_pair and not flagged:
-                leftover += 1
-            in_pair, flagged = True, False
-        elif in_pair and "NEEDS CLARIFICATION" in s:
-            flagged = True
-    if in_pair and not flagged:
-        leftover += 1
+    lines = text.splitlines()
+    leftover = 0
+    for a, b in spans:
+        in_pair, flagged = False, False
+        for i in range(a, b):
+            line = lines[i]
+            s = line.strip()
+            if line.startswith("- Q:"):
+                if in_pair and not flagged:
+                    leftover += 1
+                in_pair, flagged = True, False
+            elif in_pair and "NEEDS CLARIFICATION" in s:
+                flagged = True
+        if in_pair and not flagged:
+            leftover += 1
     return leftover
+
+
+def insert_owner_answer(text, qlines, answer):
+    """Insert one Q/A pair at the END of the OWNER ANSWERS section.
+
+    R-73 — on_answer_save used to append the pair to end-of-file. When
+    the inbox is followed by another heading (for example a §G note the
+    agent added), the pair landed outside the section: the Owner-pass
+    counter, the Freeze gate and owner-resolve all ignored it. The pair
+    is now inserted before the heading that closes the section, and a
+    missing section is created with the self-labeling header."""
+    pair = ["- Q: %s" % qlines[0]]
+    pair += ["      %s" % c for c in qlines[1:]]
+    pair += ["  A: %s" % answer]
+    lines = text.splitlines()
+    spans = _section_spans(text, OWNER_ANSWERS_HEADING_RE)
+    if not spans:
+        head = ("\n\n## OWNER ANSWERS (appended %s — TEMPORARY inbox: "
+                "run commands/owner-resolve.md to integrate these "
+                "answers into §A–§G, then delete this section)\n"
+                % date.today())
+        return text.rstrip() + head + "\n".join(pair) + "\n"
+    a, b = spans[-1]
+    insert_at = b
+    while insert_at > a and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    block = [""] + pair
+    if b < len(lines):
+        block.append("")
+    lines[insert_at:insert_at] = block
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+def append_owner_action(text, bullet):
+    """Append one `- [ ] …` bullet INSIDE the owner-action section (R-80).
+
+    The escalation handler used to append at end-of-file whenever the
+    heading existed. If another section followed it, the new action sat
+    under that section and parse_owner_actions() never saw it — the same
+    invisible-item class the section scanner exists to prevent. A missing
+    section is created at the end."""
+    lines = text.splitlines()
+    spans = _section_spans(text, OWNER_ACTIONS_HEADING_RE)
+    if not spans:
+        return text.rstrip() + "\n\n## Owner actions\n\n%s\n" % bullet
+    a, b = spans[-1]
+    insert_at = b
+    while insert_at > a and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    block = []
+    if insert_at > 0 and lines[insert_at - 1].strip():
+        block.append("")
+    block.append(bullet)
+    if b < len(lines):
+        block.append("")
+    lines[insert_at:insert_at] = block
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
 def owner_status_text(nq, na, noa, nu, nu_owner, validation):
@@ -1580,7 +1717,7 @@ READONLY_PREFIXES = (
 # fires when the command is a whitelisted prefix AND contains none of
 # these separators/redirects — anything else falls back to copy-only.
 READONLY_FORBIDDEN_RE = re.compile(
-    r"[;|&`><$\n\r]|\bforeach\b|\bforeach-object\b|\btee-object\b"
+    r"[;|&`><$\n\r()@{}]|\bforeach\b|\bforeach-object\b|\btee-object\b"
     r"|\bset-content\b|\badd-content\b|\bout-file\b|\bexport-\w+"
     r"|\bstart-process\b|\binvoke-\w+|\biex\b|\bsc\.exe\b"
     r"|--output\b|--out\b"
@@ -1593,13 +1730,125 @@ READONLY_FORBIDDEN_RE = re.compile(
 
 def is_readonly_command(cmd):
     """True when <cmd> starts with a whitelisted read-only prefix (v3.5)
-    AND carries no shell separator, redirection, or file-writing flag
-    (v3.5.1 audit fix). Default-deny: anything else is copy-only, never
-    auto-run."""
+    AND carries no shell separator, subexpression, redirection, or
+    file-writing flag (v3.5.1/v3.13 audit fix). Default-deny: anything
+    else is copy-only, never auto-run.
+
+    R-63 — PowerShell evaluates `( … )` and `@( … )` in ARGUMENT mode,
+    with no other metacharacter present: `git log (calc.exe)` executes
+    calc.exe. Parentheses, `@`, braces and quotes-as-code were missing
+    from the forbidden set, so the prefix check alone declared those
+    commands read-only. They are rejected now, and the git lane executes
+    a fixed argv instead of a PowerShell string (defence in depth)."""
     c = cmd.strip().lower()
     if not any(c.startswith(p) for p in READONLY_PREFIXES):
         return False
     return not READONLY_FORBIDDEN_RE.search(c)
+
+
+GIT_READONLY_SUBCOMMANDS = ("status", "diff", "log", "show")
+# Diff-family options that stop git from running a repo-configured
+# external diff or textconv filter. They apply to diff/log/show, not to
+# status.
+GIT_DIFF_SAFETY = ("--no-ext-diff", "--no-textconv")
+
+
+def _git_env():
+    """Environment for EVERY git subprocess (R-65).
+
+    A working copy restored from a zip can carry .git/config with
+    core.fsmonitor / diff.external or .gitattributes with a diff driver.
+    System/global config is disabled, paging is off, terminal prompts are
+    off, and optional locks are off so a read-only query cannot mutate
+    the index."""
+    env = os.environ.copy()
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_PAGER"] = "cat"
+    env["GIT_EXTERNAL_DIFF"] = ""
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return env
+
+
+def _git_readonly_argv(command, repo):
+    """Fixed argv for a whitelisted read-only git command, or None.
+
+    R-63 — "read-only" commands are no longer routed through
+    `powershell -Command <string>`, where argument-mode subexpressions
+    execute. The command is parsed in Python, the subcommand is checked
+    against a fixed set, and git receives an argv with its config
+    neutralized (R-65). Anything with a quote/backslash ambiguity or a
+    non-diff-family subcommand is refused and falls back to copy-only.
+    """
+    try:
+        toks = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if len(toks) < 2 or toks[0].lower() != "git":
+        return None
+    sub = toks[1].lower()
+    if sub not in GIT_READONLY_SUBCOMMANDS:
+        return None
+    if any(("(" in t or ")" in t or "@" in t or "{" in t or "}" in t)
+           for t in toks):
+        return None
+    if any("\\" in t for t in toks):
+        return None              # backslash would change meaning off-POSIX
+    # R-63 defence in depth: owner actions are repo-relative. An absolute
+    # path (or a traversal) would let a crafted "read-only" action print
+    # an out-of-repo secret into the log.
+    for t in toks[2:]:
+        if t.startswith(("/", "\\", "..")) or "/.." in t or "..\\" in t:
+            return None
+        if re.match(r"^[A-Za-z]:", t):
+            return None
+    argv = ["--no-pager", "-C", str(repo),
+            "-c", "core.fsmonitor=false", "-c", "core.pager=cat", sub]
+    if sub in ("diff", "log", "show"):
+        argv += list(GIT_DIFF_SAFETY)
+    argv += toks[2:]
+    return argv
+
+
+def shell_argv(command):
+    """Run one owner-approved command through the platform shell.
+
+    R-66/R-108 — the Checks lane used powershell.exe unconditionally, so
+    on macOS/Linux every check failed with 'powershell not found'. The
+    app is documented as cross-platform: PowerShell on Windows, /bin/sh
+    elsewhere."""
+    if os.name == "nt":
+        return [powershell_exe(), "-NoProfile", "-NonInteractive",
+                "-Command", command]
+    return ["/bin/sh", "-c", command]
+
+
+def _run_readonly_command(command, repo):
+    """Execute one whitelisted read-only command and return the
+    CompletedProcess (R-63). Raises ValueError when the command cannot
+    be normalized to a fixed argv; callers show that as copy-only."""
+    if not is_readonly_command(command):
+        raise ValueError("not on the read-only whitelist")
+    if command.strip().lower().startswith("git "):
+        argv = _git_readonly_argv(command, repo)
+        if argv is None:
+            raise ValueError("git command did not normalize to a fixed argv")
+        g = git_exe()
+        if not g:
+            raise RuntimeError("git executable not found — install git or "
+                               "add it to PATH")
+        return subprocess.run([g] + argv, cwd=str(repo), env=_git_env(),
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              timeout=OWNER_ACTION_TIMEOUT)
+    if os.name != "nt":
+        raise ValueError("PowerShell cmdlets are copy-only on this platform "
+                         "— use 'Copy command' and run it yourself")
+    return subprocess.run(shell_argv(command), cwd=str(repo),
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
+                          timeout=OWNER_ACTION_TIMEOUT)
 
 
 def parse_owner_actions(text):
@@ -1818,6 +2067,23 @@ CHECK_MARKS = {"True": "✓ PASS", "False": "✖ FAIL", "None": "⚠ INVALID"}
 CHECKS_RESULT_RE = re.compile(r"^-\s+(?P<id>[^\s:]+):\s*(?P<ok>PASS|FAIL|"
                               r"INVALID)\s*(?:\(exit\s+(?P<code>-?\d+)\))?",
                               re.I)
+# R-66 — commands that download, chain, or invoke another interpreter get
+# a SECOND, dedicated confirmation before they run. The frozen plan is
+# the authorization, but a single "yes" over a multi-command block is not
+# enough for a command that can reach the network or spawn a shell.
+CHECK_RISKY_RE = re.compile(
+    r"[;|&><`$\n\r]|\b(?:curl|wget|iwr|invoke-webrequest|invoke-restmethod"
+    r"|start-process|iex|invoke-expression|powershell|pwsh|cmd(?:\.exe)?"
+    r"|bash|node\s+-e|python\s+-c|npm\s+(?:install|i|ci)|pnpm\s+(?:install"
+    r"|add)|yarn\s+(?:install|add)|pip\s+install|git\s+clone|remove-item"
+    r"|del\s|format\s|reg\s)", re.I)
+
+
+def check_is_risky(command):
+    """True when a declared check can download, chain, or spawn another
+    interpreter (R-66). Used only to require a second confirmation; the
+    command still runs through the normal timeout/record path."""
+    return bool(command and CHECK_RISKY_RE.search(command))
 
 
 def render_check_results(results):
@@ -1920,9 +2186,9 @@ def run_checks(repo, checks, timeout=CHECK_DEFAULT_TIMEOUT, runner=None):
             out.append(row)
             continue
         try:
-            r = runner([powershell_exe(), "-NoProfile", "-Command",
-                        row["command"]],
+            r = runner(shell_argv(row["command"]),
                        cwd=str(repo), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace",
                        timeout=timeout)
             row["code"] = r.returncode
             combined = "\n".join(x for x in ((r.stdout or "").strip(),
@@ -1985,9 +2251,15 @@ def unaccounted_escalations(text):
         m = Q_LINE_RE.match(line)
         if m and m.group(2).strip():
             blk = question_block(text, i)
-            # only flag a genuine block: a numbered line with a QUESTION
-            # or a real decision, not a stray '1.' inside a fenced block
-            if blk.strip():
+            # R-88 — only a QUESTION-SHAPED block is a stranded
+            # escalation. Numbered SQL/procedure steps under "## Owner
+            # actions" were flagged as orphan questions, which trains the
+            # owner to ignore the one warning that matters. A real
+            # legacy question still qualifies through its '?'.
+            looks_like_question = bool(
+                re.search(r"(?im)^\s*QUESTION\s*:", blk)
+                or any(l.strip().endswith("?") for l in blk.splitlines()))
+            if blk.strip() and looks_like_question:
                 out.append(blk.strip())
     return out
 
@@ -2299,7 +2571,11 @@ def read_progress(path):
 
     if not path.is_file():
         return entries
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return entries
+    for line in body.splitlines():
         if not line.strip():
             continue
         if PROG_SESSION_START_RE.match(line):
@@ -2329,6 +2605,35 @@ def latest_sessions(records):
             dups.append(key)
         out[key] = rec
     return out, sorted(set(dups))
+
+
+def latest_passed_keys(records):
+    """{(n, leg)} whose LATEST record says status PASS (R-71).
+
+    A session is complete only when its most recent canonical record
+    reports PASS. FAIL, PARTIAL, BLOCKED and UNKNOWN are all still
+    outstanding. The old sequencing code used the mere EXISTENCE of a
+    record as 'done', so a failed session 1 allowed session 2 to start
+    and the plan strip could report 'all sessions recorded' for a plan
+    whose last line was FAIL. Last-record-wins is deliberate: a
+    corrective PASS after an earlier FAIL completes the session, and a
+    later FAIL reopens it."""
+    latest, _dups = latest_sessions(records)
+    return {key for key, rec in latest.items() if rec["status"] == "PASS"}
+
+
+def session_completed(rows, records, n):
+    """True when session `n` is complete for sequencing (R-71).
+
+    A plain session needs a latest PASS record. A split (pre/post) deploy
+    session is complete only when BOTH legs have a latest PASS record —
+    a finished leg a is the DEPLOY WINDOW, not a completed session, and
+    the next session must not start past it."""
+    row = (rows or {}).get(n)
+    passed = latest_passed_keys(records)
+    if row and row[3]:
+        return (n, "a") in passed and (n, "b") in passed
+    return (n, "") in passed
 
 
 def _pick_leg(records, n, leg):
@@ -2557,11 +2862,8 @@ def find_frozen_file(pdir):
     if vers:
         return vers[-1]
     legacy = pdir / "PART-01.md"
-    if legacy.is_file():
-        head = "\n".join(legacy.read_text(encoding="utf-8")
-                         .splitlines()[:3]).lower()
-        if "frozen" in head:
-            return legacy
+    if _legacy_part01_is_frozen(legacy):
+        return legacy
     return None
 
 
@@ -2573,8 +2875,11 @@ def session_map_rows(pdir):
     part01 = find_frozen_file(pdir)
     if part01 is None:
         return rows
-    for line in complete_map_rows(
-            part01.read_text(encoding="utf-8").splitlines()):
+    try:
+        plan_text = part01.read_text(encoding="utf-8")
+    except OSError:
+        return rows
+    for line in complete_map_rows(plan_text.splitlines()):
         cells = map_row_cells(line)
         # v3.10 — map_row_number() so this parser accepts '1', '1.', '1)'
         # and '1:' exactly as session_row_gates does. It used to test
@@ -2643,9 +2948,10 @@ def next_pending_session(pdir, rows=None, records=None):
       label    human wording, identical to the Status 'next:' value
       unreadable True when the plan IS frozen but §A yielded no session
                rows at all — never conflated with 'all done', see below
-      copyable True when 'Next session →' may prefill + copy: False for
-               the leg-a-not-PASS deploy state (nothing to copy yet), for
-               n=None (nothing left) and when the map is unreadable."""
+      copyable True when the strip/"Next session" may prefill + copy:
+               False only for n=None (nothing left) or an unreadable map.
+               A failed leg is offered again (copyable True) rather than
+               pointing at the post-deploy leg."""
     if find_frozen_file(pdir) is None:
         return None
     rows = session_map_rows(pdir) if rows is None else rows
@@ -2665,7 +2971,10 @@ def next_pending_session(pdir, rows=None, records=None):
                 "copyable": False}
     prog = pdir / "PROGRESS.md"
     recs = read_progress(prog) if prog.is_file() else (records or [])
-    done = {(r["n"], r["leg"]) for r in recs}
+    # R-71 — only the LATEST PASS record completes a (session, leg).
+    # Mere existence used to count: a FAIL/PARTIAL/BLOCKED line made the
+    # session 'done' and the strip skipped past work that had not passed.
+    done = latest_passed_keys(recs)
     for n in sorted(rows):
         # Owner-deferred rows are skipped, not offered: their gate id stays on
         # the map so nothing renumbers, but no session may claim it, so no
@@ -2676,17 +2985,15 @@ def next_pending_session(pdir, rows=None, records=None):
             continue
         if rows[n][3]:                       # split (pre/post) row
             if (n, "a") not in done:
+                # R-71 — a FAIL/PARTIAL/BLOCKED leg a is NOT done; offer
+                # a fresh leg a (the correct next action), never leg b.
                 return {"n": n, "leg": "a",
                         "label": "leg %da (pre-deploy)" % n, "copyable": True}
             if (n, "b") not in done:
-                a = _pick_leg(recs, n, "a")
-                ok_a = a is not None and a["status"] == "PASS"
                 return {"n": n, "leg": "b",
                         "label": ("DEPLOY WINDOW — owner runs Coolify NOW, "
-                                  "then leg %db (post-deploy)" % n)
-                                 if ok_a else
-                                 "leg %da (pre-deploy) — not PASS yet" % n,
-                        "copyable": ok_a}
+                                  "then leg %db (post-deploy)" % n),
+                        "copyable": True}
         elif (n, "") not in done:
             return {"n": n, "leg": "", "label": "session %d" % n,
                     "copyable": True}
@@ -2722,36 +3029,50 @@ def freeze_gate_report(pdir):
          "already frozen (%s)" % frozen.name if frozen else "no frozen plan yet")
 
     oq_text = ""
+    oq_err = None
     oq = pdir / "OPEN-QUESTIONS.md"
     if oq.is_file():
         try:
             oq_text = oq.read_text(encoding="utf-8")
-        except OSError:
-            oq_text = ""
-    qs = parse_questions(oq_text) if oq_text else []
-    if qs:
-        previews = []
-        for lineno, _hdr in qs[:3]:
-            blk = [l.strip() for l in
-                   question_block(oq_text, lineno).strip().splitlines()]
-            qline = next((l for l in blk
-                          if re.match(r"QUESTION\s*:", l, re.I)),
-                         blk[0] if blk else "")
-            previews.append(qline[:80])
-        detail = ("%d open question(s) — answer them in the Owner pass tab"
-                  % len(qs))
-        detail += " First: " + " | ".join(previews)
-    elif oq_text:
-        detail = "0 open questions"
+        except OSError as exc:
+            oq_err = str(exc)
+    if oq_err is not None:
+        # R-74 — an unreadable file must BLOCK, not read as "0 open
+        # questions". The old except-OSError set oq_text="" and every
+        # dependent gate passed over content the console never saw.
+        _add("questions", "Open questions", False,
+             "OPEN-QUESTIONS.md exists but could NOT be read (%s) — fix "
+             "access before Freezing; the question list is unknown." % oq_err)
     else:
-        detail = "no OPEN-QUESTIONS.md"
-    _add("questions", "Open questions", not qs, detail)
+        qs = parse_questions(oq_text) if oq_text else []
+        if qs:
+            previews = []
+            for lineno, _hdr in qs[:3]:
+                blk = [l.strip() for l in
+                       question_block(oq_text, lineno).strip().splitlines()]
+                qline = next((l for l in blk
+                              if re.match(r"QUESTION\s*:", l, re.I)),
+                             blk[0] if blk else "")
+                previews.append(qline[:80])
+            detail = ("%d open question(s) — answer them in the Owner pass tab"
+                      % len(qs))
+            detail += " First: " + " | ".join(previews)
+        elif oq_text:
+            detail = "0 open questions"
+        else:
+            detail = "no OPEN-QUESTIONS.md"
+        _add("questions", "Open questions", not qs, detail)
 
-    noa = count_open_owner_actions(oq_text) if oq_text else 0
-    _add("owner_actions", "Owner actions", not noa,
-         ("%d unchecked owner action(s) — run/copy them in the Owner pass "
-          "tab or mark them done" % noa) if noa
-         else "no unchecked owner actions")
+    if oq_err is not None:
+        _add("owner_actions", "Owner actions", False,
+             "OPEN-QUESTIONS.md could NOT be read (%s) — the owner-action "
+             "list cannot be verified." % oq_err)
+    else:
+        noa = count_open_owner_actions(oq_text) if oq_text else 0
+        _add("owner_actions", "Owner actions", not noa,
+             ("%d unchecked owner action(s) — run/copy them in the Owner pass "
+              "tab or mark them done" % noa) if noa
+             else "no unchecked owner actions")
 
     # v3.8 — WARNING, never a blocking gate: checked owner actions with
     # no console-side log entry were ticked outside the Plan Console,
@@ -2774,15 +3095,21 @@ def freeze_gate_report(pdir):
              level="warn")
 
     na = 0
+    draft_err = None
     if draft.is_file():
         try:
             na = count_owner_answers(draft.read_text(encoding="utf-8"))
-        except OSError:
-            na = 0
-    _add("parked", "Owner answers integrated", not na,
-         ("%d owner answer(s) parked in ## OWNER ANSWERS — run 'Agent: "
-          "finish owner pass' to integrate them, then re-validate" % na)
-         if na else "no parked answers")
+        except OSError as exc:
+            draft_err = str(exc)
+    if draft_err is not None:
+        _add("parked", "Owner answers integrated", False,
+             "PART-01.draft.md exists but could NOT be read (%s) — parked "
+             "answers are unknown." % draft_err)
+    else:
+        _add("parked", "Owner answers integrated", not na,
+             ("%d owner answer(s) parked in ## OWNER ANSWERS — run 'Agent: "
+              "finish owner pass' to integrate them, then re-validate" % na)
+             if na else "no parked answers")
 
     # v3.9 — the systemic invisible-escalation guard. A numbered question
     # block that sits in a skipped region and is claimed by NO owner
@@ -2803,32 +3130,38 @@ def freeze_gate_report(pdir):
 
     n = 0
     owner_only = 0
+    rc_err = None
     rc = pdir / "RECON-CHECKLIST.md"
     if rc.is_file():
         try:
             rc_text = rc.read_text(encoding="utf-8")
             n = count_open_recon(rc_text)
             owner_only = count_open_recon_owner_only(rc_text)
-        except OSError:
-            n = owner_only = 0
-    # v3.9 — the recon gate's remedy text now distinguishes what the AGENT
-    # owes from what only the OWNER can discharge. Before this, an
-    # OWNER-ONLY item produced "tick them in the Owner pass tab" — advice
-    # that asks the owner to forge the very assertion the intake contract
-    # forbids the agent from making, on an item the agent is hard-banned
-    # from running.
-    if owner_only:
-        detail = ("%d unchecked item(s) — tick them in the Owner pass tab "
-                  "or mark the line DEFERRED" % n)
-        detail += ("  |  %d of them are OWNER-ONLY: the agent is barred "
-                   "from running those. Run them from the Owner-actions "
-                   "panel, or mark the checklist line DEFERRED."
-                   % owner_only)
+        except OSError as exc:
+            rc_err = str(exc)
+    if rc_err is not None:
+        _add("recon", "Recon checklist", False,
+             "RECON-CHECKLIST.md exists but could NOT be read (%s) — "
+             "unchecked items are unknown." % rc_err)
     else:
-        detail = ("%d unchecked item(s) — tick them in the Owner pass tab "
-                  "or mark the line DEFERRED" % n) if n \
-            else "no unchecked recon items"
-    _add("recon", "Recon checklist", not n, detail)
+        # v3.9 — the recon gate's remedy text now distinguishes what the
+        # AGENT owes from what only the OWNER can discharge. Before this,
+        # an OWNER-ONLY item produced "tick them in the Owner pass tab" —
+        # advice that asks the owner to forge the very assertion the
+        # intake contract forbids the agent from making, on an item the
+        # agent is hard-banned from running.
+        if owner_only:
+            detail = ("%d unchecked item(s) — tick them in the Owner pass "
+                      "tab or mark the line DEFERRED" % n)
+            detail += ("  |  %d of them are OWNER-ONLY: the agent is barred "
+                       "from running those. Run them from the Owner-actions "
+                       "panel, or mark the checklist line DEFERRED."
+                       % owner_only)
+        else:
+            detail = ("%d unchecked item(s) — tick them in the Owner pass "
+                      "tab or mark the line DEFERRED" % n) if n \
+                else "no unchecked recon items"
+        _add("recon", "Recon checklist", not n, detail)
 
     val = pdir / "VALIDATION.md"
     if not val.is_file():
@@ -2836,15 +3169,23 @@ def freeze_gate_report(pdir):
              "VALIDATION.md not found — click 'Validate draft' first "
              "(paste the copied instruction to your agent)")
     else:
+        val_err = None
         try:
             vbody = val.read_text(encoding="utf-8").strip()
-        except OSError:
+        except OSError as exc:
             vbody = ""
-        # v3.10 — val_is_ready() so this gate and the Owner-pass status
-        # line cannot drift on what "validated" means
-        _add("validation", "Validation report", val_is_ready(vbody),
-             "PART-01 READY" if val_is_ready(vbody)
-             else "not 'PART-01 READY' — resolve the findings, re-validate")
+            val_err = str(exc)
+        if val_err is not None:
+            _add("validation", "Validation report", False,
+                 "VALIDATION.md exists but could NOT be read (%s) — fix "
+                 "access and re-validate." % val_err)
+        else:
+            # v3.10 — val_is_ready() so this gate and the Owner-pass status
+            # line cannot drift on what "validated" means
+            _add("validation", "Validation report", val_is_ready(vbody),
+                 "PART-01 READY" if val_is_ready(vbody)
+                 else "not 'PART-01 READY' — resolve the findings, "
+                      "re-validate")
     return gates
 
 
@@ -2942,13 +3283,46 @@ _GIT_EXE = None
 _POWERSHELL_EXE = None
 
 
+def _git_candidates():
+    """Well-known git install locations, checked after PATH (R-70)."""
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)", "LocalAppData"):
+        root = os.environ.get(env_name)
+        if not root:
+            continue
+        if env_name == "LocalAppData":
+            yield os.path.join(root, "Programs", "Git", "cmd", "git.exe")
+        else:
+            yield os.path.join(root, "Git", "cmd", "git.exe")
+            yield os.path.join(root, "Git", "bin", "git.exe")
+    yield "/usr/bin/git"
+    yield "/usr/local/bin/git"
+    yield "/opt/homebrew/bin/git"
+
+
+def _resolve_git_exe(which=None, isfile=None):
+    """Resolve git ONCE, preferring PATH then well-known installs (R-70).
+
+    Returning None when nothing resolves is the point: the old fallback
+    returned the bare name "git", handing the lookup back to
+    CreateProcess, which searches the repo cwd first on Windows. Callers
+    must treat None as 'not available' instead of executing."""
+    which = which or shutil.which
+    isfile = isfile or os.path.isfile
+    found = which("git")
+    if found and isfile(found):
+        return found
+    for cand in _git_candidates():
+        if cand and isfile(cand):
+            return cand
+    return None
+
+
 def git_exe():
-    """R-07 — pin the git executable once: resolve via PATH a single
-    time and reuse the absolute path, so a planted git.exe in the repo
-    root (the cwd of every subprocess call) cannot be picked up."""
+    """R-07/R-70 — pin the git executable once: resolve via PATH plus
+    well-known install locations, and never fall back to a bare name."""
     global _GIT_EXE
     if _GIT_EXE is None:
-        _GIT_EXE = shutil.which("git") or "git"
+        _GIT_EXE = _resolve_git_exe()
     return _GIT_EXE
 
 
@@ -2965,14 +3339,40 @@ def powershell_exe():
 
 
 def atomic_write_text(path, text):
-    """R-08/R-26 — write via a sibling temp file + os.replace(): the
-    target is either the old file or the complete new one, never a
-    truncated halfway write (os.replace is atomic on Windows and POSIX,
-    PART-01 §G)."""
+    """R-08/R-26/R-78 — write via a unique sibling temp file + os.replace:
+    the target is either the old file or the complete new one, never a
+    truncated halfway write. The temp name is created by mkstemp, so two
+    writers targeting the same file can no longer share one .tmp and
+    publish mixed content."""
     path = Path(path)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".%s." % path.name,
+                                    suffix=".tmp", dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        # Windows can transiently deny os.replace while another thread is
+        # replacing the same target. Retry briefly instead of losing a
+        # write; POSIX never takes this branch.
+        last = None
+        for attempt in range(20):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError as exc:
+                last = exc
+                time.sleep(min(0.02 * (attempt + 1), 0.2))
+        else:
+            raise last
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def log_tag(line):
@@ -2991,6 +3391,38 @@ LOG_MAX_LINES = 2000   # R-16 — per-widget log cap (trimmed on write)
 
 class _Cancelled(Exception):
     pass
+
+
+def _same_host_redirect(old_url, new_url):
+    """True when a redirect stays on the same scheme+host (R-68).
+
+    The API key is sent as an Authorization header. urllib's default
+    redirect handler rebuilds the request with the original headers, so
+    a cross-host redirect would forward the bearer token to another
+    host. Same-host redirects (path/trailing-slash changes) remain
+    allowed; everything else is refused."""
+    try:
+        a = urllib.parse.urlsplit(old_url)
+        b = urllib.parse.urlsplit(new_url)
+    except ValueError:
+        return False
+    return (a.scheme.lower(), a.netloc.lower()) == \
+        (b.scheme.lower(), b.netloc.lower())
+
+
+class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse a cross-host redirect instead of forwarding the API key."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and not _same_host_redirect(req.full_url,
+                                                       new.full_url):
+            raise urllib.error.HTTPError(
+                new.full_url, code, "cross-host redirect blocked", headers, fp)
+        return new
+
+
+_URL_OPENER = urllib.request.build_opener(_SameHostRedirectHandler())
 
 
 # v3.12 — the exact separator on_proceed writes between the
@@ -3063,6 +3495,45 @@ COMMAND_UPDATE_NOTE = ("recon.md and AGENT-ORDERS-INTAKE.md now state the "
                        "pass tab")
 
 
+# R-69 — Windows device names and alternate-data-stream separators are
+# not real markdown paths. A model-authored `plans/<slug>/a:b.md` writes
+# an NTFS ADS (invisible in Explorer and outside the intended file), and
+# `CON`/`NUL`/`COM1` resolve to devices. Both are refused by name.
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7",
+    "LPT8", "LPT9",
+}
+
+
+def _model_path_ok(path, slug):
+    """True when a <<<FILE>>> path is a plain file inside plans/<slug>/.
+
+    R-50/R-69 — the v2.6.3 guard rejected `..`, backslashes and absolute
+    paths but still accepted `a:b.md` (an NTFS alternate data stream on
+    Windows) and device names. This is the single guard used by
+    parse_files; every segment is checked."""
+    prefix = "plans/%s/" % slug
+    if not path.startswith(prefix):
+        return False
+    if ".." in path or "\\" in path or path.startswith("/"):
+        return False
+    if ":" in path or any(ord(ch) < 32 for ch in path):
+        return False
+    rel = path[len(prefix):]
+    if not rel or rel.endswith("/"):
+        return False
+    for part in rel.split("/"):
+        if not part or part in (".", ".."):
+            return False
+        if part != part.rstrip(" .") or " ." in part or ". " in part:
+            return False
+        if part.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES:
+            return False
+    return True
+
+
 def parse_files(text, slug):
     """(files, notes) from an agent reply: every <<<FILE: …>>> block
     with the path guard applied — only paths INSIDE plans/<slug>/
@@ -3076,8 +3547,7 @@ def parse_files(text, slug):
             cur = (s[len("<<<FILE:"):-3].strip(), [])
         elif s == "<<<END>>>" and cur:
             path, body = cur
-            if (path.startswith("plans/%s/" % slug) and ".." not in path
-                    and "\\" not in path and not path.startswith("/")):
+            if _model_path_ok(path, slug):
                 files.append((path, "\n".join(body).rstrip() + "\n"))
             else:
                 notes.append("(ignored bad path: %s)" % path)
@@ -3992,6 +4462,10 @@ BUSY_DISABLE = ("btn_proceed", "btn_freeze", "btn_recon", "btn_validate",
                 "btn_own_refresh", "btn_answer_save", "btn_recommend",
                 "btn_question_remove", "btn_tick_toggle",
                 "btn_verify_exists", "btn_oa_run", "btn_oa_done",
+                # R-66/R-91 — checks run subprocesses and write
+                # CHECKS.last.md + HEALTH.md; loading a source mutates the
+                # intake box mid-chain. Both are chain-starting/mutating.
+                "btn_checks", "btn_load_src",
                 # v3.9 — escalate writes BOTH OPEN-QUESTIONS.md and
                 # RECON-CHECKLIST.md, so it must be disabled while a chain
                 # runs for exactly the reason btn_owner_resolve is.
@@ -4013,8 +4487,65 @@ _GATE_JUMP_TABS = {
 # R-02 — secret deny-list (owner-confirmed 2026-09-05, PART-01 §E): a file
 # whose NAME matches one of these globs is never inlined into a context
 # pack; dotfiles are refused separately in _context_pack.
-CTX_PACK_DENY = (".env*", "*key*", "*token*", "*secret*",
-                 "*credential*", "*.pem", "*.pfx")
+# R-64 — extended with the credential shapes the rev-6 audit found open:
+# id_rsa/id_dsa/id_ecdsa/id_ed25519, *.env (prod.env, not only .env*),
+# password/passwd, key stores, wallets, service-account JSON, tfvars.
+CTX_PACK_DENY = (".env*", "*.env", "*key*", "*token*", "*secret*",
+                 "*credential*", "*passwd*", "*password*", "*.pem", "*.pfx",
+                 "*.p12", "*.jks", "*.keystore", "*.kdbx", "*id_rsa*",
+                 "*id_dsa*", "*id_ecdsa*", "*id_ed25519*", "*wallet*",
+                 "*service-account*", "*.tfvars")
+# R-64 — a deny glob is matched against EVERY path component, not just the
+# basename, so credentials/prod.yaml and secrets/config.json can no longer
+# pass with innocuous file names. These component names are refused even
+# when a file inside them has a safe extension.
+CTX_PACK_DENY_COMPONENTS = frozenset({
+    ".ssh", ".aws", ".gnupg", ".azure", ".kube", ".docker",
+    "credentials", "secrets", "keys", "keyrings", "certs", "private",
+})
+# R-64 — positive text/code allowlist. A context pack exists to show the
+# agent source, config and docs; binaries, archives, databases and
+# extensionless blobs are not useful and widen the exfiltration surface.
+CTX_PACK_ALLOW_EXTS = frozenset({
+    ".md", ".markdown", ".txt", ".rst", ".py", ".pyi", ".js", ".mjs",
+    ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".astro", ".json",
+    ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".properties", ".sql", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
+    ".go", ".rs", ".java", ".kt", ".kts", ".cs", ".rb", ".php", ".css",
+    ".scss", ".less", ".html", ".htm", ".xml", ".gradle", ".graphql",
+    ".gql", ".proto", ".tf", ".dockerfile",
+})
+CTX_PACK_ALLOW_NAMES = frozenset({
+    "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "go.mod",
+    "go.sum", "cargo.toml", "cargo.lock", "package.json",
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "pyproject.toml",
+    "requirements.txt", "pipfile", "pipfile.lock", "tsconfig.json",
+    "jsconfig.json", "composer.json", "composer.lock", "build.gradle",
+    "settings.gradle", "pom.xml",
+})
+
+
+def _ctx_path_denied(rel):
+    """True when ANY component of a repo-relative path is secret-shaped
+    (R-64). Case-insensitive; dot-prefixed components are always refused."""
+    for part in rel.lower().replace("\\", "/").split("/"):
+        if not part:
+            continue
+        if part.startswith("."):
+            return True
+        if part in CTX_PACK_DENY_COMPONENTS:
+            return True
+        if any(fnmatch.fnmatchcase(part, pat) for pat in CTX_PACK_DENY):
+            return True
+    return False
+
+
+def _ctx_text_candidate(name):
+    """True when a file is plausibly source/config/doc, by allowlist."""
+    low = name.lower()
+    if low in CTX_PACK_ALLOW_NAMES:
+        return True
+    return any(low.endswith(ext) for ext in CTX_PACK_ALLOW_EXTS)
 
 
 class DropOldestQueue(queue.Queue):
@@ -4760,6 +5291,10 @@ class App:
             except tk.TclError:
                 pass          # other platforms: best-effort, normal size
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        # R-95 — keyboard accelerators and live Follow-OS resolution.
+        root.bind("<Control-q>", lambda _e: self.on_close())
+        root.bind("<F5>", lambda _e: self._refresh_current_view())
+        root.bind("<FocusIn>", self._on_root_focus, add="+")
         # v3.9 — the window chrome (setup toggle, collapsible setup panel,
         # live row, plan strip, tabs) is laid out with GRID in one column
         # rather than pack. Only the setup panel is ever hidden, and
@@ -4778,38 +5313,108 @@ class App:
         # v3.3 — one consistent dropdown value-list across all three tabs
         self._refresh_slug_values()
         self._apply_theme_setting()
-        self._fetch_models()
-        root.after(100, self._drain)
+        # R-82 — a fully offline paste-mode launch must not phone home.
+        # The model list is only needed for API mode; 'Reload models'
+        # remains an explicit opt-in.
+        if self.use_key.get():
+            self._fetch_models()
+        if _CFG_LOAD_NOTE:
+            self.say("intake", _CFG_LOAD_NOTE)
+        root.after(DRAIN_INTERVAL_MS, self._drain)
         # v2.2 — started repos: offer new command-file protocols at startup
         root.after(400, self._auto_command_check)
         # v1.2.0 — plan strip: first render now, then a 3 s poll so
         # agent-written changes surface without any user action
         self._strip_refresh()
-        root.after(3000, self._strip_tick)
+        root.after(STRIP_POLL_MS, self._strip_tick)
 
     @staticmethod
     def _load_cfg():
-        """plan-console.json → dict. A corrupt or undecodable file is
-        backed up as plan-console.json.corrupt and settings restart
-        empty, instead of crashing the app at startup."""
-        if not CFG.exists():
+        """plan-console.json → dict. A corrupt, undecodable or non-object
+        file is backed up as plan-console.json.corrupt and settings
+        restart empty, instead of crashing the app at startup.
+
+        R-83 — the result must be a JSON OBJECT. A file containing [] or
+        "x" used to be returned as-is and the first self.cfg.get(...)
+        raised at startup. A recovery note is kept in _CFG_LOAD_NOTE and
+        logged once the UI exists, so a silent settings reset is visible."""
+        global _CFG_LOAD_NOTE
+        try:
+            if not CFG.exists():
+                return {}
+        except OSError:
             return {}
         try:
-            return json.loads(CFG.read_text(encoding="utf-8"))
-        except Exception:
+            data = json.loads(CFG.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("settings file is not a JSON object")
+            return data
+        except Exception as exc:
+            _CFG_LOAD_NOTE = (
+                "WARN: %s could not be loaded (%s) — settings restarted "
+                "empty. A backup may be at plan-console.json.corrupt; "
+                "reconfigure the repo/model/theme if needed."
+                % (CFG.name, exc.__class__.__name__))
             try:
                 CFG.replace(CFG.with_name("plan-console.json.corrupt"))
             except Exception:
                 pass
             return {}
 
+    def _preserve_unsaved_answer(self):
+        """R-77 — save non-empty owner-pass answer text before closing.
+
+        A close used to discard whatever was typed in the answer box.
+        The text is written to plans/<slug>/ANSWER-DRAFT.txt (atomic) so
+        it can be recovered after a crash or an accidental close. Nothing
+        is written when the box is empty or the slug is invalid."""
+        try:
+            text = self.answer.get("1.0", "end").strip()
+        except Exception:
+            return None
+        if not text:
+            return None
+        slug = self.slug_var.get().strip()
+        if not SLUG_RE.match(slug):
+            return None
+        try:
+            pdir = self.repo_path() / "plans" / slug
+            pdir.mkdir(parents=True, exist_ok=True)
+            f = pdir / "ANSWER-DRAFT.txt"
+            atomic_write_text(
+                f, "# UNSAVED OWNER-PASS ANSWER — saved at close %s\n\n%s\n"
+                % (datetime.now().strftime("%Y-%m-%d %H:%M"), text))
+            return str(f)
+        except Exception:
+            traceback.print_exc()
+            return None
+
     def on_close(self):
-        """v3.1 — WM_DELETE_WINDOW handler: remember the window size in
-        cfg (PART-01 §C), then close."""
-        self.cfg["win_w"] = max(820, self.root.winfo_width())
-        self.cfg["win_h"] = max(600, self.root.winfo_height())
-        self._save_cfg()
-        self.root.destroy()
+        """v3.1/R-77 — WM_DELETE_WINDOW handler: preserve unsaved answer
+        text, remember the window size, cancel in-flight calls, then
+        close. A read-only install dir or a locked config must not leave
+        a window that refuses to close."""
+        saved = self._preserve_unsaved_answer()
+        try:
+            self.cfg["win_w"] = max(820, self.root.winfo_width())
+            self.cfg["win_h"] = max(600, self.root.winfo_height())
+        except Exception:
+            pass
+        try:
+            self._save_cfg()
+        except Exception:
+            traceback.print_exc()
+        with self._cancel_lock:
+            active = list(self._cancel_events)
+        for ev in active:
+            ev.set()
+        if saved:
+            print("Plan Console: unsaved owner-pass answer preserved in %s"
+                  % saved)
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------ UI
     def _topbar(self):
@@ -5036,13 +5641,12 @@ class App:
         panel's own content is redundant: a panel that has never been
         pointed at a repo is the first-run instruction, so it stays open.
 
-        Collapsing sets the panel's height to 0 with propagation off rather
-        than calling pack_forget(). Measured: after pack_forget() the
-        wrapper frame kept a CACHED reqheight of 114px and kept occupying
-        it, so collapsing freed nothing at all — the exact opposite of the
-        point. height=0 + pack_propagate(False) is deterministic: the panel
-        asks for no space, the notebook below absorbs it, and the panel's
-        children are clipped to nothing rather than left visible."""
+        Collapsing uses grid_remove() on the wrapper row: the row is
+        removed from the grid geometry and the notebook below absorbs its
+        space. Measured: pack_forget() plus pack_propagate(False) kept a
+        cached reqheight and freed nothing, which is the opposite of the
+        point; grid_remove() is deterministic because the widget stays in
+        the same cell and the row itself collapses."""
         collapsed = bool(self.cfg.get("setup_collapsed")) and self._repo_ready()
         try:
             if collapsed:
@@ -5081,6 +5685,36 @@ class App:
         self._apply_theme_setting()
         self.cfg["theme"] = self.theme_setting
         self._save_cfg()
+
+    def _on_root_focus(self, _event=None):
+        """R-95 — re-resolve 'Follow OS' when the window regains focus.
+
+        A system theme change used to be noticed only at startup. The
+        check is throttled and only re-applies when the effective theme
+        actually changed, so focus churn cannot rebuild the palette."""
+        if self.theme_setting != "system":
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_theme_check_at", 0.0) < 2.0:
+            return
+        self._theme_check_at = now
+        effective = _detect_os_theme()
+        if effective != self._theme_effective:
+            self._apply_theme_setting()
+            self.say("intake", "theme: the OS switched to %s — 'Follow OS' "
+                     "applied it." % effective)
+
+    def _refresh_current_view(self):
+        """F5 — refresh the surface the owner is looking at."""
+        try:
+            idx = self.nb.index(self.nb.select())
+        except Exception:
+            idx = 0
+        if idx == 2:
+            self.on_owner_refresh()
+        else:
+            self._strip_refresh()
+            self._refresh_slug_values()
 
     def _apply_theme_setting(self):
         """Apply the current theme setting to the whole app (no
@@ -5210,13 +5844,23 @@ class App:
         cands.append(HERE / name)
         for f in cands:
             if f.is_file():
-                body = f.read_text(encoding="utf-8").strip()
+                try:
+                    body = f.read_text(encoding="utf-8").strip()
+                except OSError as exc:
+                    # R-87 — a locked orders file must not abort an
+                    # instruction copy; fall back to the built-in contract
+                    # and say so, because silently attaching a different
+                    # contract would be worse.
+                    self.say("intake", "WARN: %s could not be read (%s) — "
+                             "using the built-in %s default for this copy."
+                             % (f, exc.__class__.__name__, phase))
+                    return default.strip()
                 if body and body.upper() != "OFF":
                     return body
                 return ""          # explicit OFF / empty → disabled
         sidecar = HERE / name
         try:
-            sidecar.write_text(default, encoding="utf-8")
+            atomic_write_text(sidecar, default)
         except OSError:
             pass    # read-only location -> the in-memory default is used
                     # below anyway, so nothing is lost. Narrowed to OSError:
@@ -5357,7 +6001,7 @@ class App:
                     self._maybe_auto_owner_refresh(pdir)
         except Exception:
             pass
-        self._strip_job = self.root.after(3000, self._strip_tick)
+        self._strip_job = self.root.after(STRIP_POLL_MS, self._strip_tick)
 
     def _strip_refresh(self):
         """Recompute the strip from the current repo+slug. Failure-safe:
@@ -5597,20 +6241,29 @@ class App:
         # v3.2 — all three slug fields share self.slug_var (one slug,
         # typed once; dropdown offers recent + plans/ slugs)
         # v3.4 — _slug_field grids the field AND its helper line (row+1)
+        # R-91 — the row used to pack Type, Slug, three checkboxes,
+        # Proceed and Freeze into one grid: at the documented 820 px
+        # minimum the tail ran off the tab. The auto checkboxes now own a
+        # second row; the primary actions stay on row 0.
         self.slug = self._slug_field(top, 0, 3)
         self.auto_recon = tk.BooleanVar(value=False)
         self.auto_validate = tk.BooleanVar(value=False)
         self.auto_resolve = tk.BooleanVar(value=True)
-        ttk.Checkbutton(top, text="auto recon",
-                        variable=self.auto_recon).grid(row=0, column=4, padx=4)
-        ttk.Checkbutton(top, text="auto validate",
-                        variable=self.auto_validate).grid(row=0, column=5, padx=4)
-        ttk.Checkbutton(top, text="auto-resolve findings",
-                        variable=self.auto_resolve).grid(row=0, column=6, padx=4)
         self.btn_proceed = ttk.Button(top, text="Proceed", command=self.on_proceed)
-        self.btn_proceed.grid(row=0, column=7, padx=8)
+        self.btn_proceed.grid(row=0, column=4, padx=8)
         self.btn_freeze = ttk.Button(top, text="Freeze", command=self.on_freeze)
-        self.btn_freeze.grid(row=0, column=8)
+        self.btn_freeze.grid(row=0, column=5)
+        rowa = ttk.Frame(f)
+        rowa.pack(anchor="w", padx=10, pady=(2, 0))
+        self.chk_recon = ttk.Checkbutton(rowa, text="auto recon",
+                                         variable=self.auto_recon)
+        self.chk_recon.pack(side="left", padx=(0, 12))
+        self.chk_validate = ttk.Checkbutton(rowa, text="auto validate",
+                                            variable=self.auto_validate)
+        self.chk_validate.pack(side="left", padx=(0, 12))
+        self.chk_auto_resolve = ttk.Checkbutton(
+            rowa, text="auto-resolve findings", variable=self.auto_resolve)
+        self.chk_auto_resolve.pack(side="left")
         rowb = ttk.Frame(f); rowb.pack(anchor="w", padx=10, pady=(6, 0))
         # R-11 — named so the __busy__ handler can disable them
         self.btn_recon = ttk.Button(rowb, text="Run recon",
@@ -5633,14 +6286,17 @@ class App:
         # button sits on the line the content goes into, so it is
         # discoverable exactly where a paste would land
         rowl = ttk.Frame(f); rowl.pack(fill="x", padx=10, pady=(2, 0))
-        ttk.Label(rowl, text="Paste a plan, brainstorm, or audit "
-                             "report below — or click 'Open sample "
-                             "project…' to explore a finished "
-                             "example first:")\
-            .pack(side="left", anchor="w")
+        self._intake_hint = ttk.Label(
+            rowl, text="Paste a plan, brainstorm, or audit "
+                       "report below — or click 'Open sample "
+                       "project…' to explore a finished "
+                       "example first:")
+        self._intake_hint.pack(side="left", anchor="w")
         self.btn_load_src = ttk.Button(rowl, text="Load from file…",
                                        command=self.on_load_source)
         self.btn_load_src.pack(side="right")
+        _autofit_wrap(self._intake_hint, rowl, pad=16,
+                      siblings=(self.btn_load_src,))
         self.src = scrolledtext.ScrolledText(f, height=8, wrap="word")
         self.src.pack(fill="x", padx=10, pady=4)
         self._mklog(f, "intake", 14)
@@ -6018,7 +6674,7 @@ class App:
         return True
 
     def _owner_paths(self):
-        slug = self._get_slug("owner")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Owner pass", "Enter the slug first (kebab-case).")
             return None
@@ -6060,17 +6716,29 @@ class App:
         if not pdir.is_dir():
             self.owner_status.configure(text="plans/%s not found" % slug)
             return
+        read_errors = []
         if self._oq_file.is_file():
             # v2.1 — keep the raw text so whole blocks can be shown/archived
-            self._oq_text = self._oq_file.read_text(encoding="utf-8")
+            try:
+                self._oq_text = self._oq_file.read_text(encoding="utf-8")
+            except OSError as exc:
+                read_errors.append("OPEN-QUESTIONS.md could not be read (%s)"
+                                   % exc)
+                self._oq_text = ""
             self._oq_items = parse_questions(self._oq_text)
             for n, (lineno, _line) in enumerate(self._oq_items, 1):
                 # list shows the QUESTION: line (the scannable decision);
                 # the full block appears below when selected
                 self.oq_list.insert("end", "Q%d: %s" % (n, self._q_label(lineno)))
         if self._rc_file.is_file():
-            for i, line in enumerate(
-                    self._rc_file.read_text(encoding="utf-8").splitlines()):
+            try:
+                rc_lines = self._rc_file.read_text(
+                    encoding="utf-8").splitlines()
+            except OSError as exc:
+                rc_lines = []
+                read_errors.append("RECON-CHECKLIST.md could not be read (%s)"
+                                   % exc)
+            for i, line in enumerate(rc_lines):
                 state = recon_item_state(line)
                 if state:
                     self._rc_items.append((i, line))
@@ -6115,7 +6783,11 @@ class App:
         na = 0
         draft = pdir / "PART-01.draft.md"
         if draft.is_file():
-            na = count_owner_answers(draft.read_text(encoding="utf-8"))
+            try:
+                na = count_owner_answers(draft.read_text(encoding="utf-8"))
+            except OSError as exc:
+                read_errors.append("PART-01.draft.md could not be read (%s)"
+                                   % exc)
         # v3.5 — unchecked owner actions block Freeze exactly like open
         # questions and unchecked recon items
         noa = sum(1 for a in self._oa_items if not a["checked"])
@@ -6125,7 +6797,14 @@ class App:
         # on a stale validation report. v3.10 — the wording moved into
         # owner_status_text(), which the Tk-free tests cover.
         val = pdir / "VALIDATION.md"
-        validation = val.read_text(encoding="utf-8") if val.is_file() else None
+        validation = None
+        if val.is_file():
+            try:
+                validation = val.read_text(encoding="utf-8")
+            except OSError as exc:
+                validation = "UNREADABLE"
+                read_errors.append("VALIDATION.md could not be read (%s)"
+                                   % exc)
         # v3.9 — stranded escalations are surfaced here too, so the tab
         # itself says "there is content the console is not listing" rather
         # than relying on the owner opening the Freeze checklist. This is a
@@ -6137,8 +6816,14 @@ class App:
             text += ("  ⚠ %d escalated question block(s) sit in a section "
                      "this tab does not list — see 'What's blocking "
                      "Freeze?'" % len(orphans))
+        # R-87 — a read failure is named on the same line; the zero
+        # counters above must never read as a clean plan.
+        for err in read_errors:
+            text += "  ⚠ " + err
+            self.say("owner", "WARN: " + err)
         self.owner_status.configure(text=text)
         if (nq == 0 and na == 0 and noa == 0 and nu == 0
+                and not read_errors
                 and val_is_ready(validation)
                 and (self._oq_file.is_file() or self._rc_file.is_file())):
             self.say("intake", "owner pass: everything resolved — Freeze "
@@ -6180,7 +6865,13 @@ class App:
         if not self._oq_file or not self._oq_file.is_file():
             messagebox.showerror("Owner actions", "Click Refresh first.")
             return False
-        lines = self._oq_file.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = self._oq_file.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            messagebox.showerror("Owner actions",
+                                 "OPEN-QUESTIONS.md could not be read:\n\n%s"
+                                 % exc)
+            return False
         ln = action["lineno"]
         # v3.5.1 audit fix — content-aware stale-index guard: the line
         # must still exist AND still carry the prose Refresh read (the
@@ -6261,7 +6952,14 @@ class App:
         # v3.9 — atomic: this file is the audit subject of the owner pass
         # (owner-pass.log + .bak), so a crash mid-write must not leave it
         # truncated (R-08 discipline, previously applied only to Freeze).
-        atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
+        try:
+            atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror("Owner actions",
+                                 "OPEN-QUESTIONS.md could not be written:\n\n%s"
+                                 % exc)
+            return False
         self._log_owner_action(action, "marked done")
         return True
 
@@ -6325,7 +7023,13 @@ class App:
         """v3.5 — run a whitelisted read-only command in the repo root,
         capture its output, and — only after the owner confirms — write
         the VERIFIED date into the linked §B line. Default-deny: non-
-        whitelisted commands are copy-only."""
+        whitelisted commands are copy-only.
+
+        R-67 — the subprocess runs on a worker thread. It used to run on
+        the Tk main thread with a 60 s timeout, so a hung command froze
+        the window and Cancel could not be pressed. Every Tk call
+        (dialogs, tick, §B write) stays in _after_owner_action_run, on
+        the main thread."""
         a = self._selected_owner_action()
         if a is None: return
         if not a["command"]:
@@ -6338,20 +7042,45 @@ class App:
                 "Not on the read-only whitelist — use 'Copy command' and "
                 "run it yourself, then 'Mark done'.")
             return
+        # R-63 — show the exact command before executing; the whitelist
+        # plus fixed argv is the hard guard, this is the human one.
+        if not messagebox.askyesno(
+                "Run read-only command",
+                "Run this command in:\n%s\n\n%s\n\nThe console will not "
+                "write anything until you confirm the result."
+                % (self.repo_path(), a["command"])):
+            return
+        self._busy(True, "running owner action …")
+        # R-38/R-67 — close the pre-busy double-click window.
         try:
-            r = subprocess.run(
-                [powershell_exe(), "-NoProfile", "-Command", a["command"]],
-                cwd=str(self.repo_path()), capture_output=True, text=True,
-                timeout=60)
-        except Exception as e:
-            messagebox.showerror("Owner actions", "Run failed: %s" % e)
+            self.btn_oa_run.configure(state="disabled")
+        except tk.TclError:
+            pass
+        threading.Thread(target=self._owner_action_worker,
+                         args=(a, str(self.repo_path())),
+                         daemon=True).start()
+
+    def _owner_action_worker(self, action, repo):
+        """Subprocess-only worker (R-67): no Tk access."""
+        try:
+            r = _run_readonly_command(action["command"], Path(repo))
+            self.q.put(("__oa_done__", (action, r, None)))
+        except Exception as exc:
+            self.q.put(("__oa_done__", (action, None, str(exc))))
+        finally:
+            self._busy(False)
+
+    def _after_owner_action_run(self, a, r, err):
+        """Main-thread completion for a read-only owner action (R-67)."""
+        if r is None:
+            messagebox.showerror("Owner actions", "Run failed: %s" % err)
             return
         out = (r.stdout or "").strip()
-        err = (r.stderr or "").strip()
+        stderr = (r.stderr or "").strip()
         for ln in (out.splitlines() or ["(no output)"])[:10]:
             self.say("owner", "  " + ln)
-        if err:
-            self.say("owner", "  stderr: " + err.splitlines()[0])
+        if stderr:
+            self.say("owner", "  stderr: " + stderr.splitlines()[0])
         # evaluate the (expect: …) tag when present
         expect = (a.get("expect") or "").strip().lower()
         passed = None
@@ -6390,14 +7119,21 @@ class App:
         action's `→ verifies §B "…"` tag VERIFIED in PART-01.draft.md,
         then tick the action. Shows the exact before/after line first —
         the console never edits a §B line the owner hasn't confirmed."""
-        draft = self.repo_path() / "plans" / self._get_slug("owner") \
+        draft = self.repo_path() / "plans" / self._get_slug() \
             / "PART-01.draft.md"
         if not draft.is_file():
             messagebox.showerror("Owner actions",
                                  "PART-01.draft.md not found.")
             return
+        try:
+            draft_text = draft.read_text(encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("Owner actions",
+                                 "PART-01.draft.md could not be read:\n\n%s"
+                                 % exc)
+            return
         new_text, new_line = mark_sb_verified(
-            draft.read_text(encoding="utf-8"), action["verifies"],
+            draft_text, action["verifies"],
             date.today().isoformat(), action["command"] or "")
         if new_text is None:
             messagebox.showerror(
@@ -6410,7 +7146,14 @@ class App:
                 "Owner actions",
                 "Write this into PART-01.draft.md §B?\n\n%s" % new_line):
             return
-        atomic_write_text(draft, new_text)   # R-08 — atomic
+        try:
+            atomic_write_text(draft, new_text)   # R-08 — atomic
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror("Owner actions",
+                                 "PART-01.draft.md could not be written:\n\n%s"
+                                 % exc)
+            return
         self._log_owner_action(action, "§B line marked VERIFIED",
                                output.splitlines()[0] if output else "")
         if self._tick_owner_action(action):
@@ -6423,7 +7166,7 @@ class App:
         if got is None: return
         slug, pdir = got
         sel = self.oq_list.curselection()
-        if not sel:
+        if not sel or sel[0] >= len(self._oq_items):
             messagebox.showerror("Owner pass", "Select a question first.")
             return
         if not self._oq_file or not self._oq_file.is_file():
@@ -6437,12 +7180,17 @@ class App:
                                  "question list.")
             return
         lineno, hdr = self._oq_items[sel[0]]
-        qtext = self._oq_file.read_text(encoding="utf-8")
+        try:
+            qtext = self._oq_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("Owner pass",
+                                 "OPEN-QUESTIONS.md could not be read:\n\n%s"
+                                 % exc)
+            return
         lines = qtext.splitlines()
         # v2.1 — content-aware stale-index guard (file may have been
         # rewritten by the agent since the last Refresh)
-        if (not 0 <= lineno < len(lines)
-                or lines[lineno].strip() != hdr.strip()):
+        if not line_still_matches(lines, lineno, hdr):
             messagebox.showerror("Owner pass",
                                  "OPEN-QUESTIONS.md changed since the last "
                                  "Refresh — click Refresh, re-select and "
@@ -6461,14 +7209,24 @@ class App:
         # recommendation), not just its header line
         qlines = [l.strip() for l in question_block(qtext, lineno)
                   .strip().splitlines()]
-        text = draft.read_text(encoding="utf-8")
+        try:
+            text = draft.read_text(encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("Owner pass",
+                                 "PART-01.draft.md could not be read:\n\n%s"
+                                 % exc)
+            return
         # v2.2 — crash-window guard: this question already answered in the
         # draft but still listed (a save was interrupted between the two
-        # writes) → refuse instead of duplicating the Q/A pair
+        # writes) → refuse instead of duplicating the Q/A pair. R-73 — the
+        # inbox is searched case-insensitively and ONLY inside the
+        # section, not in unrelated prose.
         marker = "- Q: %s" % qlines[0]
-        pos = text.find("## OWNER ANSWERS")
-        if pos != -1 and any(l.strip() == marker
-                              for l in text[pos:].splitlines()):
+        spans = _section_spans(text, OWNER_ANSWERS_HEADING_RE)
+        draft_lines = text.splitlines()
+        already = any(draft_lines[i].strip() == marker
+                      for a, b in spans for i in range(a, b))
+        if already:
             messagebox.showerror("Owner pass",
                 "This question is already answered in the draft "
                 "(## OWNER ANSWERS in PART-01.draft.md) but is still "
@@ -6477,24 +7235,16 @@ class App:
                 "remove the stale listing (the answer stays in the "
                 "draft), or edit the draft manually.")
             return
-        if "## OWNER ANSWERS" not in text:
-            # v2.7 — self-labeling inbox: the header states what the
-            # section is and which command empties it, so "answered but
-            # not integrated" can never look like a final state
-            text = text.rstrip() + (
-                "\n\n## OWNER ANSWERS (appended %s — TEMPORARY inbox: "
-                "run commands/owner-resolve.md to integrate these "
-                "answers into §A–§G, then delete this section)\n"
-                % date.today())
-        else:
-            text = text.rstrip() + "\n"
-        # v2.1 — the Q side keeps the full block, so the agent integrating
-        # the answer sees the problem and recommendation as context
-        text += "- Q: %s\n" % qlines[0]
-        for cont in qlines[1:]:
-            text += "      %s\n" % cont
-        text += "  A: %s\n" % ans
-        atomic_write_text(draft, text)   # R-08 — atomic
+        text = insert_owner_answer(text, qlines, ans)
+        try:
+            atomic_write_text(draft, text)   # R-08/R-78 — atomic
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror("Owner pass",
+                                 "PART-01.draft.md could not be written:\n\n%s"
+                                 "\n\nNothing was changed — your answer is "
+                                 "still in the box." % exc)
+            return
         # 2) whole question block removed from OPEN-QUESTIONS.md — archived first
         self._oq_backup()
         self._oq_archive(pdir, tag, "\n".join(qlines), ans)
@@ -6502,7 +7252,19 @@ class App:
         if end < len(lines) and not lines[end].strip():
             end += 1          # take the block's separator blank line too
         del lines[lineno:end]
-        atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
+        try:
+            atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror(
+                "Owner pass",
+                "The answer was saved to PART-01.draft.md, but "
+                "OPEN-QUESTIONS.md could not be updated:\n\n%s\n\nThe "
+                "question is still listed; use 'Archive question (keep log)' "
+                "after fixing access. The crash-window guard will not "
+                "duplicate the answer." % exc)
+            self.on_owner_refresh()
+            return
         self.answer.delete("1.0", "end")
         self.say("intake", "owner pass: answer stored in PART-01.draft.md "
                  "(## OWNER ANSWERS — full question block kept with it); "
@@ -6525,11 +7287,17 @@ class App:
             messagebox.showerror("Owner pass", "Click Refresh first.")
             return
         sel = self.oq_list.curselection()
-        if not sel:
+        if not sel or sel[0] >= len(self._oq_items):
             messagebox.showerror("Owner pass", "Select a question first.")
             return
         lineno, _hdr = self._oq_items[sel[0]]
-        qtext = self._oq_file.read_text(encoding="utf-8")
+        try:
+            qtext = self._oq_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("Owner pass",
+                                 "OPEN-QUESTIONS.md could not be read:\n\n%s"
+                                 % exc)
+            return
         rec = recommend_line(qtext, lineno)
         if not rec:
             # legacy one-line questions carry no RECOMMEND → graceful error
@@ -6551,18 +7319,23 @@ class App:
         if got is None: return
         slug, pdir = got
         sel = self.oq_list.curselection()
-        if not sel:
+        if not sel or sel[0] >= len(self._oq_items):
             messagebox.showerror("Owner pass", "Select a question first.")
             return
         if not self._oq_file or not self._oq_file.is_file():
             messagebox.showerror("Owner pass", "Click Refresh first.")
             return
         lineno, hdr = self._oq_items[sel[0]]
-        qtext = self._oq_file.read_text(encoding="utf-8")
+        try:
+            qtext = self._oq_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("Owner pass",
+                                 "OPEN-QUESTIONS.md could not be read:\n\n%s"
+                                 % exc)
+            return
         lines = qtext.splitlines()
         # v2.1 — content-aware stale-index guard
-        if (not 0 <= lineno < len(lines)
-                or lines[lineno].strip() != hdr.strip()):
+        if not line_still_matches(lines, lineno, hdr):
             messagebox.showerror("Owner pass",
                                  "OPEN-QUESTIONS.md changed since the last "
                                  "Refresh — click Refresh and re-select.")
@@ -6579,7 +7352,14 @@ class App:
         if end < len(lines) and not lines[end].strip():
             end += 1
         del lines[lineno:end]
-        atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
+        try:
+            atomic_write_text(self._oq_file, "\n".join(lines) + "\n")
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror("Owner pass",
+                                 "OPEN-QUESTIONS.md could not be written:\n\n%s"
+                                 % exc)
+            return
         self.on_owner_refresh()
 
     # ------------------------------------------------- v2.0 owner helpers
@@ -6677,7 +7457,7 @@ class App:
              "PASSED — ticked in RECON-CHECKLIST.md" if done
              else "OPEN — not yet ticked", "text"),
             ("SOURCE", "plans/%s/RECON-CHECKLIST.md, line %d"
-             % (self._get_slug("owner"), lineno + 1), "text"),
+             % (self._get_slug(), lineno + 1), "text"),
         ]
         if is_deferred(line):
             sections.append(
@@ -6706,7 +7486,7 @@ class App:
             ("STATE", "DONE — ticked in OPEN-QUESTIONS.md" if a["checked"]
              else "OUTSTANDING — owner action still to run", "text"),
             ("SOURCE", "plans/%s/OPEN-QUESTIONS.md, line %d"
-             % (self._get_slug("owner"), a["lineno"] + 1), "text"),
+             % (self._get_slug(), a["lineno"] + 1), "text"),
             ("WHAT IT DOES", _demarkdown(a.get("prose") or ""), "text"),
         ]
         if cmd:
@@ -6754,8 +7534,8 @@ class App:
         if self._oq_file and self._oq_file.is_file():
             try:
                 bak = self._oq_file.parent / (self._oq_file.name + ".bak")
-                bak.write_text(self._oq_file.read_text(encoding="utf-8"),
-                               encoding="utf-8")
+                atomic_write_text(bak,
+                                  self._oq_file.read_text(encoding="utf-8"))
             except Exception:
                 # R-10 — a backup that silently failed is data loss found
                 # at restore time: log with traceback and surface it.
@@ -6789,7 +7569,7 @@ class App:
         if got is None: return
         slug, pdir = got
         sel = self.rc_list.curselection()
-        if not sel:
+        if not sel or sel[0] >= len(self._rc_items):
             messagebox.showerror("Owner pass", "Select a checklist item first.")
             return
         if not self._rc_file or not self._rc_file.is_file():
@@ -6801,20 +7581,32 @@ class App:
             messagebox.showerror("Owner pass",
                                  "Selected line is not a checkbox item.")
             return
-        lines = self._rc_file.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = self._rc_file.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            messagebox.showerror("Owner pass",
+                                 "RECON-CHECKLIST.md could not be read:\n\n%s"
+                                 % exc)
+            return
         # v3.5.1 audit fix — content-aware stale-index guard (same rule
         # as on_answer_save/on_question_remove): the line must still be
         # what Refresh read, or the toggle would modify the wrong line
         # after the agent rewrote RECON-CHECKLIST.md.
-        if (not 0 <= lineno < len(lines)
-                or lines[lineno].strip() != line.strip()):
+        if not line_still_matches(lines, lineno, line):
             messagebox.showerror("Owner pass",
                                  "RECON-CHECKLIST.md changed since the last "
                                  "Refresh — click Refresh and re-select "
                                  "(nothing was written).")
             return
         lines[lineno] = new
-        atomic_write_text(self._rc_file, "\n".join(lines) + "\n")
+        try:
+            atomic_write_text(self._rc_file, "\n".join(lines) + "\n")
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror("Owner pass",
+                                 "RECON-CHECKLIST.md could not be written:\n\n%s"
+                                 % exc)
+            return
         self.on_owner_refresh()
 
     def on_escalate_owner_only(self):
@@ -6854,9 +7646,14 @@ class App:
                 "agent's to run or tick. To escalate a gap the agent found, "
                 "add it under '## Owner actions' in OPEN-QUESTIONS.md.")
             return
-        rlines = self._rc_file.read_text(encoding="utf-8").splitlines()
-        if (not 0 <= lineno < len(rlines)
-                or rlines[lineno].strip() != line.strip()):
+        try:
+            rlines = self._rc_file.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            messagebox.showerror(
+                "Escalate",
+                "RECON-CHECKLIST.md could not be read:\n\n%s" % exc)
+            return
+        if not line_still_matches(rlines, lineno, line):
             messagebox.showerror(
                 "Escalate",
                 "RECON-CHECKLIST.md changed since the last Refresh — click "
@@ -6874,15 +7671,21 @@ class App:
             return
         oq = pdir / "OPEN-QUESTIONS.md"
         existed = oq.is_file()
-        text = oq.read_text(encoding="utf-8") if existed else \
-            "# OPEN QUESTIONS — %s\n" % slug
+        if existed:
+            try:
+                text = oq.read_text(encoding="utf-8")
+            except OSError as exc:
+                messagebox.showerror(
+                    "Escalate",
+                    "OPEN-QUESTIONS.md could not be read:\n\n%s" % exc)
+                return
+        else:
+            text = "# OPEN QUESTIONS — %s\n" % slug
         # keep the console's own label as a marker, so the escalated item
         # is still recognisable as owner-only work
         bullet = "- [ ] %s" % body
-        if "## Owner actions" not in text:
-            text = text.rstrip() + "\n\n## Owner actions\n\n%s\n" % bullet
-        else:
-            text = text.rstrip() + "\n\n%s\n" % bullet
+        # R-80 — insert INSIDE '## Owner actions', not at end-of-file.
+        text = append_owner_action(text, bullet)
         # snapshot BEFORE both writes (R-10: a failed backup is data loss
         # discovered at restore time)
         self._oq_backup()
@@ -6899,8 +7702,8 @@ class App:
         del rlines[lineno]
         try:
             bak = self._rc_file.parent / (self._rc_file.name + ".bak")
-            bak.write_text(self._rc_file.read_text(encoding="utf-8"),
-                            encoding="utf-8")
+            atomic_write_text(bak,
+                              self._rc_file.read_text(encoding="utf-8"))
             atomic_write_text(self._rc_file, "\n".join(rlines) + "\n")
         except Exception as exc:
             traceback.print_exc()
@@ -6922,7 +7725,13 @@ class App:
                                  "No checklist loaded — click Refresh.")
             return
         repo = self.repo_path()
-        lines = self._rc_file.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = self._rc_file.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            messagebox.showerror("Owner pass",
+                                 "RECON-CHECKLIST.md could not be read:\n\n%s"
+                                 % exc)
+            return
         verified, remaining = 0, 0
         for i, line in enumerate(lines):
             m = re.match(r"\s*-\s*\[\s*\]\s*EXISTS:?\s*(.+)$", line,
@@ -6946,7 +7755,14 @@ class App:
             else:
                 remaining += 1
         if verified:
-            atomic_write_text(self._rc_file, "\n".join(lines) + "\n")
+            try:
+                atomic_write_text(self._rc_file, "\n".join(lines) + "\n")
+            except OSError as exc:
+                traceback.print_exc()
+                messagebox.showerror("Owner pass",
+                                     "RECON-CHECKLIST.md could not be "
+                                     "written:\n\n%s" % exc)
+                return
         self.say("intake", "owner pass: EXISTS auto-verify — %d ticked, "
                  "%d not found" % (verified, remaining))
         self.on_owner_refresh()
@@ -7024,6 +7840,18 @@ class App:
             return
         dest = Path(d)
         try:
+            src_r, dest_r = src.resolve(), dest.resolve()
+            if (src_r == dest_r or src_r in dest_r.parents
+                    or dest_r in src_r.parents):
+                messagebox.showerror(
+                    "Sample project",
+                    "Choose a folder outside the bundled sample — copying "
+                    "it into itself (or into its parent) would recurse.\n\n"
+                    "Sample: %s\nChosen: %s" % (src_r, dest_r))
+                return
+        except OSError:
+            pass
+        try:
             if dest.is_dir() and any(dest.iterdir()):
                 if not messagebox.askyesno(
                         "Sample project",
@@ -7039,6 +7867,7 @@ class App:
                                  "Copying the sample failed:\n\n%s" % exc)
             return
         self.repo.delete(0, "end"); self.repo.insert(0, str(dest))
+        invalidate_slug_cache()
         self._refresh_slug_values(clear_invalid=True)
         self.say("intake",
                  "Sample copied to %s — explore plans/demo-recipe-cli/ "
@@ -7180,9 +8009,10 @@ class App:
             rec = [s for s in self._recent_slugs if s != slug]
             self._recent_slugs = [slug] + rec[:9]
 
-    def _get_slug(self, first="intake"):
+    def _get_slug(self):
         """v3.2 — the single shared slug (all three tabs bind the same
-        StringVar). `first` is kept for call-site compatibility."""
+        StringVar). R-34 — the old `first` argument was dead; removed
+        rather than kept as a misleading parameter."""
         return self.slug_var.get().strip()
 
     def _or_key_value(self):
@@ -7195,7 +8025,11 @@ class App:
         # in the entry field for this session only, or in the
         # OPENROUTER_API_KEY environment variable.
         self._remember_slug()
-        self.cfg.update(repo=str(self.repo_path()),
+        try:
+            repo_val = str(self.repo_path())
+        except Exception:
+            repo_val = str(self.cfg.get("repo", ""))
+        self.cfg.update(repo=repo_val,
                         model=self.model_cb.get().strip(),
                         use_key=self.use_key.get(),
                         kind=self.kind.get(),
@@ -7207,7 +8041,20 @@ class App:
                         setup_collapsed=bool(self.cfg.get("setup_collapsed")),
                         recent_slugs=self._recent_slugs)
         self.cfg.pop("or_key", None)
-        atomic_write_text(CFG, json.dumps(self.cfg, indent=2))   # R-08/R-26
+        try:
+            atomic_write_text(CFG, json.dumps(self.cfg, indent=2))
+            return True
+        except Exception as exc:
+            # R-77 — a read-only install dir must not crash the caller
+            # (close, theme switch, model pick); make the loss visible.
+            traceback.print_exc()
+            try:
+                self.say("intake", "WARN: settings could not be saved to %s "
+                         "(%s). The current session keeps working."
+                         % (CFG.name, exc))
+            except Exception:
+                pass
+            return False
 
     def say(self, target, line):
         self.q.put((target, line))
@@ -7222,7 +8069,7 @@ class App:
             try:
                 p = Path(save_path)
                 p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(text, encoding="utf-8")
+                atomic_write_text(p, text)
                 saved = str(p)
             except Exception:
                 saved = None
@@ -7286,6 +8133,13 @@ class App:
                     self.root.clipboard_clear()
                     self.root.clipboard_append(text)
                     self._instruction_popup(title, text, saved)
+                elif target == "__oa_done__":
+                    action, result, err = payload
+                    self._after_owner_action_run(action, result, err)
+                elif target == "__checks_done__":
+                    repo, slug, results, write_err, health_err = payload
+                    self._after_checks(repo, slug, results, write_err,
+                                       health_err)
                 elif target == "__busy__":
                     on, msg = payload
                     if on:
@@ -7332,7 +8186,7 @@ class App:
             # route this failure back through _log_line
             traceback.print_exc()
         finally:
-            self.root.after(100, self._drain)
+            self.root.after(DRAIN_INTERVAL_MS, self._drain)
 
     def _log_line(self, target, line):
         w = self.logs.get(target)
@@ -7345,6 +8199,11 @@ class App:
             if end > LOG_MAX_LINES:
                 w.delete("1.0", "%d.0" % (end - LOG_MAX_LINES))
             w.see("end"); w.configure(state="disabled")
+        else:
+            # R-84 — an unknown target used to drop the message with no
+            # trace. Keep the app alive, but make the loss visible.
+            print("Plan Console WARN: unknown log target %r — %s"
+                  % (target, line))
 
     def _busy(self, on, msg=""):
         self.q.put(("__busy__", (on, msg)))
@@ -7368,11 +8227,17 @@ class App:
         if not messagebox.askyesno("Init starter repo",
                 "Create %d starter files in\n%s ?" % (len(missing), repo)):
             return
-        repo.mkdir(parents=True, exist_ok=True)
-        for p in missing:
-            f = repo / p
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(STARTER_FILES[p], encoding="utf-8")
+        try:
+            repo.mkdir(parents=True, exist_ok=True)
+            for p in missing:
+                f = repo / p
+                f.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_text(f, STARTER_FILES[p])
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror("Init", "Could not create the starter "
+                                 "files:\n\n%s" % exc)
+            return
         self.say("intake", "initialized starter files: " + ", ".join(missing))
 
     # ------------------------------------------- v2.2 command-file updates
@@ -7384,9 +8249,22 @@ class App:
                 if p.startswith("commands/")}
         if not any((repo / p).is_file() for p in cmds):
             return None
-        return [p for p, c in cmds.items()
-                if not (repo / p).is_file()
-                or (repo / p).read_text(encoding="utf-8") != c]
+        stale = []
+        for p, c in cmds.items():
+            f = repo / p
+            if not f.is_file():
+                stale.append(p)
+                continue
+            try:
+                body = f.read_text(encoding="utf-8")
+            except OSError:
+                # R-87 — unreadable is treated as stale (offer to rewrite)
+                # rather than crashing the startup check.
+                stale.append(p)
+                continue
+            if body != c:
+                stale.append(p)
+        return stale
 
     def _apply_command_update(self, repo, stale):
         """Overwrite the listed command files with built-in versions
@@ -7395,7 +8273,7 @@ class App:
         for p in stale:
             f = repo / p
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(STARTER_FILES[p], encoding="utf-8")
+            atomic_write_text(f, STARTER_FILES[p])
         self.say("intake", "updated command files: " + ", ".join(stale))
 
     def _auto_command_check(self, repo=None):
@@ -7416,7 +8294,12 @@ class App:
                 "Update %d file(s) now?\n%s\n\n(Not asked again this run; "
                 "PART-00.md, templates/ and plans/ are never touched.)"
                 % (COMMAND_UPDATE_NOTE, len(stale), "\n".join(stale))):
-            self._apply_command_update(repo, stale)
+            try:
+                self._apply_command_update(repo, stale)
+            except OSError as exc:
+                traceback.print_exc()
+                self.say("intake", "WARN: command-file update failed: %s"
+                         % exc)
 
     def on_update_commands(self):
         """Refresh commands/ with the built-in versions (nothing else)."""
@@ -7428,8 +8311,15 @@ class App:
                     "No command files found in\n%s\n\nCreate the current "
                     "built-in command files now?" % repo):
                 return
-            self._apply_command_update(
-                repo, [p for p in STARTER_FILES if p.startswith("commands/")])
+            try:
+                self._apply_command_update(
+                    repo,
+                    [p for p in STARTER_FILES if p.startswith("commands/")])
+            except OSError as exc:
+                traceback.print_exc()
+                messagebox.showerror("Update command files",
+                                     "Could not write the command files:\n\n%s"
+                                     % exc)
             return
         if not stale:
             messagebox.showinfo("Update command files",
@@ -7440,7 +8330,13 @@ class App:
                 "versions?\n\n%s\n\n(PART-00.md, templates/ and plans/ are "
                 "never touched.)" % (len(stale), "\n".join(stale))):
             return
-        self._apply_command_update(repo, stale)
+        try:
+            self._apply_command_update(repo, stale)
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror("Update command files",
+                                 "Could not write the command files:\n\n%s"
+                                 % exc)
 
     def _preflight(self):
         repo = self.repo_path()
@@ -7450,12 +8346,18 @@ class App:
             if messagebox.askyesno("Not a plan repo",
                     "%s is missing starter files (%s).\nInitialize them now?"
                     % (repo, ", ".join(need))):
-                repo.mkdir(parents=True, exist_ok=True)
-                for p, c in STARTER_FILES.items():
-                    f = repo / p
-                    if not f.is_file():
-                        f.parent.mkdir(parents=True, exist_ok=True)
-                        f.write_text(c, encoding="utf-8")
+                try:
+                    repo.mkdir(parents=True, exist_ok=True)
+                    for p, c in STARTER_FILES.items():
+                        f = repo / p
+                        if not f.is_file():
+                            f.parent.mkdir(parents=True, exist_ok=True)
+                            atomic_write_text(f, c)
+                except OSError as exc:
+                    traceback.print_exc()
+                    messagebox.showerror("Init", "Could not initialize the "
+                                         "starter files:\n\n%s" % exc)
+                    return None
             else:
                 return None
         self._auto_command_check(repo)   # v2.2 — once per repo per run
@@ -7550,9 +8452,25 @@ class App:
         Proceed), and only the BODY is restored — source_body
         strips the console's own wrapper so re-Proceeding never
         double-wraps. A missing or unreadable file just leaves
-        the box empty — restoring must never crash the launch."""
+        the box empty — restoring must never crash the launch.
+
+        R-75 — the stored path is only trusted when it resolves to the
+        CURRENT repo's plans/<slug>/SOURCE.md. A config written for repo
+        A used to fill the box in repo B; the next Proceed could write
+        repo A's report into repo B under an unrelated slug."""
         p = self.cfg.get("intake_file")
         if not isinstance(p, str) or not p:
+            return
+        slug = self.slug_var.get().strip()
+        if not SLUG_RE.match(slug):
+            return
+        try:
+            expected = (self.repo_path() / "plans" / slug
+                        / "SOURCE.md").resolve()
+            actual = Path(p).resolve()
+        except OSError:
+            return
+        if actual != expected:
             return
         try:
             text = Path(p).read_text(encoding="utf-8",
@@ -7594,15 +8512,54 @@ class App:
         if pdir.exists() and any(pdir.iterdir()) and not messagebox.askyesno(
                 "Exists", "plans/%s already has files — continue anyway?" % slug):
             self.btn_proceed.configure(state="normal"); return
-        pdir.mkdir(parents=True, exist_ok=True)
-        (pdir / "SOURCE.md").write_text(
-            "# SOURCE — %s\nType: %s | Captured: %s (plan-console)\n\n---\n\n%s\n"
-            % (slug, self.kind.get(), date.today(), text), encoding="utf-8")
+        source = pdir / "SOURCE.md"
+        # R-76 — never silently overwrite an existing SOURCE.md. A rerun
+        # of Proceed on a used slug used to replace the captured source
+        # (the audit trail for the draft) after a generic prompt.
+        if source.is_file():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = pdir / ("SOURCE.md.%s.bak" % stamp)
+            try:
+                shutil.copy2(source, backup)
+                self.say("intake", "existing SOURCE.md archived to %s"
+                         % backup.name)
+            except OSError as exc:
+                traceback.print_exc()
+                messagebox.showerror(
+                    "Intake",
+                    "The existing plans/%s/SOURCE.md could not be archived:\n"
+                    "\n%s\n\nNothing was overwritten and intake was not "
+                    "started." % (slug, exc))
+                self.btn_proceed.configure(state="normal")
+                return
+        try:
+            pdir.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(
+                source,
+                "# SOURCE — %s\nType: %s | Captured: %s (plan-console)"
+                "\n\n---\n\n%s\n"
+                % (slug, self.kind.get(), date.today(), text))
+        except Exception as exc:
+            traceback.print_exc()
+            messagebox.showerror(
+                "Intake",
+                "Could not write plans/%s/SOURCE.md:\n\n%s\n\nNothing was "
+                "started; fix the cause and click Proceed again."
+                % (slug, exc))
+            self.btn_proceed.configure(state="normal")
+            return
         # v3.12 — the pane is now BOUND to this file: the link
         # to whatever it was loaded from is severed here, and
         # the next launch restores this SOURCE.md (unwrapped)
-        self.cfg["intake_file"] = str(pdir / "SOURCE.md")
-        self._save_cfg()
+        self.cfg["intake_file"] = str(source)
+        try:
+            self._save_cfg()
+        except Exception as exc:
+            traceback.print_exc()
+            self.say("intake", "WARN: could not persist plan-console.json "
+                     "(%s) — the intake continues; the pane binding may "
+                     "not survive a restart." % exc)
+        invalidate_slug_cache()
         self.say("intake", "[%s] plans/%s/SOURCE.md written (%s)"
                  % (date.today(), slug, self.kind.get()))
         ui = {"kind": self.kind.get(), "recon": self.auto_recon.get(),
@@ -7693,12 +8650,17 @@ class App:
                     # longer happens.
                     self.say("intake", "running %s in order …"
                              % " then ".join(c for c, _ in jobs))
+                    validate_ok = True
                     for cmd, extra in jobs:
-                        self._run_api(repo, "intake", cmd, slug, slug, extra,
-                                      ui["model"], ui["key"])
+                        ok = self._run_api(repo, "intake", cmd, slug, slug,
+                                           extra, ui["model"], ui["key"])
+                        if cmd == "validate-plan.md":
+                            validate_ok = ok
+                else:
+                    validate_ok = True
                 if ui["validate"]:
                     self._echo_validation(pdir)
-                    if ui["auto_fix"]:
+                    if ui["auto_fix"] and validate_ok:
                         self._chain_auto_resolve(repo, slug, ui)
             self._after_intake(repo, slug)
         except Exception as exc:
@@ -7715,7 +8677,7 @@ class App:
     def on_recon(self):
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("intake")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Recon", "Enter the slug first (kebab-case).")
             return
@@ -7760,7 +8722,7 @@ class App:
     def on_validate(self):
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("intake")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Validate", "Enter the slug first (kebab-case).")
             return
@@ -7810,10 +8772,10 @@ class App:
                     if f.is_file():
                         extra.append(("plans/%s/%s" % (slug, aux),
                                       f.read_text(encoding="utf-8")))
-                self._run_api(repo, "intake", "validate-plan.md", slug, slug,
-                              extra, ui["model"], ui["key"])
+                ok = self._run_api(repo, "intake", "validate-plan.md", slug,
+                                   slug, extra, ui["model"], ui["key"])
                 self._echo_validation(pdir)
-                if ui["auto_fix"]:
+                if ok and ui["auto_fix"]:
                     self._chain_auto_resolve(repo, slug, ui)
             finally:
                 self._busy(False)
@@ -7823,7 +8785,7 @@ class App:
         """Pure Python: display plans/<slug>/VALIDATION.md in the log."""
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("intake")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Validation report",
                                  "Enter the slug first (kebab-case).")
@@ -7974,7 +8936,7 @@ class App:
         manual command relay, no retyping instructions."""
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("intake")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Auto-resolve",
                                  "Enter the slug first (kebab-case).")
@@ -8040,7 +9002,7 @@ class App:
     def _fetch_models(self):
         def work():
             try:
-                with urllib.request.urlopen(MODELS_URL, timeout=15) as r:
+                with _URL_OPENER.open(MODELS_URL, timeout=15) as r:
                     ids = sorted(m["id"] for m in json.load(r)["data"])
                 self.q.put(("__models__", ids))
             except Exception as exc:
@@ -8089,7 +9051,7 @@ class App:
         # load, and the log invites typing an id by hand.
         if picked and (picked in self._all_models or "/" in picked):
             self._remember_model(picked)
-    def _api_call(self, prompt, model, key, timeout=360):
+    def _api_call(self, prompt, model, key, timeout=API_TOTAL_TIMEOUT):
         """Streaming OpenRouter call: live progress ticker, cancellation,
         low reasoning effort (auto-retry without it if rejected).
 
@@ -8116,10 +9078,11 @@ class App:
         resp = None
         for i, body in enumerate(attempts):
             try:
-                resp = urllib.request.urlopen(
+                resp = _URL_OPENER.open(
                     urllib.request.Request(CHAT_URL, data=body, headers={
                         "Authorization": "Bearer " + key,
-                        "Content-Type": "application/json"}), timeout=60)
+                        "Content-Type": "application/json"}),
+                    timeout=API_CONNECT_TIMEOUT)
                 break
             except urllib.error.HTTPError as e:
                 detail = ""
@@ -8130,6 +9093,11 @@ class App:
                         detail = " — " + str(err["message"])[:200]
                 except Exception:
                     pass
+                finally:
+                    try:
+                        e.close()
+                    except Exception:
+                        pass
                 if e.code == 400 and i == 0:
                     continue        # provider may reject 'reasoning' — retry plain
                 hints = {401: " — check your OpenRouter API key",
@@ -8257,41 +9225,79 @@ class App:
         return True
 
     def _context_pack(self, repo, checklist, max_files=8, max_bytes=4000):
+        """Inline a bounded, allowlisted slice of the repo for an API
+        prompt (R-30), with every secret-shaped path refused (R-02) and
+        R-64 hardening: component-wise deny matching, a text/code
+        extension allowlist, symlink refusal, deterministic traversal and
+        UTF-8 reads.
+
+        The sweep words still come from the checklist (which the model
+        wrote), so selection remains steerable in principle; the
+        allowlist + deny list bound what steering can reach. Every
+        inlined file is logged, as is every matched-but-unreadable file,
+        so the owner can audit exactly what left the machine."""
         words = {w.lower() for w in re.findall(r"[A-Za-z_]{5,}", checklist)}
         skip = {".git", "node_modules", "plans", ".venv", "venv",
-                "__pycache__", ".vscode", "dist", "build"}
+                "__pycache__", ".vscode", "dist", "build", ".next", "out",
+                "target", "vendor", "coverage"}
+        repo = Path(repo)
+        try:
+            repo_real = repo.resolve()
+        except OSError:
+            repo_real = repo
         picked = []
+
+        def _skip_dir(p):
+            try:
+                if p.is_symlink():
+                    return True
+            except OSError:
+                return True
+            return p.name.startswith(".") or p.name.lower() in skip
+
         for root, dirs, files in os.walk(repo):
-            # R-02: dot-directories (.git, .idea, …) are never walked
-            dirs[:] = [d for d in dirs
-                       if d not in skip and not d.startswith(".")]
-            for name in files:
+            dirs[:] = sorted(d for d in dirs
+                             if not _skip_dir(Path(root, d)))
+            for name in sorted(files):
                 if len(picked) >= max_files:
                     break
-                # R-02 (§E): refuse dotfiles and secret-named files —
-                # they must never be inlined into a prompt sent off-box.
-                low = name.lower()
-                if low.startswith(".") or any(
-                        fnmatch.fnmatchcase(low, pat)
-                        for pat in CTX_PACK_DENY):
-                    continue
                 p = Path(root) / name
-                rel = p.relative_to(repo).as_posix()
-                if any(w in rel.lower() for w in words):
-                    try:
-                        if p.stat().st_size < max_bytes:
-                            picked.append("----- %s -----\n%s"
-                                          % (rel, p.read_text(errors="replace")))
-                            # R-02 (§E): every inlined file is logged so the
-                            # owner can audit exactly what was sent.
-                            self.say("intake", "context-pack: inlined %s" % rel)
-                    except OSError as e:
-                        # R-02 (§E): the log must show what was NOT sent
-                        # too, or the owner cannot tell "did not match" from
-                        # "matched but could not be read" — a gap in the
-                        # pack that looks complete in the audit trail.
-                        self.say("intake", "context-pack: SKIPPED %s (%s)"
-                                 % (rel, e.__class__.__name__))
+                try:
+                    rel = p.relative_to(repo).as_posix()
+                except ValueError:
+                    continue
+                if _ctx_path_denied(rel) or not _ctx_text_candidate(name):
+                    continue
+                # Symlinked files are followed by read_text() even though
+                # os.walk does not descend symlinked dirs. A planted
+                # notes.txt -> ~/.aws/credentials would exfiltrate the
+                # target. Refuse the link itself.
+                try:
+                    if p.is_symlink():
+                        self.say("intake", "context-pack: SKIPPED symlink %s"
+                                 % rel)
+                        continue
+                    if repo_real not in p.resolve().parents:
+                        self.say("intake", "context-pack: SKIPPED outside-repo "
+                                 "path %s" % rel)
+                        continue
+                except OSError:
+                    continue
+                if not any(w in rel.lower() for w in words):
+                    continue
+                try:
+                    if p.stat().st_size < max_bytes:
+                        picked.append(
+                            "----- %s -----\n%s"
+                            % (rel, p.read_text(encoding="utf-8",
+                                                errors="replace")))
+                        self.say("intake", "context-pack: inlined %s" % rel)
+                except OSError as e:
+                    # R-02 (§E): the log must show what was NOT sent
+                    # too, or the owner cannot tell "did not match" from
+                    # "matched but could not be read".
+                    self.say("intake", "context-pack: SKIPPED %s (%s)"
+                             % (rel, e.__class__.__name__))
             if len(picked) >= max_files:
                 break
         return "\n\n".join(picked) if picked else "(no matching files found)"
@@ -8407,7 +9413,7 @@ class App:
     def on_freeze(self):
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("intake")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Freeze", "Enter the slug first (kebab-case).")
             return
@@ -8426,17 +9432,25 @@ class App:
             prog = pdir / "PROGRESS.md"
             healed = ""
             if not prog.is_file():
-                head = "\n".join(frozen_existing.read_text(encoding="utf-8")
-                                 .splitlines()[:3])
+                try:
+                    head = "\n".join(
+                        frozen_existing.read_text(encoding="utf-8")
+                        .splitlines()[:3])
+                except OSError:
+                    head = ""
                 dm = re.search(r"\d{4}-\d{2}-\d{2}", head)
                 vm = re.search(r"v\d+\.\d+", frozen_existing.name)
-                prog.write_text("# PROGRESS — %s | PART-01 %s | %s\n"
-                                % (slug, vm.group(0) if vm else "v1.0",
-                                   dm.group(0) if dm else date.today()),
-                                encoding="utf-8")
-                healed = ("\n\n(Created the missing PROGRESS.md header — a "
-                          "previous freeze was interrupted between the two "
-                          "writes.)")
+                try:
+                    atomic_write_text(
+                        prog, "# PROGRESS — %s | PART-01 %s | %s\n"
+                        % (slug, vm.group(0) if vm else "v1.0",
+                           dm.group(0) if dm else date.today()))
+                    healed = ("\n\n(Created the missing PROGRESS.md header — "
+                              "a previous freeze was interrupted between the "
+                              "two writes.)")
+                except OSError as exc:
+                    healed = ("\n\n(WARN: the missing PROGRESS.md header "
+                              "could not be created: %s)" % exc)
             messagebox.showerror("Freeze", "plans/%s is already frozen (%s).%s"
                                  % (slug, frozen_existing.name, healed))
             return
@@ -8451,16 +9465,31 @@ class App:
                if g["id"] not in ("draft", "frozen")):
             self._freeze_gates_dialog(slug, gates, "Freeze")
             return
-        body = draft.read_text(encoding="utf-8")
+        try:
+            body = draft.read_text(encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror(
+                "Freeze", "PART-01.draft.md could not be read:\n\n%s\n\n"
+                "Nothing was frozen." % exc)
+            return
         # v2.0 — versioned filename: PART-01 v1.0.md
         frozen = pdir / "PART-01 v1.0.md"
-        atomic_write_text(frozen,   # R-08 — atomic: a freeze must never truncate
-                          "PART 01 — %s | v1.0 frozen %s\n\n%s"
-                          % (slug, date.today(), body))
         prog = pdir / "PROGRESS.md"
-        if not prog.is_file():
-            prog.write_text("# PROGRESS — %s | PART-01 v1.0 | %s\n"
-                            % (slug, date.today()), encoding="utf-8")
+        try:
+            atomic_write_text(
+                frozen,   # R-08 — atomic: a freeze must never truncate
+                "PART 01 — %s | v1.0 frozen %s\n\n%s"
+                % (slug, date.today(), body))
+            if not prog.is_file():
+                atomic_write_text(prog, "# PROGRESS — %s | PART-01 v1.0 | "
+                                 "%s\n" % (slug, date.today()))
+        except OSError as exc:
+            traceback.print_exc()
+            messagebox.showerror(
+                "Freeze", "Could not write the frozen plan or PROGRESS.md:"
+                "\n\n%s\n\nIf the frozen file was created, clicking Freeze "
+                "again will repair the missing PROGRESS.md header." % exc)
+            return
         self.say("intake", "FROZEN v1.0 — plan ready as 'plans/%s/"
                  "PART-01 v1.0.md' (draft kept as history). Click "
                  "'Copy session 1 →' in the plan strip at the top to copy "
@@ -8511,26 +9540,20 @@ class App:
                 % blocked.read_text(encoding="utf-8")[:400]):
             return None
         prog = pdir / "PROGRESS.md"
-        done = set()
-        if prog.is_file():
-            # v2.5 - lenient reader (read_progress): a drifting PROGRESS
-            # line ('Session #2 …', fields on separate lines) can no
-            # longer hide a completed predecessor session
-            done = {rec["n"] for rec in read_progress(prog)}
-        # Owner-DEFERRED predecessors are skipped, not required. A plan may keep
-        # a row whose gate id must stay on the map so nothing renumbers while
-        # stating the session is NOT executed in this plan; no PROGRESS record
-        # for it can ever exist, because the only canonical 'done' status is
-        # PASS and asserting that would be claiming a gate for work never done
-        # (exactly what the row's own §A/§G clauses forbid). Without this the
-        # guard made every session after a deferred row permanently unrunnable.
+        recs_now = read_progress(prog) if prog.is_file() else []
+        # R-71 — a predecessor is complete only with a latest PASS (both
+        # legs for a split row). An existing FAIL/PARTIAL/BLOCKED record
+        # used to satisfy this guard, so later sessions could run over
+        # unfinished work.
         rows_now = self._session_map(pdir)
         missing = [i for i in range(1, n)
-                   if i not in done
-                   and not session_row_deferred(rows_now.get(i))]
+                   if not session_row_deferred(rows_now.get(i))
+                   and not session_completed(rows_now, recs_now, i)]
         if missing:
             messagebox.showerror("Sequence", "PROGRESS.md doesn't show session(s) "
-                                 "%s as complete — run sessions in order." % missing)
+                                 "%s as PASS — run sessions in order and "
+                                 "finish any FAIL/PARTIAL/BLOCKED entry "
+                                 "first." % missing)
             return None
         # v3.6 §C6 — leg sequencing for split deploy sessions: leg b
         # additionally requires leg a PASS; leg a requires leg b NOT
@@ -8542,7 +9565,7 @@ class App:
                     "Leg", "Session %d is not a split (pre/post) session — "
                     "leave the leg selector at 'full'." % n)
                 return None
-            recs = read_progress(prog) if prog.is_file() else []
+            recs = recs_now
             if leg == "a":
                 if any(r["n"] == n and r["leg"] == "b" for r in recs):
                     messagebox.showerror(
@@ -8736,7 +9759,7 @@ class App:
         """
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("sessions")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("+1 session",
                                  "Enter the slug first (kebab-case).")
@@ -8839,7 +9862,7 @@ class App:
     def on_status(self):
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("sessions")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Status", "Enter the slug first (kebab-case).")
             return
@@ -8915,8 +9938,11 @@ class App:
         declared_raw = row[1] if row else ""
         part01 = self._frozen_file(pdir)
         if part01_text is None:
-            part01_text = (part01.read_text(encoding="utf-8")
-                           if part01 is not None else "")
+            try:
+                part01_text = (part01.read_text(encoding="utf-8")
+                               if part01 is not None else "")
+            except OSError:
+                part01_text = ""
         declared = session_row_gates(part01_text, n) if part01_text else []
         raw, gates, status, notes = None, [], "", []
         when, lenient = "", False
@@ -9033,7 +10059,7 @@ class App:
     def on_report(self):
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("sessions")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Slug", "kebab-case slug required.")
             return
@@ -9057,6 +10083,7 @@ class App:
             rows = self._session_map(repo / "plans" / slug)
             if (n + 1) in rows:
                 self.snum.set(str(n + 1))
+                self._leg_sync()   # R-85 — keep the leg selector in step
                 self.say("sessions", "session # advanced to %d (next "
                          "session exists in §A)" % (n + 1))
         # v2.6 — P1: a CHECK verdict's fix hint goes to the clipboard so
@@ -9103,14 +10130,29 @@ class App:
     def on_health(self):
         repo = self._preflight()
         if repo is None: return
-        slug = self._get_slug("sessions")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Slug", "kebab-case slug required.")
             return
-        lines = self._mkhealth(repo, slug)
-        self._log_health(repo / "plans" / slug, slug, lines)
+        try:
+            lines = self._mkhealth(repo, slug)
+        except Exception as exc:
+            traceback.print_exc()
+            self.say("sessions", "ERROR: Plan health could not be built: %s"
+                     % exc)
+            return
+        # R-81 — report first. The old order appended to HEALTH.md before
+        # printing; a locked file aborted the handler and the owner saw
+        # nothing at all.
         for line in lines:
             self.say("sessions", line)
+        try:
+            self._log_health(repo / "plans" / slug, slug, lines)
+        except Exception as exc:
+            traceback.print_exc()
+            self.say("sessions", "WARN: HEALTH.md audit trail could not be "
+                     "appended (%s) — the report above is still current."
+                     % exc)
 
     # ------------------------------------------------------ v3.11 checks
     def _checks_paths(self):
@@ -9118,7 +10160,7 @@ class App:
         the owner what is missing."""
         repo = self._preflight()
         if repo is None: return None
-        slug = self._get_slug("sessions")
+        slug = self._get_slug()
         if not SLUG_RE.match(slug):
             messagebox.showerror("Slug", "kebab-case slug required.")
             return None
@@ -9128,13 +10170,11 @@ class App:
         """Run the checks the FROZEN plan declares, record the result, and
         hand any failure to the agent in one click.
 
-        The consent dialog is the whole safety story for this feature, so
-        it is not a formality: it lists every command VERBATIM, says they
-        come from the frozen plan, says they execute in the repo, and
-        reports how many are malformed and will NOT run. A plan is
-        agent-authored until the owner freezes it, so the freeze is the
-        authorisation — and this dialog is where the owner sees what they
-        authorised.
+        R-66 — the run is worker-threaded: every check has a 300 s
+        timeout, and running them on the Tk loop froze the entire window
+        (Cancel included). The button is in BUSY_DISABLE, risky commands
+        need a second explicit confirmation, and failures + malformed
+        declarations are both reported.
 
         The console writes only CHECKS.last.md and one HEALTH.md audit
         block. It never writes source, never ticks a recon item and never
@@ -9142,7 +10182,14 @@ class App:
         got = self._checks_paths()
         if got is None: return
         repo, slug, pdir = got
-        checks = declared_checks(pdir)
+        try:
+            checks = declared_checks(pdir)
+        except OSError as exc:
+            messagebox.showerror(
+                "Checks",
+                "The frozen plan's '## Checks' block could not be read:\n\n"
+                "%s\n\nNothing was run." % exc)
+            return
         if not checks:
             messagebox.showerror(
                 "Checks",
@@ -9168,30 +10215,79 @@ class App:
         if not messagebox.askyesno("Run checks — %s" % slug,
                                    "\n".join(body)):
             return
+        risky = [c for c in runnable if check_is_risky(c["command"])]
+        if risky:
+            if not messagebox.askyesno(
+                    "Risky checks — %s" % slug,
+                    "These declared checks download, chain commands, or "
+                    "spawn another interpreter:\n\n%s\n\nRun them anyway?"
+                    % "\n".join("  %-12s %s" % (c["id"], c["command"])
+                                for c in risky)):
+                self.say("sessions", "checks: cancelled at the risky-command "
+                         "confirmation — nothing was run.")
+                return
         self.say("sessions", "checks: running %d declared check(s) in %s ..."
                  % (len(runnable), repo))
-        results = run_checks(repo, checks)
+        # R-38/R-66 — close the 100 ms pre-busy double-click window
+        # synchronously, before the queued __busy__ message lands.
+        self.btn_checks.configure(state="disabled")
+        self._busy(True, "running declared checks …")
+        threading.Thread(target=self._run_checks_worker,
+                         args=(repo, slug, checks), daemon=True).start()
+
+    def _run_checks_worker(self, repo, slug, checks):
+        """Subprocess-only worker for declared checks (R-66)."""
+        try:
+            results = run_checks(repo, checks)
+            pdir = repo / "plans" / slug
+            write_err = write_check_results(pdir, slug, results)
+            health_err = None
+            try:
+                self._log_health(
+                    pdir, slug,
+                    ["CHECKS — %s" % slug, render_check_results(results)])
+            except Exception as exc:
+                traceback.print_exc()
+                health_err = str(exc)
+            self.q.put(("__checks_done__",
+                        (str(repo), slug, results, write_err, health_err)))
+        except Exception as exc:
+            traceback.print_exc()
+            self.q.put(("__checks_done__",
+                        (str(repo), slug, None, str(exc), None)))
+        finally:
+            self._busy(False)
+
+    def _after_checks(self, repo, slug, results, write_err, health_err):
+        """Main-thread completion for a declared-check run (R-66)."""
+        if results is None:
+            messagebox.showerror(
+                "Checks", "The check run failed before producing results:\n\n"
+                "%s" % (write_err or "unknown error"))
+            return
         lines = [render_check_results(results)]
-        # HEALTH.md is the console-appended audit trail, so the run is on
-        # record even if the plan dir is later replaced.
-        self._log_health(pdir, slug, ["CHECKS — %s" % slug] + lines)
         for line in lines:
             self.say("sessions", line)
-        err = write_check_results(pdir, slug, results)
-        if err:
+        if health_err:
+            self.say("sessions", "WARN: HEALTH.md audit line could not be "
+                     "written (%s) — the run is only in CHECKS.last.md."
+                     % health_err)
+        if write_err:
             self.say("sessions", "WARN: CHECKS.last.md write failed (%s) — "
-                     "this run is in HEALTH.md only." % err)
+                     "this run is in HEALTH.md only." % write_err)
         failed = [r for r in results if r["ok"] is False]
+        bad = [r for r in results if r["ok"] is None]
+        pdir = Path(repo) / "plans" / slug
         if failed:
-            self._send_check_failures(repo, slug, pdir, results, failed)
-        elif bad:
+            self._send_check_failures(Path(repo), slug, pdir, results, failed)
+        if bad:
             messagebox.showwarning(
                 "Checks",
-                "%d check(s) passed, but %d declared check(s) are malformed "
-                "and did NOT run: %s\n\nA gate that never runs is not a gate "
-                "— fix the '## Checks' block in the frozen plan."
-                % (len(runnable), len(bad),
-                   ", ".join(c["id"] or "(no id)" for c in bad)))
+                "%d declared check(s) are malformed and did NOT run: %s\n\n"
+                "A gate that never runs is not a gate — fix the '## Checks' "
+                "block in the frozen plan."
+                % (len(bad),
+                   ", ".join(r["id"] or "(no id)" for r in bad)))
 
     def _send_check_failures(self, repo, slug, pdir, results, failed):
         """The step this feature exists for: turn a failing check into a
@@ -9234,19 +10330,37 @@ class App:
         if not rows:
             return ["PLAN HEALTH — %s: no session rows in PART-01 §A" % slug]
         N = max(rows)
-        part01_text = part01.read_text(encoding="utf-8")
+        try:
+            part01_text = part01.read_text(encoding="utf-8")
+        except OSError as exc:
+            return ["PLAN HEALTH — %s: frozen plan could not be read (%s)"
+                    % (slug, exc)]
         prog = pdir / "PROGRESS.md"
         records = read_progress(prog) if prog.is_file() else []
+        head = (part01_text.splitlines() or [part01.name])[0].strip()
         out = ["===== PLAN HEALTH — %s | %s | %d sessions ====="
-               % (slug, part01_text.splitlines()[0].strip(), N)]
+               % (slug, head, N)]
         # v2.2 — interrupted-session marker (commands/session.md handshake)
         ip_f, ip_n, ip_leg, ip_sum = self._ip_summary(pdir)
         passed = next_n = 0
         next_leg = next_mark = ""
         drifted = []                     # v2.5 — non-canonical records
         a_ok = {}                        # v3.6 — split sessions with leg a OK
-        total = N + sum(1 for r in rows.values() if r[3])   # legs render as rows
-        for n in range(1, N + 1):
+        # R-72 — owner-deferred rows are out of plan. They render for the
+        # record but are excluded from passed/total and can never become
+        # the next session (next_pending_session already skipped them).
+        deferred = sorted(n for n, r in rows.items()
+                          if session_row_deferred(r))
+        total = sum(2 if r[3] else 1
+                    for n, r in rows.items() if n not in deferred)
+        # R-72 — iterate the rows that EXIST, not range(1, N+1): a §A gap
+        # (1, 3) used to raise KeyError: 2 and abort the whole report.
+        for n in sorted(rows):
+            if n in deferred:
+                out.append(" %2s  %-10s %-10s %s" % (
+                    n, "— deferred", "----------",
+                    "DEFERRED — not executed in this plan"))
+                continue
             # v3.6 — split sessions render TWO rows (Na pre / Nb post)
             split = bool(rows[n][3])
             legs = ((("a", "[DEPLOY-PRE]"), ("b", "[DEPLOY-POST]")) if split
@@ -9349,6 +10463,10 @@ class App:
                        "clear every ⚠ / ✖ / ◔ line above first" % next_n)
         else:
             out.append("VERDICT: NEXT = %s" % _leg_label(next_n, next_leg))
+        if deferred:
+            out.append("note: session(s) %s are DEFERRED in §A — not "
+                       "executed in this plan and excluded from passed/total"
+                       % ", ".join(str(n) for n in deferred))
         # v3.11 — the DECLARED checks and what the last console run found.
         # Surface only: nothing here blocks Freeze or changes a session's
         # reported state. A gate the console can fail but not enforce would
@@ -9356,9 +10474,21 @@ class App:
         # or flaky check would then wedge the owner's Freeze. It reports;
         # the owner decides. The one thing it will not do is imply green:
         # with no CHECKS.last.md it says the checks are UNRUN.
-        checks = declared_checks(pdir)
+        try:
+            checks = declared_checks(pdir)
+        except OSError as exc:
+            checks = []
+            out.append("note: the frozen plan's '## Checks' block could not "
+                       "be read (%s) — the declared checks are UNKNOWN."
+                       % exc)
         if checks:
-            last = last_check_results(pdir)
+            try:
+                last = last_check_results(pdir)
+            except OSError as exc:
+                last = {}
+                out.append("note: %s could not be read (%s) — a previous run "
+                           "may exist but cannot be trusted."
+                           % (CHECKS_LAST_FILE, exc))
             out.append("— declared checks (%d, from PART-01 '## Checks') —"
                        % len(checks))
             for c in checks:
@@ -9380,7 +10510,7 @@ class App:
                            "failing; it does not block Freeze on its own")
         # v2.2 — marker sanity notes (unparsable / outside map / stale)
         if ip_f is not None:
-            if ip_n is None or not (1 <= ip_n <= N):
+            if ip_n is None or ip_n not in rows:
                 out.append("note: IN-PROGRESS.md present (session %s) but "
                            "unparsable or outside the session map — inspect "
                            "it manually" % (ip_n if ip_n is not None else "?"))
@@ -9422,10 +10552,16 @@ class App:
 
     # ----------------------------------------------------------------- git
     def _git_dirty(self, repo):
+        g = git_exe()
+        if not g:
+            return None
         try:
-            r = subprocess.run([git_exe(), "-C", str(repo), "status",
-                                "--porcelain"],
-                               capture_output=True, text=True, timeout=10)
+            argv = _git_readonly_argv("git status --porcelain", repo)
+            if argv is None:
+                return None
+            r = subprocess.run([g] + argv, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace",
+                               env=_git_env(), timeout=GIT_TIMEOUT)
             if r.returncode != 0:
                 return None
             return [l for l in r.stdout.splitlines() if l.strip()]

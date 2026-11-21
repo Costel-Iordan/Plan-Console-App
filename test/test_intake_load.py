@@ -291,7 +291,7 @@ def test_load_refused_for_a_frozen_plan(tmp_path, monkeypatch):
     root.update()
     assert errors, "a frozen plan must refuse the load"
     assert errors[0][0] == "Load from file"
-    assert "frozen" in errors[0][1]
+    assert "already frozen" in errors[0][1]
     assert "has not been used before" in errors[0][1]
     assert not picked, "a refused slug must not open the picker"
     root.destroy()

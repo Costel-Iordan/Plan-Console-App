@@ -191,6 +191,10 @@ def test_intake_orders_state_the_hard_ban(app_window, tmp_path, monkeypatch):
         assert must in text, "intake orders must say: %s" % must
     # The C5 inversion must be explicit, or agents run the test suite
     # mid-intake (the reason this is not the execution contract).
+    assert "do NOT run the project's build" in text, \
+        "the intake contract must invert C5 (no build/lint/test during intake)"
+
+
 # --------------------------------------------------------- no phase bleed
 def test_session_block_keeps_the_execution_contract(app_window, tmp_path,
                                                    monkeypatch):
@@ -253,6 +257,11 @@ def test_edit_orders_follows_the_active_tab(app_window, tmp_path,
     app.nb.select(0)                      # Intake
     app.on_edit_agent_orders()
     assert opened[-1].name == pc.AGENT_ORDERS_INTAKE_NAME
+    app.nb.select(1)                      # Sessions
+    app.on_edit_agent_orders()
+    assert opened[-1].name == pc.AGENT_ORDERS_NAME
+
+
 # ------------------------------------------------------- Phase 4 backstop
 def test_agent_ticked_owner_action_is_flagged_not_blocked(tmp_path):
     """The backstop: a ticked `- [x]` with no console log entry means the
@@ -340,13 +349,6 @@ def test_pre_v38_gate_ids_unchanged(tmp_path):
     assert [g["id"] for g in pc.freeze_gate_report(pdir)] == \
         ["draft", "frozen", "questions", "owner_actions", "parked",
          "recon", "validation"]
-
-
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v"]))
-    app.nb.select(1)                      # Sessions
-    app.on_edit_agent_orders()
-    assert opened[-1].name == pc.AGENT_ORDERS_NAME
 
 
 def test_orders_attached_is_logged(app_window, tmp_path, monkeypatch):

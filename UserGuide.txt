@@ -9,7 +9,7 @@
 |   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝          |
 |_______________________________________________|
 
-PLAN CONSOLE 3.12 — USER GUIDE
+PLAN CONSOLE 3.13 — USER GUIDE
 Paste-to-plan intake + session lifecycle manager
 
 Copyright © Costel Iordan (costel.iordan@gmail.com)
@@ -185,7 +185,7 @@ Python from python.org (Windows/macOS) or your package manager
 3.1 The splash screen
 ---------------------
 At launch a small borderless splash window appears for a moment,
-showing the app name (Plan Console), the version (3.12), the tagline
+showing the app name (Plan Console), the version (3.13), the tagline
 ("Paste-to-plan intake + session lifecycle manager"), the copyright
 line, and the Apache 2.0 licensing note. It disappears by itself when
 the main window is ready. If anything goes wrong with the splash, the
@@ -227,7 +227,7 @@ touched by this.
 
 3.3 Window tour (text layout map)
 ---------------------------------
-The window title reads "Plan Console 3.12". The layout, top to
+The window title reads "Plan Console 3.13". The layout, top to
 bottom:
 
   SETUP BAR (collapsible — see "Setup ▸/▾" below)
@@ -597,6 +597,24 @@ Owner actions (right panel)
     - Nothing runs or is written without your confirmation; every
       event is archived to owner-pass.log.
 
+Declared checks (Sessions -> Run checks)
+    A frozen plan may carry a "## Checks" section with one bullet
+    per standing gate:
+
+        ## Checks
+        - LINT: `npm run lint`
+        - TYPES: `npm run typecheck`
+
+    Run checks lists every command verbatim and asks once; commands
+    that download, chain, or spawn another interpreter get a second,
+    dedicated confirmation. Each command is bounded by a timeout and
+    runs in the repo. The console records the result only — it writes
+    CHECKS.last.md and one HEALTH.md audit line, never source, never a
+    recon tick, and it never claims a gate passed. A malformed check is
+    reported INVALID and does NOT run; a timeout or crash reads FAIL,
+    never PASS. A failing run becomes a ready-to-send agent instruction
+    in one click.
+
 Escalate to owner action ->
     Moves the selected OWNER-ONLY recon item into the Owner
     actions panel so you can run it there. Use this instead of
@@ -826,6 +844,7 @@ start.
 | Status                        | Sessions   | One-line where-am-I                                            | no             |
 | Session report                | Sessions   | Verdict for one session; on OK auto-advances, on CHECK copies the fix hint | no |
 | Plan health                   | Sessions   | Verdict for the whole plan + writes HEALTH.md                  | no             |
+| Run checks                    | Sessions   | Runs the frozen plan's ## Checks block, records CHECKS.last.md + HEALTH.md | no |
 | Refresh                       | Owner pass | Loads questions, owner actions and recon checklist. Usually unnecessary: the console reloads them when the agent's files change, and only asks when you have unsaved answer text | no             |
 | (double-click a row)           | Owner pass | Opens that recon / owner-action item in full, pre-selected       | no             |
 | What's blocking Freeze?       | Owner pass | Read-only dry-run of the Freeze gates                          | no             |
@@ -1088,7 +1107,7 @@ keys restores their defaults on the next save.
 
 13. LICENSE & CREDITS
 =====================
-Plan Console 3.12
+Plan Console 3.13
 Paste-to-plan intake + session lifecycle manager
 Copyright © Costel Iordan (costel.iordan@gmail.com)
 

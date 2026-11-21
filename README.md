@@ -5,10 +5,16 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://buymeacoffee.com/costeliordan)
 
-**Plan Console** turns a pasted plan, brainstorm, or audit report into a structured, validated, "frozen" project plan (`PART-01 v1.0.md`) inside any target repo — and then manages the day-to-day loop of executing that plan through an external coding agent such as Claude Code, Cursor, Codex, or any other agent-agnostic workflow.
+**Plan Console 3.13** turns a pasted plan, brainstorm, or audit report into a structured, validated, "frozen" project plan (`PART-01 v1.0.md`) inside any target repo — and then manages the day-to-day loop of executing that plan through an external coding agent such as Claude Code, Cursor, Codex, or any other agent-agnostic workflow.
 
 It is built for **solo developers and small teams driving AI coding agents**. You stay the owner of the work: answer open questions, tick reconnaissance items, gate the freeze, run copy-paste sessions with standing orders, and track progress and health. The result is that ad-hoc AI-coding chaos becomes a disciplined **plan → owner pass → freeze → session** lifecycle with hard gates, machine-parseable progress records, and a complete audit trail (`HEALTH.md`) — all in a zero-dependency, offline desktop application.
 
+> **What's new in 3.13:** the rev-6 audit batch. Read-only owner actions now execute through a **fixed git argv** (with repo config neutralized) instead of a PowerShell string, so argument-mode subexpressions such as `git log (calc.exe)` can no longer run code; the context pack refuses **secret-shaped path components, symlinks and non-text extensions**, not just secret basenames. Declared checks and owner-action runs are **worker-threaded** with a second confirmation for download/exec commands, so the UI never blocks for minutes. Session sequencing now requires a **PASS** (FAIL/PARTIAL/BLOCKED no longer count as done), Plan health survives §A gaps and owner-deferred rows, unreadable plan files **fail their gates** instead of passing, owner-answer headings are case-insensitive, and close/Proceed/atomic-write paths preserve data. The guides, README and release artifacts are synchronized to 3.13.
+>
+> **What's new in 3.12:** **Load from file…** on the Intake tab fills the paste box from a markdown/text report and binds the pane to `plans/<slug>/SOURCE.md` after Proceed.
+>
+> **What's new in 3.11:** **Run checks** — a frozen plan's `## Checks` block becomes a first-class, console-run gate with bounded timeouts and a one-click failure instruction.
+>
 > **What's new in 3.10:** an audit batch whose theme is *nothing that reaches the owner may be invisible*. Escalated open questions can no longer be counted by neither panel and no Freeze gate (both section parsers now share one scanner, and a stranded escalation raises a visible warning gate); an `OWNER-ONLY` recon item is no longer an unresolvable blocker — it is counted separately, marked `⛔ owner-only`, and a new **"Escalate to owner action →"** button moves it where you can actually run it; a `DEFERRED` mention in prose no longer silently un-blocks Freeze; and intake steps run in order instead of racing on the same files. On the UI side: the three Owner-pass panes now share the width evenly and their button bars re-wrap, so **no button is ever squeezed out of view** (the cause was `tk.Text` defaulting to 80 columns, which had been reserving half the row); the **Setup panel is collapsible** (`Setup ▸`), reclaiming ~115px, with a live summary line and an always-visible progress / Cancel / Theme / About row. The app version now tracks the code across the title bar, the About box and every guide.
 
 > **What's new in 1.2.0:** UI/UX batch 1 — a live **plan strip** under the top bar (stage, gate counts, next session, and a click-through action that jumps to the right tab), **Freeze shows all gates in one ✓/✗ checklist dialog** instead of one error per gate (and now enforces the owner-actions gate the dry run already used), a **"Next session →"** button that prefills the first not-done session/leg and copies its instruction in one click, and read-only tools (Status, Session report, validation report, Freeze check, Copy command) **stay live while an API chain runs**.
@@ -29,6 +35,8 @@ It is built for **solo developers and small teams driving AI coding agents**. Yo
 - **Privacy-first** — an API key is never persisted; it lives only in the entry field for the current session (or in an environment variable).
 - **Agent-agnostic** — plan and command files work with any agent that can read a markdown rulebook; you are never locked to one vendor.
 - **Hard freeze gates** — a plan cannot be frozen until zero open questions, zero unchecked recon items, zero unchecked owner actions, and a passing validation remain.
+- **Declared checks** — a frozen plan's `## Checks` block runs from the console with a timeout, records `CHECKS.last.md` + a `HEALTH.md` audit line, and turns a failure into a ready-to-send agent instruction.
+- **Load from file** — fill the intake box from a markdown/text report instead of pasting; the pane is then bound to `plans/<slug>/SOURCE.md`.
 - **Machine-parseable progress** — `PROGRESS.md`, `HEALTH.md`, and status parsing are lenient but auditable; drift is flagged, not hidden.
 - **Cross-platform** — Windows, macOS, and Linux on Python 3.9+.
 
@@ -67,8 +75,8 @@ For the full picture — including the first-run license gate and every tab — 
 │   └── demo-project/          # Bundled example project, copied to a folder of your
 │       ├── plans/demo-recipe-cli/     #   choice via "Open sample project…"
 │       └── plans/demo-journal-wip/    #   (finished end-state / mid-workflow demos)
-├── test/                      # pytest suite: test_parsers.py (parser/guard tests)
-│                              #   and test_theme.py (theme-system tests)
+├── test/                      # pytest suite: parser, gate, intake, queue,
+│                              #   theme and audit-regression tests
 ├── assets/                    # console.css + theme.js — shared offline styling
 │                              #   for the HTML guides
 ├── UserGuide.html             # Deep 13-section user guide (styled; links assets/)
@@ -134,8 +142,13 @@ py -m pytest test/ -q    # or: python3 -m pytest test/ -q
 
 - [`test/test_parsers.py`](test/test_parsers.py) — parser and guard regression tests (question blocks, lenient `PROGRESS.md` parsing, recon checkbox rules, the `<<<FILE>>>` path guard, owner-action parsing, the read-only command whitelist).
 - [`test/test_theme.py`](test/test_theme.py) — theme-system tests (`THEMES` completeness, hex validity, OS-theme detection fallbacks).
+- [`test/test_freeze_gates.py`](test/test_freeze_gates.py) — freeze gates, next-session sequencing, plan strip, checks, and real-Tk Owner-pass layout/refresh tests.
+- [`test/test_intake_orders.py`](test/test_intake_orders.py) — phase-scoped standing orders and the off-console owner-action backstop.
+- [`test/test_intake_load.py`](test/test_intake_load.py) — Load-from-file, SOURCE.md binding and restore behaviour.
+- [`test/test_queue.py`](test/test_queue.py) — bounded drop-oldest event queue and task-ticket accounting.
+- [`test/test_audit_v39.py`](test/test_audit_v39.py) / [`test/test_audit_v313.py`](test/test_audit_v313.py) — audit regression suites (invisible-content class, rev-6 security/lifecycle fixes).
 
-The suite contains 100 tests, all passing; Tk-dependent tests skip automatically on headless machines. No network or repo access is required.
+The suite contains 300+ tests, all passing; Tk-dependent tests skip automatically on headless machines. No network or repo access is required.
 
 ## Security and privacy
 

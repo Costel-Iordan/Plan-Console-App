@@ -279,3 +279,28 @@ header {
 .bg-main { background-color: var(--bg-main); }
 .bg-accent { background-color: var(--bg-accent); }
 .list-none { list-style: none; }
+
+/* ---- R-94: keyboard focus and reduced motion ---- */
+:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 2px;
+}
+
+a:focus-visible,
+.btn:focus-visible,
+.kbd:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
